@@ -1,0 +1,90 @@
+[
+  {
+    "query": "в order-service нужно добавить отмену заказа: POST /orders/{id}/cancel, отменять можно только NEW и PAID, при PAID надо отправить событие OrderCancelled в кафку чтобы billing вернул деньги",
+    "should_trigger": true
+  },
+  {
+    "query": "добавь в таблицу customers поле phone (nullable пока) и чтобы его можно было передать в PUT /customers/{id}. миграции у нас на liquibase, формат sql",
+    "should_trigger": true
+  },
+  {
+    "query": "почини: CreateInvoiceServiceTest падает после мержа — expected 2 invoices but was 3, похоже инвойс дублируется при ретрае",
+    "should_trigger": true
+  },
+  {
+    "query": "в DiscountPolicy порог скидки сейчас 1000, бизнес просит 1500 и чтобы для VIP клиентов скидка была 7% вместо 5",
+    "should_trigger": true
+  },
+  {
+    "query": "нужна интеграция с СДЭК: когда заказ переходит в SHIPPED, создавать отправление через их API и сохранять трек-номер, плюс вебхук от них на смену статуса доставки",
+    "should_trigger": true
+  },
+  {
+    "query": "отрефактори NotificationService — там switch по channel на EMAIL/SMS/PUSH/TELEGRAM в четырёх методах, хочу чтобы новый канал добавлялся одним классом",
+    "should_trigger": true
+  },
+  {
+    "query": "implement pagination for GET /api/v1/products, right now it returns everything via findAll() and the table has about 2M rows",
+    "should_trigger": true
+  },
+  {
+    "query": "сделай джобу, которая раз в ночь переносит заказы старше 2 лет в orders_archive. сервис крутится в 3 репликах",
+    "should_trigger": true
+  },
+  {
+    "query": "юзер с ролью MANAGER должен видеть отчёты только своего филиала, а сейчас видит все. поправь пожалуйста",
+    "should_trigger": true
+  },
+  {
+    "query": "/java-dev-flow добавить эндпоинт экспорта транзакций в CSV за период",
+    "should_trigger": true
+  },
+  {
+    "query": "сделай ревью моей ветки feature/refunds перед PR, особенно транзакции посмотри",
+    "should_trigger": false
+  },
+  {
+    "query": "объясни, как работает OrderSaga в этом проекте и что происходит при компенсации, если платёж отвалился",
+    "should_trigger": false
+  },
+  {
+    "query": "в модуле billing куча тестов с verify(repo).save(any()), почисти бесполезные, оставь те что реально что-то ловят",
+    "should_trigger": false
+  },
+  {
+    "query": "создай в jira задачи на спринт 42: переезд на boot 3.4, вынести нотификации в отдельный модуль, починить флаки PaymentIT",
+    "should_trigger": false
+  },
+  {
+    "query": "спроектируй сервис рекомендаций — какие таблицы, какие эндпоинты, нужна ли кафка. код пока не пиши, только дизайн",
+    "should_trigger": false
+  },
+  {
+    "query": "на проде с 14:00 сыпятся 500 на /checkout: Connection is not available, request timed out after 30000ms. клиенты не могут оплатить, что делать?",
+    "should_trigger": false
+  },
+  {
+    "query": "вот TariffCalculator, там 6 веток if по типу тарифа. какой паттерн тут лучше — strategy или chain of responsibility? переписывать пока не надо",
+    "should_trigger": false
+  },
+  {
+    "query": "проверь этот changeset перед мержем: ALTER TABLE orders ADD COLUMN archived_at timestamptz NOT NULL DEFAULT now(); таблица на 40 млн строк",
+    "should_trigger": false
+  },
+  {
+    "query": "почему этот запрос медленный? @Query(\"select o from Order o join fetch o.lines where o.status = :s\") с Pageable, на проде 3 секунды",
+    "should_trigger": false
+  },
+  {
+    "query": "напиши bash-скрипт, который удаляет target/ во всех модулях нашей монорепы и чистит ~/.m2 от snapshot-ов",
+    "should_trigger": false
+  },
+  {
+    "query": "у нас в репо openspec. надо добавить фильтр archived в GET /orders и колонку archived_at, сделай как положено",
+    "should_trigger": true
+  },
+  {
+    "query": "/opsx:archive add-archived-filter — всё готово, заархивируй",
+    "should_trigger": false
+  }
+]

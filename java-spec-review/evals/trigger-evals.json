@@ -1,0 +1,50 @@
+[
+  {
+    "query": "посмотри openspec/changes/add-refunds/specs/refunds/spec.md и дочерние файлы, хочу ещё раз прогнать вопросы перед apply",
+    "should_trigger": true
+  },
+  {
+    "query": "разбери change order-delivery-address, всё ли там продумано? погоняй меня вопросами",
+    "should_trigger": true
+  },
+  {
+    "query": "готов ли change cancel-paid-order к /opsx:apply? проверь proposal, design и tasks",
+    "should_trigger": true
+  },
+  {
+    "query": "после propose хочу ревью артефактов: openspec/changes/kafka-outbox/",
+    "should_trigger": true
+  },
+  {
+    "query": "проверь спеку openspec/specs/payments/spec.md — там всё покрыто сценариями?",
+    "should_trigger": true
+  },
+  {
+    "query": "review this openspec change before we implement it: openspec/changes/user-export",
+    "should_trigger": true
+  },
+  {
+    "query": "сделай ревью моего diff перед PR",
+    "should_trigger": false
+  },
+  {
+    "query": "/opsx:propose add-delivery-address",
+    "should_trigger": false
+  },
+  {
+    "query": "реализуй задачи из openspec/changes/add-refunds/tasks.md",
+    "should_trigger": false
+  },
+  {
+    "query": "сверь реализованный код с openspec change перед archive",
+    "should_trigger": false
+  },
+  {
+    "query": "погриль меня по идее перейти с REST на gRPC",
+    "should_trigger": false
+  },
+  {
+    "query": "напиши тест на сценарий Full refund из спеки",
+    "should_trigger": false
+  }
+]

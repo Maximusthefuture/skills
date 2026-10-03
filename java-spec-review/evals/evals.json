@@ -1,0 +1,38 @@
+{
+  "skill_name": "java-spec-review",
+  "setup": "Скопируй evals/files/openspec в корень копии orders-service (без target/) и запускай промпты из её корня. В change order-delivery-address заложены дефекты, перечисленные в expected_output первого eval.",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "посмотри openspec/changes/order-delivery-address/specs/order-delivery/spec.md и дочерние файлы в change, погоняй меня вопросами",
+      "expected_output": "Запущен scripts/collect_change.py, прочитаны proposal, design, tasks, обе дельты и главный спек order-lifecycle. Статус BLOCKERS. Блокеры: колонка delivery_address NOT NULL без default на существующей таблице orders — changeset упадёт на старых строках, нужен expand/contract или default и backfill (C11, B9); Open Question «менять адрес после PAID» меняет specs и tasks — это не откладываемый вопрос; заголовок `### Scenario: Address too long` OpenSpec не увидит. Пробелы: THEN «адрес обновляется корректно» без статуса и поля; нет сценариев 404 на чужой заказ и 409 ORDER_NOT_EDITABLE для PUT, хотя оба есть в design; новое обязательное поле POST /orders не помечено BREAKING, а старые клиенты получат 400; из MODIFIED «Create order» пропал сценарий «Unknown customer»; tasks: H2 вместо Testcontainers, тесты собраны в группу «Тесты», нет группы «Проверка», у 2.1 нет проверки, сценарии без задач. Утверждения о коде проверены: findByIdAndCustomerId есть (OrderRepository). Сверка с GlobalExceptionHandler: кода VALIDATION_ERROR в проекте нет (ConstraintViolationException → 400 INVALID_REQUEST, а для @Valid на теле обработчика нет — Spring отдаёт 400 без code), InvalidOrderStateException → 409 без code, ORDER_NOT_EDITABLE тоже нет — это находка по именам кодов ошибок (E1, F5) и вопрос, какой code закрепить. Вопросы раунда 1 в формате grilling: номер, место в артефакте, рекомендуемый ответ; среди них — разрешена ли смена адреса в PAID и что делать со старыми заказами без адреса. Артефакты не изменены до согласия пользователя.",
+      "files": [
+        "evals/files/openspec"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "проверь спеку openspec/specs/order-lifecycle/spec.md",
+      "expected_output": "Скрипт разрешает главный спек в единственный активный change order-delivery-address и говорит об этом одной строкой. Разбирается весь change, фокус — дельта order-lifecycle: потерянный сценарий «Unknown customer» в MODIFIED, BREAKING для обязательного deliveryAddress, сценарий «Missing address» с кодом VALIDATION_ERROR сверен с GlobalExceptionHandler: такого кода в проекте нет — находка. Главный спек не правится.",
+      "files": [
+        "evals/files/openspec"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "/java-spec-review",
+      "expected_output": "Без аргументов скрипт находит единственный активный change order-delivery-address и разбирает его. Если бы активных change было несколько, скрипт вернул бы код 2 со списком, и скилл спросил бы, какой разбирать, не выбирая сам.",
+      "files": [
+        "evals/files/openspec"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "по change order-delivery-address: в PAID менять адрес можно, пока нет отправки; старым заказам ставим адрес 'не указан'. правь артефакты",
+      "expected_output": "Ответы зафиксированы как решения. Показан план правок по файлам: сценарий смены адреса в PAID и сценарий 409 для статусов после отправки в дельте order-delivery; Open Question перенесён в Decisions с отвергнутой альтернативой; Migration Plan — add column nullable или с default, backfill отдельно от changeset'а, затем NOT NULL через CHECK NOT VALID → VALIDATE; новые задачи в tasks.md в формате «X.Y Сценарий «…» — уровень теста — проверка: …» и группа «Проверка» в конце. Правки применены только после подтверждения, после них скрипт запущен снова, дан итог со статусом. Главный спек и чекбоксы не тронуты.",
+      "files": [
+        "evals/files/openspec"
+      ]
+    }
+  ]
+}

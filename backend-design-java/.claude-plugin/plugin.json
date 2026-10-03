@@ -1,0 +1,29 @@
+{
+  "name": "backend-design-java",
+  "description": "Senior backend reflexes for Java / Spring Boot / Hibernate (JPA) / PostgreSQL / Liquibase services. Workflows, disciplines and opinionated defaults for data modeling, Liquibase migrations, JPA and transactions, queries and N+1, idempotency and the outbox, error contracts (ProblemDetail), observability (Actuator, Micrometer), performance (Hikari, virtual threads), Spring Security and RLS, debugging and Testcontainers testing. Forked from backend-design 0.2.0.",
+  "version": "0.3.1-java",
+  "author": {
+    "name": "sheitabrk (upstream); Java adaptation",
+    "url": "https://github.com/sheitabrk"
+  },
+  "homepage": "https://github.com/sheitabrk/backend-design",
+  "repository": "https://github.com/sheitabrk/backend-design",
+  "license": "MIT",
+  "keywords": [
+    "java",
+    "spring-boot",
+    "hibernate",
+    "jpa",
+    "postgresql",
+    "liquibase",
+    "migrations",
+    "transactions",
+    "observability",
+    "idempotency",
+    "outbox",
+    "spring-security",
+    "testcontainers",
+    "performance",
+    "discipline"
+  ]
+}
