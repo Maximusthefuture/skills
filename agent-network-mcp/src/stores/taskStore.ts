@@ -1,4 +1,5 @@
 import { AppError } from "../errors.js";
+import { DEFAULT_MAX_FIX_ROUNDS } from "../phase/phaseManager.js";
 import type { FileStore } from "../storage/fileStore.js";
 import type { GitContext, Task } from "../types.js";
 import { assertTaskId } from "../validation.js";
@@ -9,6 +10,9 @@ export interface NewTask {
   agents: string[];
   createdBy: string;
   git: GitContext | null;
+  maxFixRounds?: number;
+  requireCommits?: boolean;
+  verifyCommand?: string;
 }
 
 export class TaskStore {
@@ -33,6 +37,9 @@ export class TaskStore {
       createdBy: input.createdBy,
       git: input.git,
       syncRound: 0,
+      maxFixRounds: input.maxFixRounds ?? DEFAULT_MAX_FIX_ROUNDS,
+      requireCommits: input.requireCommits ?? false,
+      ...(input.verifyCommand ? { verifyCommand: input.verifyCommand } : {}),
     };
     await this.fs.writeJson([...this.taskDir(id), "task.json"], task);
     return task;

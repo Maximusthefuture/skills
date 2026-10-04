@@ -19,7 +19,7 @@ main{max-width:1100px;margin:0 auto;padding:0 20px 40px}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--idle);flex:none}
 .ONLINE .dot,.WORKING .dot{background:var(--ok)}.WAITING .dot{background:var(--warn)}.DEAD .dot{background:var(--bad)}
 .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;border:1px solid var(--line);color:var(--muted)}
-.badge.ONLINE,.badge.WORKING,.badge.PASS,.badge.READY_FOR_SYNC{color:var(--ok);border-color:var(--ok)}.badge.WAITING,.badge.IN_PROGRESS{color:var(--warn);border-color:var(--warn)}.badge.DEAD,.badge.NEEDS_FIX,.badge.ERROR{color:var(--bad);border-color:var(--bad)}
+.badge.ONLINE,.badge.WORKING,.badge.PASS,.badge.READY_FOR_SYNC{color:var(--ok);border-color:var(--ok)}.badge.WAITING,.badge.IN_PROGRESS{color:var(--warn);border-color:var(--warn)}.badge.DEAD,.badge.NEEDS_FIX,.badge.ERROR,.badge.BLOCKED{color:var(--bad);border-color:var(--bad)}
 .task{margin-bottom:12px}.task.done{opacity:.75}
 .task h3{margin:0 0 2px;font-size:15px}
 .steps{display:flex;gap:4px;margin:10px 0}.step{flex:1;text-align:center;font-size:11px;padding:4px 0;border-radius:6px;background:var(--bg);color:var(--muted);border:1px solid var(--line)}
@@ -38,7 +38,7 @@ details{margin-top:8px}summary{cursor:pointer;color:var(--muted)}
 <h2>Задачи</h2><div id="tasks"></div>
 </main>
 <script>
-const PHASES=["DISCUSS","IMPLEMENT","SYNC","DONE"];
+const PHASES=["DISCUSS","IMPLEMENT","SYNC","INTEGRATE","DONE"];
 const $=id=>document.getElementById(id);
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
 function badge(v){return el("span","badge "+v,v)}
@@ -62,7 +62,9 @@ function renderAgents(s){
 
 function renderTask(t){
   const c=el("div","card task"+(t.status!=="ACTIVE"?" done":""));
-  const head=el("div");head.append(el("h3","",t.id+" · "+t.title+(t.status==="CANCELLED"?" (отменена)":"")));head.append(el("div","muted",t.description));c.append(head);
+  const head=el("div");head.append(el("h3","",t.id+" · "+t.title+(t.status==="CANCELLED"?" (отменена)":"")));head.append(el("div","muted",t.description));
+  if(t.status==="BLOCKED"){const b=el("div","");b.append(badge("BLOCKED")," "+(t.blockedReason||"")+" — нужен оператор: task unblock / task cancel");head.append(b)}
+  c.append(head);
   const steps=el("div","steps");const idx=PHASES.indexOf(t.phase);
   PHASES.forEach((p,i)=>steps.append(el("div","step"+(i<idx?" past":i===idx?" now":""),p+(p==="SYNC"&&t.syncRound&&idx>=2?" #"+t.syncRound:""))));
   c.append(steps);
@@ -72,7 +74,7 @@ function renderTask(t){
     const r=el("tr");r.append(el("td","",id));
     const as=t.agreement&&t.agreement.assignments.find(a=>a.agentId===id);
     const ap=t.agreement&&t.agreement.approvedBy.includes(id);
-    const td=el("td");td.append(el("span","",as?as.responsibility:"—"));if(t.agreement&&as)td.append(" ",el("span","badge "+(ap?"PASS":"WAITING"),ap?"одобрил":"не одобрил"));r.append(td);
+    const td=el("td");td.append(el("span","",as?as.responsibility:"—"));if(as&&as.files&&as.files.length)td.append(el("div","muted mono","файлы: "+as.files.join(", ")));if(t.agreement&&as)td.append(" ",el("span","badge "+(ap?"PASS":"WAITING"),ap?"одобрил":"не одобрил"));r.append(td);
     const im=t.implementations.find(i=>i.agentId===id);
     const td2=el("td");td2.append(im?badge(im.status):el("span","muted","—"));if(im&&im.summary)td2.append(el("div","muted",im.summary));if(im&&im.filesChanged.length)td2.append(el("div","muted mono",im.filesChanged.join(", ")));r.append(td2);
     const rep=t.syncReports.filter(x=>x.agentId===id&&x.round===t.syncRound).pop();
@@ -81,8 +83,11 @@ function renderTask(t){
     r.append(td3);tbl.append(r);
   }
   c.append(tbl);
+  t.integrations.filter(x=>x.round===t.syncRound).slice(-1).forEach(x=>{const d=el("div","");d.append(el("b","","Интеграция ("+x.agentId+"): "),badge(x.status)," "+x.result);if(x.commits.length)d.append(el("div","muted mono","commits: "+x.commits.join(", ")));
+    x.findings.forEach(f=>{const r=el("div","muted");r.append(el("span","badge "+f.severity,f.severity)," "+f.description+(f.relatedAgent?" → "+f.relatedAgent:""));d.append(r)});c.append(d)});
   if(t.agreement){const d=el("details");d.append(el("summary","","Agreement v"+t.agreement.version+" — "+t.agreement.summary));
     t.agreement.assignments.forEach(a=>d.append(el("div","",a.agentId+": "+a.responsibility)));
+    t.grants.forEach(g=>d.append(el("div","muted mono","доступ: "+g.from+" → "+g.to+": "+g.files.join(", "))));
     if(t.agreement.decisions.length)d.append(el("div","muted","решения: "+t.agreement.decisions.join("; ")));
     if(t.agreement.interfaces.length)d.append(el("div","muted mono","interfaces: "+t.agreement.interfaces.join("; ")));c.append(d)}
   const md=el("details");md.append(el("summary","","Сообщения ("+t.messages.length+")"));

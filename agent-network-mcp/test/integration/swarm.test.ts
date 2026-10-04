@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeAllAgents, createTaskViaCli, SERVER_ENTRY, spawnAgent } from "../helpers/agentProcess.js";
 import { tmpDir } from "../helpers/tmp.js";
@@ -13,8 +13,8 @@ async function network() {
 }
 
 const assignments = [
-  { agentId: "backend", responsibility: "REST controller and service" },
-  { agentId: "reviewer", responsibility: "validation, review of backend" },
+  { agentId: "backend", responsibility: "REST controller and service", files: ["src/main/**"] },
+  { agentId: "reviewer", responsibility: "validation, review of backend", files: ["src/test/**"] },
 ];
 
 describe("five-tool surface", () => {
@@ -98,11 +98,42 @@ describe("agent-created task (no operator)", () => {
     expect(created).toMatchObject({ action: "TASK_CREATED", task: { id: "task-001", agents: ["backend", "reviewer"] }, nextAction: "propose" });
     expect(await waiting).toMatchObject({ status: "UPDATED", task: { id: "task-001" } });
 
-    await backend.call("propose", { summary: "fix + test", assignments: [{ agentId: "backend", responsibility: "fix" }, { agentId: "reviewer", responsibility: "test" }] });
+    await backend.call("propose", { summary: "fix + test", assignments: [{ agentId: "backend", responsibility: "fix", files: ["src/main/**"] }, { agentId: "reviewer", responsibility: "test", files: ["src/test/**"] }] });
     await reviewer.call("swarm_context");
     await reviewer.call("complete");
     expect(await backend.call("complete")).toMatchObject({ phaseChanged: { to: "IMPLEMENT" } });
     expect(await backend.callError("create_task", { title: "t", description: "x".repeat(60), agents: ["reviewer"] })).toMatchObject({ code: "HAS_ACTIVE_TASK" });
+  });
+});
+
+describe("file negotiation over MCP", () => {
+  it("overlap is refused, then request/grant lets backend change a reviewer file", async () => {
+    const networkDir = await network();
+    createTaskViaCli(networkDir, ["backend", "reviewer"]);
+    const backend = await spawnAgent({ id: "backend", networkDir });
+    const reviewer = await spawnAgent({ id: "reviewer", networkDir });
+
+    const overlap = await backend.callError("propose", { summary: "s", assignments: [{ agentId: "backend", responsibility: "a", files: ["src/**"] }, { agentId: "reviewer", responsibility: "b", files: ["src/test/**"] }] });
+    expect(overlap).toMatchObject({ code: "FILE_OVERLAP", nextAction: "propose" });
+    await backend.call("propose", { summary: "s", assignments });
+    await reviewer.call("swarm_context");
+    await reviewer.call("complete");
+    await backend.call("complete");
+
+    expect(await backend.callError("complete", { result: "x", filesChanged: ["src/test/Helper.java"] })).toMatchObject({ code: "FILE_NOT_OWNED", nextAction: "implement" });
+    await backend.call("send_message", { to: "reviewer", message: "need the helper", requestFiles: ["src/test/Helper.java"] });
+    const woke = await reviewer.call("wait", { timeoutMs: 10_000 });
+    expect(woke).toMatchObject({ status: "MESSAGES", pendingMessages: [expect.objectContaining({ type: "FILE_REQUEST", files: ["src/test/Helper.java"] })] });
+    await reviewer.call("send_message", { to: "backend", message: "granted", grantFiles: ["src/test/Helper.java"] });
+    expect(await backend.call("complete", { result: "x", filesChanged: ["src/main/A.java", "src/test/Helper.java"] })).toMatchObject({ action: "IMPLEMENTATION_COMPLETED" });
+  });
+
+  it("schemas ask for files in assignments and expose requestFiles / grantFiles", async () => {
+    const networkDir = await network();
+    const backend = await spawnAgent({ id: "backend", networkDir });
+    const tools = await backend.listToolSchemas();
+    expect(tools.propose.properties.assignments.items.required).toEqual(expect.arrayContaining(["agentId", "responsibility", "files"]));
+    expect(Object.keys(tools.send_message.properties)).toEqual(expect.arrayContaining(["requestFiles", "grantFiles"]));
   });
 });
 
@@ -113,6 +144,21 @@ describe("operator CLI", () => {
     expect(task).toMatchObject({ id: "task-001", phase: "DISCUSS", status: "ACTIVE", agents: ["backend", "reviewer"], createdBy: "operator" });
     const list = JSON.parse(execFileSync(process.execPath, [SERVER_ENTRY, "task", "list"], { env: { ...process.env, NETWORK_DIR: networkDir } }).toString());
     expect(list).toEqual([expect.objectContaining({ id: "task-001", title: "User registration", phase: "DISCUSS" })]);
+  });
+
+  it("creates a task with options and refuses to unblock a task that is not blocked", async () => {
+    const networkDir = await network();
+    const task = createTaskViaCli(networkDir, ["backend", "reviewer"], "Options", ["--max-fix-rounds", "1", "--verify", "mvn -q verify", "--no-commits"]);
+    expect(task).toMatchObject({ maxFixRounds: 1, verifyCommand: "mvn -q verify", requireCommits: false });
+    const list = JSON.parse(execFileSync(process.execPath, [SERVER_ENTRY, "task", "list"], { env: { ...process.env, NETWORK_DIR: networkDir } }).toString());
+    expect(list).toEqual([expect.objectContaining({ id: "task-001", maxFixRounds: 1 })]);
+    let out = "";
+    try {
+      execFileSync(process.execPath, [SERVER_ENTRY, "task", "unblock", "--id", "task-001"], { env: { ...process.env, NETWORK_DIR: networkDir }, stdio: "pipe" });
+    } catch (e: any) {
+      out = String(e.stdout);
+    }
+    expect(out).toContain("not BLOCKED");
   });
 
   it("lists registered agents", async () => {
@@ -150,7 +196,7 @@ describe("operator CLI", () => {
 });
 
 describe("full cycle through the five tools (two processes)", () => {
-  it("DISCUSS -> IMPLEMENT -> SYNC -> NEEDS_FIX -> IMPLEMENT -> SYNC -> DONE", async () => {
+  it("DISCUSS -> IMPLEMENT -> SYNC -> NEEDS_FIX -> IMPLEMENT -> SYNC -> INTEGRATE -> DONE", async () => {
     const networkDir = await network();
     const backend = await spawnAgent({ id: "backend", networkDir, type: "qwen", role: "backend" });
     const reviewer = await spawnAgent({ id: "reviewer", networkDir, type: "qwen", role: "reviewer" });
@@ -194,9 +240,14 @@ describe("full cycle through the five tools (two processes)", () => {
     // backend (waiting) is told to fix; fixes; back to SYNC; both PASS -> DONE
     const toFix = await backend.call("wait", { timeoutMs: 20_000 });
     expect(toFix).toMatchObject({ nextAction: "fix", fixRequests: [expect.objectContaining({ forYou: true, reportedBy: "reviewer" })] });
-    expect(await backend.call("complete", { result: "Switched to UUID", commits: ["def456"] })).toMatchObject({ phaseChanged: { to: "SYNC" }, nextAction: "sync" });
-    expect(await reviewer.call("complete", { status: "PASS" })).toMatchObject({ nextAction: "wait" });
-    const done = await backend.call("complete", { status: "PASS" });
+    // round 2 reviews only backend's fix: the reviewer reviews, backend waits
+    expect(await backend.call("complete", { result: "Switched to UUID", commits: ["def456"] })).toMatchObject({ phaseChanged: { to: "SYNC" }, nextAction: "wait", waitingOn: ["reviewer"] });
+    expect(await reviewer.call("wait", { timeoutMs: 20_000 })).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "sync", reviewTargets: ["backend"] });
+    expect(await reviewer.call("complete", { status: "PASS" })).toMatchObject({ phaseChanged: { to: "INTEGRATE" }, nextAction: "wait" });
+
+    // INTEGRATE: the lead merges and runs the tests
+    expect(await backend.call("wait", { timeoutMs: 20_000 })).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "integrate" });
+    const done = await backend.call("complete", { status: "PASS", result: "All work is in one branch; build and tests are green" });
     expect(done).toMatchObject({ task: { phase: "DONE", status: "COMPLETED", syncRound: 2 }, nextAction: "done", allowedActions: [] });
     expect(await reviewer.call("wait", { timeoutMs: 5_000 })).toMatchObject({ status: "DONE" });
   });
@@ -283,5 +334,97 @@ describe("crash recovery through swarm_context", () => {
     const res = await reviewer.call("wait", { timeoutMs: 5_000 }); // already actionable (implement) -> immediate
     expect(await waiting).toMatchObject({ nextAction: "implement" });
     expect(res).toMatchObject({ nextAction: "implement" });
+  });
+});
+
+describe("three agents in three git worktrees", () => {
+  /** One repository (the lead's checkout) plus a worktree and a branch per other agent, like scripts/qwen-demo.sh. */
+  async function workspace(ids: string[]) {
+    const root = await tmpDir("agent-network-test-");
+    const repo = join(root, "main");
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.email", "t@example.com");
+    git(repo, "config", "user.name", "t");
+    writeFileSync(join(repo, ".gitignore"), ".agent-network/\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "init");
+    const trees: Record<string, string> = {};
+    for (const id of ids) {
+      trees[id] = join(root, id);
+      git(repo, "worktree", "add", "-q", trees[id]!, "-b", id);
+    }
+    /** Commit a file in an agent's worktree; returns the commit hash. */
+    const commit = (id: string, file: string, body: string) => {
+      mkdirSync(dirname(join(trees[id]!, file)), { recursive: true });
+      writeFileSync(join(trees[id]!, file), body);
+      git(trees[id]!, "add", file);
+      git(trees[id]!, "commit", "-q", "-m", `${id}: ${file}`);
+      return git(trees[id]!, "rev-parse", "HEAD");
+    };
+    return { repo, trees, git, commit, networkDir: join(repo, ".agent-network") };
+  }
+
+  it("divide files in one directory, implement in parallel, collect all reviews, re-review only the fix, integrate", async () => {
+    const ids = ["backend", "frontend", "qa"];
+    const ws = await workspace(ids);
+    const agents = Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await spawnAgent({ id, networkDir: ws.networkDir, cwd: ws.trees[id], role: id })] as const)));
+    const { backend, frontend, qa } = agents as Record<string, Awaited<ReturnType<typeof spawnAgent>>> & { backend: any; frontend: any; qa: any };
+
+    createTaskViaCli(ws.networkDir, ids, "User list page with REST endpoint", ["--verify", "npm test", "--max-fix-rounds", "2"]);
+
+    // DISCUSS: globs in the same directory that only differ by suffix are not an overlap any more
+    expect(await backend.call("swarm_context")).toMatchObject({ nextAction: "propose", task: { requireCommits: true, verifyCommand: "npm test", maxFixRounds: 2, lead: "backend" } });
+    await backend.call("send_message", { to: "frontend", message: "I take src/*Service.ts, you take src/*View.ts, qa takes test/**" });
+    await backend.call("send_message", { to: "qa", message: "I take src/*Service.ts, frontend src/*View.ts, you test/**" });
+    const proposed = await backend.call("propose", {
+      summary: "GET /users and the page that shows them",
+      assignments: [
+        { agentId: "backend", responsibility: "UserService + GET /users", files: ["src/*Service.ts"] },
+        { agentId: "frontend", responsibility: "UserView renders the list", files: ["src/*View.ts"] },
+        { agentId: "qa", responsibility: "tests for both", files: ["test/**"] },
+      ],
+      interfaces: ["GET /users -> 200 [{id, name}]"],
+    });
+    expect(proposed).toMatchObject({ action: "AGREEMENT_PROPOSED", nextAction: "approve" });
+    for (const a of [frontend, qa]) {
+      expect(await a.call("wait", { timeoutMs: 20_000 })).toMatchObject({ status: "MESSAGES" });
+      await a.call("swarm_context"); // shows the agreement
+      expect(await a.call("complete")).toMatchObject({ action: "AGREEMENT_APPROVED" });
+    }
+    expect(await backend.call("complete")).toMatchObject({ phaseChanged: { to: "IMPLEMENT" }, nextAction: "implement" });
+
+    // IMPLEMENT in parallel, each in its own worktree; work counts only when committed
+    expect(await frontend.callError("complete", { result: "UserView", filesChanged: ["src/UserView.ts"] })).toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("Commit your changes") });
+    const shaB = ws.commit("backend", "src/UserService.ts", "export const users = () => [{ id: 1, name: 'a' }];\n");
+    const shaF = ws.commit("frontend", "src/UserView.ts", "export const view = (u) => u.map((x) => x.nam).join();\n");
+    const shaQ = ws.commit("qa", "test/users.test.ts", "// GET /users and UserView\n");
+    expect(await backend.call("complete", { result: "UserService", commits: [shaB] })).toMatchObject({ implementation: { filesChanged: ["src/UserService.ts"] }, nextAction: "wait" });
+    expect(await frontend.call("complete", { result: "UserView", commits: [shaF] })).toMatchObject({ nextAction: "wait" });
+    expect(await qa.call("complete", { result: "tests", commits: [shaQ] })).toMatchObject({ phaseChanged: { to: "SYNC" }, nextAction: "sync", reviewTargets: ["backend", "frontend"] });
+
+    // SYNC round 1: qa's NEEDS_FIX does not cut off the other reviews; the task moves once all three reported
+    expect(await qa.call("complete", { status: "NEEDS_FIX", findings: [{ severity: "ERROR", description: "UserView reads x.nam, the field is name", relatedAgent: "frontend", files: ["src/UserView.ts"] }] })).toMatchObject({ task: { phase: "SYNC" }, waitingOn: ["backend", "frontend"] });
+    expect(await backend.call("wait", { timeoutMs: 20_000 })).toMatchObject({ nextAction: "sync" });
+    expect(await backend.call("complete", { status: "PASS", findings: [{ severity: "WARNING", description: "UserView could be typed" }] })).toMatchObject({ task: { phase: "SYNC" } });
+    expect(await frontend.call("complete", { status: "PASS" })).toMatchObject({ phaseChanged: { from: "SYNC", to: "IMPLEMENT" }, nextAction: "fix", fixRequests: [expect.objectContaining({ reportedBy: "qa", forYou: true })] });
+
+    // only frontend fixes; round 2 reviews only that fix, by backend and qa
+    const fixSha = ws.commit("frontend", "src/UserView.ts", "export const view = (u) => u.map((x) => x.name).join();\n");
+    expect(await frontend.call("complete", { result: "x.nam -> x.name", commits: [fixSha] })).toMatchObject({ phaseChanged: { to: "SYNC" }, task: { syncRound: 2 }, nextAction: "wait", waitingOn: ["backend", "qa"] });
+    for (const a of [backend, qa]) {
+      expect(await a.call("wait", { timeoutMs: 20_000 })).toMatchObject({ nextAction: "sync", reviewTargets: ["frontend"] });
+    }
+    await qa.call("complete", { status: "PASS" });
+    expect(await backend.call("complete", { status: "PASS" })).toMatchObject({ phaseChanged: { to: "INTEGRATE" }, nextAction: "integrate", hint: expect.stringContaining("npm test") });
+
+    // INTEGRATE: the lead merges the three branches in the main checkout and reports the merged HEAD
+    ws.git(ws.repo, "merge", "-q", "--no-edit", "backend", "frontend", "qa");
+    const merged = ws.git(ws.repo, "rev-parse", "HEAD");
+    expect(readdirSync(join(ws.repo, "src")).sort()).toEqual(["UserService.ts", "UserView.ts"]);
+    const done = await backend.call("complete", { status: "PASS", result: "main: backend+frontend+qa merged, npm test green", commits: [merged] });
+    expect(done).toMatchObject({ task: { phase: "DONE", status: "COMPLETED" }, integration: { status: "PASS", commits: [merged] } });
+    for (const a of [frontend, qa]) expect(await a.call("wait", { timeoutMs: 5_000 })).toMatchObject({ status: "DONE" });
   });
 });

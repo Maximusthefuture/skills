@@ -109,8 +109,8 @@ export async function closeAllAgents(): Promise<void> {
 }
 
 /** Create a task from outside the LLM, exactly like an operator would. */
-export function createTaskViaCli(networkDir: string, agents: string[], title = "Demo task"): any {
-  const out = execFileSync(process.execPath, [SERVER_ENTRY, "task", "create", "--title", title, "--description", `${title} description`, "--agents", agents.join(",")], {
+export function createTaskViaCli(networkDir: string, agents: string[], title = "Demo task", extra: string[] = []): any {
+  const out = execFileSync(process.execPath, [SERVER_ENTRY, "task", "create", "--title", title, "--description", `${title} description`, "--agents", agents.join(","), ...extra], {
     env: { ...process.env, NETWORK_DIR: networkDir },
   });
   return JSON.parse(out.toString());

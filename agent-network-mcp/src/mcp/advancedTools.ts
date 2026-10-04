@@ -48,7 +48,7 @@ export function registerAdvancedTools(server: McpServer, service: NetworkService
     {
       taskId,
       summary: text,
-      assignments: z.array(z.object({ agentId: z.string(), responsibility: text })).min(1).max(20),
+      assignments: z.array(z.object({ agentId: z.string(), responsibility: text, files: z.array(filePath).max(200).optional() })).min(1).max(20),
       decisions: z.array(text).max(100).optional(),
       interfaces: z.array(text).max(100).optional(),
     },
@@ -98,7 +98,7 @@ export function registerAdvancedTools(server: McpServer, service: NetworkService
   // --- sync
   tool(
     "sync_submit",
-    "Submit your sync review for the current round. Any NEEDS_FIX sends the task back to IMPLEMENT (name the agent to fix in relatedAgent); all PASS completes it.",
+    "Submit your sync review for the current round. When every reviewer reported: any NEEDS_FIX sends the task back to IMPLEMENT (name the agent to fix in relatedAgent), all PASS moves it to INTEGRATE. NEEDS_FIX needs an ERROR finding.",
     {
       taskId,
       status: z.enum(["PASS", "NEEDS_FIX"]),
@@ -117,6 +117,23 @@ export function registerAdvancedTools(server: McpServer, service: NetworkService
     async (a) => service.submitSync(a),
   );
   tool("sync_list", "List sync reports (optionally of one round).", { taskId, round: z.number().int().positive().optional() }, async (a) => ({ reports: await service.listSyncReports(a) }));
+
+  // --- integration
+  tool(
+    "integration_submit",
+    "Lead only, INTEGRATE phase: report the merged result. PASS completes the task; NEEDS_FIX (with an ERROR finding) sends it back to IMPLEMENT.",
+    {
+      taskId,
+      status: z.enum(["PASS", "NEEDS_FIX"]),
+      result: text,
+      commits: z.array(z.string().max(64)).max(200).optional(),
+      findings: z
+        .array(z.object({ severity: z.enum(["INFO", "WARNING", "ERROR"]), description: text, relatedAgent: z.string().optional(), files: z.array(filePath).max(100).optional() }))
+        .max(100)
+        .optional(),
+    },
+    async (a) => service.submitIntegration(a),
+  );
 
   // --- phase
   tool("phase_get", "Current phase, who the task is waiting on, and a hint for the next step.", { taskId }, async (a) => service.getPhase(a.taskId));

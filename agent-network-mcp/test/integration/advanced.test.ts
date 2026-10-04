@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeAllAgents, spawnAgent as spawnPlain, type SpawnOptions } from "../helpers/agentProcess.js";
 
@@ -19,7 +19,17 @@ async function project() {
   writeFileSync(join(repo, "README.md"), "# demo\n");
   git("add", ".");
   git("commit", "-q", "-m", "init");
-  return { repo, networkDir: join(repo, ".agent-network"), head: git("rev-parse", "HEAD") };
+  /** Commit files in the project; returns the commit hash. */
+  const commit = (...files: string[]) => {
+    for (const f of files) {
+      mkdirSync(dirname(join(repo, f)), { recursive: true });
+      writeFileSync(join(repo, f), `${f} ${Date.now()}\n`);
+    }
+    git("add", ...files);
+    git("commit", "-q", "-m", files.join(" "));
+    return git("rev-parse", "HEAD");
+  };
+  return { repo, networkDir: join(repo, ".agent-network"), head: git("rev-parse", "HEAD"), commit };
 }
 
 const assignments = [
@@ -41,6 +51,7 @@ describe("advanced tools", () => {
         "wait_for_event",
         "implementation_start", "implementation_complete", "implementation_list",
         "sync_submit", "sync_list",
+        "integration_submit",
         "phase_get",
       ].sort(),
     );
@@ -90,8 +101,8 @@ describe("advanced tools", () => {
 });
 
 describe("full protocol cycle with two MCP processes", () => {
-  it("DISCUSS -> IMPLEMENT -> SYNC -> NEEDS_FIX -> IMPLEMENT -> SYNC -> DONE", async () => {
-    const { networkDir } = await project();
+  it("DISCUSS -> IMPLEMENT -> SYNC -> NEEDS_FIX -> IMPLEMENT -> SYNC -> INTEGRATE -> DONE", async () => {
+    const { networkDir, commit } = await project();
     const backend = await spawnAgent({ id: "backend", networkDir, type: "qwen", role: "backend" });
     const reviewer = await spawnAgent({ id: "reviewer", networkDir, type: "qwen", role: "reviewer" });
 
@@ -132,9 +143,12 @@ describe("full protocol cycle with two MCP processes", () => {
 
     // 11-13. implementation
     await backend.call("implementation_start", { taskId: task.id });
-    expect((await backend.call("implementation_complete", { taskId: task.id, summary: "Implemented authentication API", filesChanged: ["src/auth/AuthController.java", "src/auth/AuthService.java"], commits: ["abc123"] })).phase).toBe("IMPLEMENT");
+    // the project is a git repository, so work is reported as verified commits
+    expect((await backend.callError("implementation_complete", { taskId: task.id, summary: "x", commits: ["abc123"] })).message).toContain("does not exist");
+    const api = commit("src/auth/AuthController.java", "src/auth/AuthService.java");
+    expect((await backend.call("implementation_complete", { taskId: task.id, summary: "Implemented authentication API", commits: [api] })).implementation.filesChanged).toEqual(["src/auth/AuthController.java", "src/auth/AuthService.java"]);
     await reviewer.call("implementation_start", { taskId: task.id });
-    expect((await reviewer.call("implementation_complete", { taskId: task.id, summary: "Integration tests", filesChanged: ["src/test/AuthIT.java"] })).phase).toBe("SYNC");
+    expect((await reviewer.call("implementation_complete", { taskId: task.id, summary: "Integration tests", commits: [commit("src/test/AuthIT.java")] })).phase).toBe("SYNC");
     expect((await reviewer.call("implementation_list", { taskId: task.id })).implementations.map((i: any) => i.status)).toEqual(["READY_FOR_SYNC", "READY_FOR_SYNC"]);
 
     // 14-16. backend PASS, reviewer NEEDS_FIX -> back to IMPLEMENT
@@ -148,21 +162,23 @@ describe("full protocol cycle with two MCP processes", () => {
     expect((await backend.call("phase_get", { taskId: task.id })).waitingOn).toEqual(["reviewer"]);
 
     // 17-19. reviewer fixes -> SYNC again
-    expect((await reviewer.call("implementation_complete", { taskId: task.id, summary: "Switched ids to UUID", filesChanged: ["src/test/AuthIT.java"], commits: ["def456"] })).phase).toBe("SYNC");
+    expect((await reviewer.call("implementation_complete", { taskId: task.id, summary: "Switched ids to UUID", commits: [commit("src/test/AuthIT.java")] })).phase).toBe("SYNC");
 
-    // 20-22. both PASS -> DONE
-    expect((await backend.call("sync_submit", { taskId: task.id, status: "PASS" })).phase).toBe("SYNC");
-    expect((await reviewer.call("sync_submit", { taskId: task.id, status: "PASS" })).phase).toBe("DONE");
+    // 20-22. round 2 reviews only the reviewer's fix (backend reviews) -> INTEGRATE; the lead integrates -> DONE
+    expect((await backend.call("phase_get", { taskId: task.id })).waitingOn).toEqual(["backend"]);
+    expect((await backend.call("sync_submit", { taskId: task.id, status: "PASS" })).phase).toBe("INTEGRATE");
+    expect((await reviewer.callError("integration_submit", { taskId: task.id, status: "PASS", result: "merged" })).code).toBe("NOT_ASSIGNED");
+    expect((await backend.call("integration_submit", { taskId: task.id, status: "PASS", result: "one branch, tests green", commits: [commit("MERGED.md")] })).phase).toBe("DONE");
     expect(await backend.call("task_get", { taskId: task.id })).toMatchObject({ phase: "DONE", status: "COMPLETED", syncRound: 2 });
-    expect((await backend.call("sync_list", { taskId: task.id })).reports).toHaveLength(4);
+    expect((await backend.call("sync_list", { taskId: task.id })).reports).toHaveLength(3);
 
     // every important action left an event on disk
     const eventTypes = new Set(readdirSync(join(networkDir, "tasks", task.id, "events")).map((f) => JSON.parse(readFileSync(join(networkDir, "tasks", task.id, "events", f), "utf8")).type));
-    for (const t of ["TASK_CREATED", "MESSAGE_CREATED", "AGREEMENT_UPDATED", "AGREEMENT_APPROVED", "PHASE_CHANGED", "IMPLEMENTATION_STARTED", "IMPLEMENTATION_COMPLETED", "SYNC_REQUIRED", "SYNC_REPORT_CREATED", "TASK_COMPLETED"]) {
+    for (const t of ["TASK_CREATED", "MESSAGE_CREATED", "AGREEMENT_UPDATED", "AGREEMENT_APPROVED", "PHASE_CHANGED", "IMPLEMENTATION_STARTED", "IMPLEMENTATION_COMPLETED", "SYNC_REQUIRED", "SYNC_REPORT_CREATED", "INTEGRATION_REQUIRED", "INTEGRATION_REPORT_CREATED", "TASK_COMPLETED"]) {
       expect(eventTypes, t).toContain(t);
     }
     expect(readdirSync(join(networkDir, "events"))).toHaveLength(2); // AGENT_REGISTERED x2
-    expect(readdirSync(join(networkDir, "tasks", task.id)).sort()).toEqual(["agreement.json", "events", "implementations", "messages", "sync", "task.json"]);
+    expect(readdirSync(join(networkDir, "tasks", task.id)).sort()).toEqual(["agreement.json", "events", "implementations", "integration", "messages", "sync", "task.json"]);
     expect(readdirSync(join(networkDir, "tasks", task.id, "implementations")).sort()).toEqual(["backend.json", "reviewer.json"]);
     expect(readdirSync(join(networkDir, "agents")).sort()).toEqual(["backend.json", "reviewer.json"]);
   });

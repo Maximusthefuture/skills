@@ -1,7 +1,7 @@
 {
   "name": "agent-network-mcp",
   "version": "0.1.0",
-  "description": "Local stdio MCP server for protocol-driven collaboration between AI coding agents (DISCUSS -> IMPLEMENT -> SYNC -> DONE)",
+  "description": "Local stdio MCP server for protocol-driven collaboration between AI coding agents (DISCUSS -> IMPLEMENT -> SYNC -> INTEGRATE -> DONE)",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

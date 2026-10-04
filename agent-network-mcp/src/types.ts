@@ -11,8 +11,9 @@ export interface Agent {
   pid?: number;
 }
 
-export type Phase = "DISCUSS" | "IMPLEMENT" | "SYNC" | "DONE";
-export type TaskStatus = "ACTIVE" | "COMPLETED" | "CANCELLED";
+export type Phase = "DISCUSS" | "IMPLEMENT" | "SYNC" | "INTEGRATE" | "DONE";
+/** BLOCKED: the fix-round limit was reached and reviews still fail; only the operator can unblock or cancel it. */
+export type TaskStatus = "ACTIVE" | "BLOCKED" | "COMPLETED" | "CANCELLED";
 
 export interface GitContext {
   repositoryRoot: string;
@@ -35,11 +36,36 @@ export interface Task {
   git: GitContext | null;
   /** Extension: number of the current/last SYNC round; incremented on every IMPLEMENT -> SYNC. */
   syncRound: number;
+  /**
+   * How many times reviews may send the task back to IMPLEMENT. A NEEDS_FIX in round maxFixRounds + 1 blocks
+   * the task instead (status BLOCKED) until the operator unblocks or cancels it. Absent on old tasks (default 3).
+   */
+  maxFixRounds?: number;
+  /** Agents whose work the next/current SYNC round reviews: the agents that just fixed. Absent = everyone. */
+  reviewScope?: string[];
+  /** IMPLEMENT and INTEGRATE completions must name commits that are verified with git. False outside a repository. */
+  requireCommits?: boolean;
+  /** Build/test command the integrator runs on the merged result, e.g. "mvn -q verify". */
+  verifyCommand?: string;
+  /** Why the task is BLOCKED. */
+  blockedReason?: string;
 }
 
 export interface Assignment {
   agentId: string;
   responsibility: string;
+  /** Files (paths or globs) this agent owns, i.e. will change. Declarations of different agents must not overlap. */
+  files?: string[];
+}
+
+/** The owner of some files lets another agent change them. */
+export interface Grant {
+  id: string;
+  taskId: string;
+  from: string;
+  to: string;
+  files: string[];
+  createdAt: string;
 }
 
 export interface Agreement {
@@ -89,7 +115,22 @@ export interface SyncReport {
   round: number;
 }
 
-export const MESSAGE_TYPES = ["QUESTION", "PROPOSAL", "INFORMATION", "REQUEST", "BLOCKER", "FIX_REQUEST"] as const;
+/** INTEGRATE: the lead merged everyone's work and ran the build/tests on the result. */
+export interface IntegrationReport {
+  id: string;
+  taskId: string;
+  agentId: string;
+  status: SyncStatus;
+  /** What was merged, where the result is, build/test outcome. */
+  result: string;
+  commits: string[];
+  findings: SyncFinding[];
+  createdAt: string;
+  /** SYNC round this integration follows. */
+  round: number;
+}
+
+export const MESSAGE_TYPES = ["QUESTION", "PROPOSAL", "INFORMATION", "REQUEST", "BLOCKER", "FIX_REQUEST", "FILE_REQUEST", "FILE_GRANT"] as const;
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 
 export interface Message {
@@ -100,6 +141,8 @@ export interface Message {
   type: MessageType;
   content: string;
   replyTo?: string;
+  /** FILE_REQUEST / FILE_GRANT: the files in question. */
+  files?: string[];
   createdAt: string;
   readAt?: string;
 }
@@ -115,8 +158,12 @@ export const EVENT_TYPES = [
   "IMPLEMENTATION_COMPLETED",
   "SYNC_REQUIRED",
   "SYNC_REPORT_CREATED",
+  "INTEGRATION_REQUIRED",
+  "INTEGRATION_REPORT_CREATED",
   "TASK_COMPLETED",
   "TASK_CANCELLED",
+  "TASK_BLOCKED",
+  "TASK_UNBLOCKED",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

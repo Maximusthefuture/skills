@@ -6,8 +6,8 @@ import { NetworkService } from "../../src/service.js";
 import { tmpDir } from "../helpers/tmp.js";
 
 const assignments = [
-  { agentId: "backend", responsibility: "REST API" },
-  { agentId: "reviewer", responsibility: "validation" },
+  { agentId: "backend", responsibility: "REST API", files: ["src/main/**"] },
+  { agentId: "reviewer", responsibility: "validation", files: ["src/test/**"] },
 ];
 
 async function setup(ids = ["backend", "reviewer"]) {
@@ -46,6 +46,13 @@ async function toSync(s: Awaited<ReturnType<typeof setup>>["s"]) {
   await toImplement(s);
   await s.backend.complete({ result: "api", filesChanged: ["src/Api.java"], commits: ["abc123"] });
   await s.reviewer.complete({ result: "validation", filesChanged: ["src/Validator.java"] });
+}
+
+/** From SYNC to DONE: both reviews pass, the lead integrates. */
+async function toDone(s: Awaited<ReturnType<typeof setup>>["s"]) {
+  await s.backend.complete({ status: "PASS" });
+  await s.reviewer.complete({ status: "PASS" });
+  return s.backend.complete({ status: "PASS", result: "merged, build green" });
 }
 
 describe("swarm_context", () => {
@@ -97,10 +104,21 @@ describe("swarm_context", () => {
     expect(sync).toMatchObject({ phaseChanged: { from: "IMPLEMENT", to: "SYNC" }, nextAction: "sync", allowedActions: ["send_message", "complete", "wait"] });
     expect(sync.teamImplementations).toEqual([expect.objectContaining({ agentId: "backend", filesChanged: ["src/Api.java"], commits: ["abc123"] })]);
 
+    expect(sync.reviewTargets).toEqual(["backend"]);
+
     expect(await s.backend.complete({ status: "PASS" })).toMatchObject({ action: "SYNC_PASS", nextAction: "wait" });
-    const done = await s.reviewer.complete({ status: "PASS" });
-    expect(done).toMatchObject({ task: { phase: "DONE", status: "COMPLETED" }, nextAction: "done", allowedActions: [] });
-    expect(await s.backend.context()).toMatchObject({ nextAction: "done" });
+    const integrate = await s.reviewer.complete({ status: "PASS", findings: [{ severity: "WARNING", description: "rename dto" }] });
+    expect(integrate).toMatchObject({ phaseChanged: { from: "SYNC", to: "INTEGRATE" }, nextAction: "wait", waitingOn: ["backend"] });
+    const lead = await s.backend.context();
+    expect(lead).toMatchObject({ nextAction: "integrate", allowedActions: ["send_message", "complete", "wait"], task: { lead: "backend", maxFixRounds: 3 } });
+    expect(lead.exampleCall).toMatchObject({ tool: "complete", args: { status: "PASS" } });
+    expect(await failure(s.backend, s.backend.complete({ status: "PASS" }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("'result'") });
+    expect(await failure(s.backend, s.backend.complete({ status: "PASS", result: "x", filesChanged: ["a"] }))).toMatchObject({ error: "INVALID_INPUT" });
+    expect(await failure(s.reviewer, s.reviewer.complete({ status: "PASS", result: "x" }))).toMatchObject({ error: "NOT_ASSIGNED" });
+
+    const done = await s.backend.complete({ status: "PASS", result: "merged into main, tests green", commits: ["abc999"] });
+    expect(done).toMatchObject({ action: "INTEGRATION_PASS", task: { phase: "DONE", status: "COMPLETED" }, nextAction: "done", allowedActions: [], integration: { status: "PASS", commits: ["abc999"] } });
+    expect(await s.reviewer.context()).toMatchObject({ nextAction: "done" });
   });
 
   it("gives a ready-to-copy exampleCall with the real agent ids", async () => {
@@ -108,7 +126,7 @@ describe("swarm_context", () => {
     await task();
     const lead = await s.backend.context();
     expect(lead.exampleCall).toMatchObject({ tool: "propose", args: { assignments: [{ agentId: "backend" }, { agentId: "reviewer" }] } });
-    expect((await s.reviewer.context()).exampleCall).toEqual({ tool: "wait", args: { timeoutMs: 30000 } });
+    expect((await s.reviewer.context()).exampleCall).toEqual({ tool: "wait", args: {} });
     await s.backend.propose({ summary: "s", assignments });
     expect((await s.reviewer.context()).exampleCall).toEqual({ tool: "complete", args: {} });
   });
@@ -141,8 +159,7 @@ describe("swarm_context", () => {
     await task(["backend", "reviewer"], "second");
     expect((await s.backend.context()).task).toMatchObject({ id: "task-001", title: "first" });
     await toSync(s);
-    await s.backend.complete({ status: "PASS" });
-    await s.reviewer.complete({ status: "PASS" });
+    await toDone(s);
     expect((await s.backend.context()).task).toMatchObject({ id: "task-002", title: "second", phase: "DISCUSS" });
   });
 });
@@ -160,9 +177,50 @@ describe("NEEDS_FIX loop", () => {
     expect(backend).toMatchObject({ nextAction: "fix", implementation: { status: "IN_PROGRESS" } });
     expect(backend.fixRequests).toEqual([expect.objectContaining({ reportedBy: "reviewer", forYou: true, description: "API returns Long, DB uses UUID" })]);
 
-    expect(await s.backend.complete({ result: "switched to UUID", commits: ["def456"] })).toMatchObject({ phaseChanged: { to: "SYNC" }, task: { syncRound: 2 }, nextAction: "sync" });
+    // round 2 reviews only backend's fix: reviewer reviews, backend has nothing to review
+    expect(await s.backend.complete({ result: "switched to UUID", commits: ["def456"] })).toMatchObject({ phaseChanged: { to: "SYNC" }, task: { syncRound: 2 }, nextAction: "wait", waitingOn: ["reviewer"] });
+    expect(await s.reviewer.context()).toMatchObject({ nextAction: "sync", reviewTargets: ["backend"] });
+    expect(await failure(s.backend, s.backend.complete({ status: "PASS" }))).toMatchObject({ error: "NOT_ASSIGNED", nextAction: "wait" });
+    expect(await s.reviewer.complete({ status: "PASS" })).toMatchObject({ phaseChanged: { to: "INTEGRATE" } });
+    expect(await s.backend.complete({ status: "PASS", result: "merged" })).toMatchObject({ task: { phase: "DONE" } });
+  });
+
+  it("NEEDS_FIX needs an ERROR finding; WARNING-only findings go with PASS", async () => {
+    const { s, task } = await setup();
+    await task();
+    await toSync(s);
+    expect(await failure(s.backend, s.backend.complete({ status: "NEEDS_FIX", findings: [{ severity: "WARNING", description: "style" }] }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("ERROR"), nextAction: "sync" });
+    expect(await s.backend.complete({ status: "PASS", findings: [{ severity: "WARNING", description: "style" }] })).toMatchObject({ action: "SYNC_PASS" });
+  });
+
+  it("integration failure sends the named agent back with fixRequests", async () => {
+    const { s, task } = await setup();
+    await task();
+    await toSync(s);
+    await s.backend.complete({ status: "PASS" });
     await s.reviewer.complete({ status: "PASS" });
-    expect(await s.backend.complete({ status: "PASS" })).toMatchObject({ task: { phase: "DONE" } });
+    const res = await s.backend.complete({ status: "NEEDS_FIX", result: "merge conflict-free, ValidatorTest fails", findings: [{ severity: "ERROR", description: "ValidatorTest expects 422", relatedAgent: "reviewer" }] });
+    expect(res).toMatchObject({ action: "INTEGRATION_NEEDS_FIX", phaseChanged: { from: "INTEGRATE", to: "IMPLEMENT" }, nextAction: "wait" });
+    const reviewer = await s.reviewer.context();
+    expect(reviewer).toMatchObject({ nextAction: "fix" });
+    expect(reviewer.fixRequests).toEqual([expect.objectContaining({ reportedBy: "backend", forYou: true, description: "ValidatorTest expects 422" })]);
+  });
+
+  it("a BLOCKED task tells everyone to wait and wakes waiting agents", async () => {
+    const { s, operator } = await setup();
+    await operator.createTaskAsOperator({ title: "limited", description: "d", agents: ["backend", "reviewer"], maxFixRounds: 0 });
+    await toSync(s);
+    await s.backend.complete({ status: "PASS" });
+    const waiting = s.backend.wait({ timeoutMs: 10_000 });
+    await new Promise((r) => setTimeout(r, 150));
+    await s.reviewer.complete({ status: "NEEDS_FIX", findings: [{ severity: "ERROR", description: "broken", relatedAgent: "backend" }] });
+    const woke = await waiting;
+    expect(woke).toMatchObject({ status: "UPDATED", nextAction: "wait", task: { status: "BLOCKED", blockedReason: expect.stringContaining("limit of 0") }, waitingOn: ["operator"] });
+    expect(woke.hint).toContain("operator");
+    // a blocked task stays the current one: no new task may be created by an agent meanwhile
+    expect(await failure(s.backend, s.backend.createTask({ title: "x", description: "y".repeat(50), agents: ["reviewer"] }))).toMatchObject({ error: "HAS_ACTIVE_TASK" });
+    await operator.unblockTask("task-001");
+    expect(await s.backend.context()).toMatchObject({ nextAction: "fix", task: { status: "ACTIVE", maxFixRounds: 1 } });
   });
 });
 
@@ -193,7 +251,7 @@ describe("tool misuse (state is never corrupted, errors are actionable)", () => 
     expect(await failure(s.backend, s.backend.propose({}))).toMatchObject({ error: "INVALID_INPUT", taskAgents: ["backend", "reviewer"] });
     expect(await failure(s.backend, s.backend.propose({ summary: "s" }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("backend, reviewer") });
     expect(await failure(s.backend, s.backend.propose({ summary: "s", assignments: [assignments[0]!] }))).toMatchObject({ error: "INVALID_INPUT" });
-    expect(await failure(s.backend, s.backend.propose({ summary: "s", assignments: [...assignments, { agentId: "stranger", responsibility: "x" }] }))).toMatchObject({ error: "NOT_ASSIGNED" });
+    expect(await failure(s.backend, s.backend.propose({ summary: "s", assignments: [...assignments, { agentId: "stranger", responsibility: "x", files: ["x/**"] }] }))).toMatchObject({ error: "NOT_ASSIGNED" });
   });
 
   it("actions with no task", async () => {
@@ -253,8 +311,7 @@ describe("tool misuse (state is never corrupted, errors are actionable)", () => 
     const { s, task } = await setup();
     await task();
     await toSync(s);
-    await s.backend.complete({ status: "PASS" });
-    await s.reviewer.complete({ status: "PASS" });
+    await toDone(s);
     expect(await failure(s.backend, s.backend.complete({ status: "PASS" }))).toMatchObject({ error: "INVALID_PHASE", currentPhase: "DONE", nextAction: "done" });
   });
 
@@ -306,8 +363,19 @@ describe("wait", () => {
     await s.backend.sendMessage({ to: "reviewer", message: "ping" });
     const res = await s.reviewer.wait({ timeoutMs: 10_000 });
     expect(res).toMatchObject({ status: "MESSAGES", pendingMessages: [expect.objectContaining({ content: "ping" })] });
-    // waiting again acknowledges what was shown; nothing else to do -> times out
-    expect(await s.reviewer.wait({ timeoutMs: 150 })).toMatchObject({ status: "TIMEOUT", pendingMessages: [] });
+    // waiting again acknowledges what was shown; nothing else to do -> times out with a short answer
+    const timeout = await s.reviewer.wait({ timeoutMs: 150 });
+    expect(timeout).toMatchObject({ status: "TIMEOUT", pendingMessages: [], nextAction: "wait", task: { id: "task-001", phase: "DISCUSS" } });
+    expect(Object.keys(timeout).sort()).toEqual(["allowedActions", "hint", "nextAction", "pendingMessages", "status", "task", "waitingOn"]);
+  });
+
+  it("uses the configured default timeout when the agent passes none", async () => {
+    const { services } = await setup();
+    const quick = new Swarm(services.reviewer!, undefined, { defaultWaitMs: 100 });
+    expect(quick.defaultWaitMs).toBe(100);
+    const started = Date.now();
+    expect(await quick.wait({})).toMatchObject({ status: "TIMEOUT" });
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it("blocks until another agent produces work, then wakes with ACTION_REQUIRED", async () => {
@@ -332,7 +400,7 @@ describe("wait", () => {
     const { s, task } = await setup(["backend", "reviewer", "qa"]);
     await task(["backend", "reviewer", "qa"]);
     await s.backend.context();
-    await s.backend.propose({ summary: "s", assignments: [...assignments, { agentId: "qa", responsibility: "qa" }] });
+    await s.backend.propose({ summary: "s", assignments: [...assignments, { agentId: "qa", responsibility: "qa", files: ["qa/**"] }] });
     await s.reviewer.context();
     await s.reviewer.complete({}); // approved; now waits for backend and qa
     const started = Date.now();
@@ -349,9 +417,8 @@ describe("wait", () => {
     const { s, task } = await setup();
     await task();
     await toSync(s);
-    await s.backend.complete({ status: "PASS" });
-    await s.reviewer.complete({ status: "PASS" });
-    expect(await s.backend.wait({ timeoutMs: 5_000 })).toMatchObject({ status: "DONE", nextAction: "done" });
+    await toDone(s);
+    expect(await s.reviewer.wait({ timeoutMs: 5_000 })).toMatchObject({ status: "DONE", nextAction: "done" });
   });
 
   it("wakes up on a phase change caused by the other agent", async () => {
@@ -449,5 +516,94 @@ describe("operator cancel", () => {
     expect(await w2).toMatchObject({ status: "UPDATED", task: null });
     await waiting.catch(() => undefined);
     await expect(operator.cancelTask("task-001")).rejects.toMatchObject({ code: "ALREADY_COMPLETED" });
+  });
+});
+
+describe("file ownership and negotiation", () => {
+  async function inImplement() {
+    const net = await setup();
+    await net.task();
+    await toImplement(net.s);
+    return net;
+  }
+
+  it("propose requires files per agent and rejects overlapping claims", async () => {
+    const { s, task } = await setup();
+    await task();
+    await s.backend.context();
+    expect(await failure(s.backend, s.backend.propose({ summary: "s", assignments: [{ agentId: "backend", responsibility: "a" }, { agentId: "reviewer", responsibility: "b" }] }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("backend, reviewer") });
+    const err = await failure(
+      s.backend,
+      s.backend.propose({
+        summary: "s",
+        assignments: [
+          { agentId: "backend", responsibility: "a", files: ["src/main/**"] },
+          { agentId: "reviewer", responsibility: "b", files: ["src/main/A.java", "src/test/**"] },
+        ],
+      }),
+    );
+    expect(err).toMatchObject({ error: "FILE_OVERLAP", overlaps: [{ agents: ["backend", "reviewer"], files: ["src/main/**", "src/main/A.java"] }] });
+    expect(err.message).toContain("ONE owner");
+    expect((await s.backend.context()).agreement).toBeNull(); // nothing was stored
+  });
+
+  it("swarm_context shows who owns what", async () => {
+    const { s } = await inImplement();
+    expect(await s.backend.context()).toMatchObject({ ownership: { yourFiles: ["src/main/**"], othersFiles: [{ agentId: "reviewer", files: ["src/test/**"] }], grantedToYou: [], grantedByYou: [] } });
+  });
+
+  it("complete is refused for another agent's file; unowned files only warn", async () => {
+    const { s } = await inImplement();
+    const err = await failure(s.backend, s.backend.complete({ result: "x", filesChanged: ["src/main/A.java", "src/test/ATest.java"] }));
+    expect(err).toMatchObject({ error: "FILE_NOT_OWNED", nextAction: "implement", notYours: [{ file: "src/test/ATest.java", owners: ["reviewer"] }], yourFiles: ["src/main/**"] });
+    expect(err.message).toContain("requestFiles");
+    expect((await s.backend.context()).implementation).toMatchObject({ status: "IN_PROGRESS" });
+
+    const ok = await s.backend.complete({ result: "x", filesChanged: ["src/main/A.java", "pom.xml"] });
+    expect(ok).toMatchObject({ action: "IMPLEMENTATION_COMPLETED", warnings: [expect.stringContaining("pom.xml")] });
+  });
+
+  it("request -> grant -> complete: the owner lets the other agent change its file", async () => {
+    const { s } = await inImplement();
+    const req = await s.backend.sendMessage({ to: "reviewer", message: "I need to adjust the test helper for my change", requestFiles: ["src/test/Helper.java"] });
+    expect(req).toMatchObject({ action: "FILES_REQUESTED", requested: ["src/test/Helper.java"] });
+
+    const seen = await s.reviewer.context();
+    expect(seen.pendingMessages).toEqual([expect.objectContaining({ from: "backend", type: "FILE_REQUEST", files: ["src/test/Helper.java"] })]);
+    expect(await s.reviewer.context()).toMatchObject({ pendingMessages: [expect.objectContaining({ type: "FILE_REQUEST" })] }); // idempotent
+
+    const granted = await s.reviewer.sendMessage({ to: "backend", message: "ok, only that helper", grantFiles: ["src/test/Helper.java"] });
+    expect(granted).toMatchObject({ action: "FILES_GRANTED", granted: ["src/test/Helper.java"], ownership: { grantedByYou: [{ to: "backend", files: ["src/test/Helper.java"] }] } });
+
+    const backend = await s.backend.context();
+    expect(backend.pendingMessages).toEqual([expect.objectContaining({ type: "FILE_GRANT", files: ["src/test/Helper.java"] })]);
+    expect(backend.ownership).toMatchObject({ grantedToYou: [{ file: "src/test/Helper.java", from: "reviewer" }] });
+
+    expect(await s.backend.complete({ result: "x", filesChanged: ["src/main/A.java", "src/test/Helper.java"] })).toMatchObject({ action: "IMPLEMENTATION_COMPLETED" });
+    // the grant does not extend to other files of the owner
+    const { s: s2 } = await inImplement();
+    await s2.reviewer.sendMessage({ to: "backend", message: "take it", grantFiles: ["src/test/Helper.java"] });
+    expect(await failure(s2.backend, s2.backend.complete({ result: "x", filesChanged: ["src/test/Other.java"] }))).toMatchObject({ error: "FILE_NOT_OWNED" });
+  });
+
+  it("only owners can grant, and requests go to the actual owner", async () => {
+    const { s } = await inImplement();
+    expect(await failure(s.reviewer, s.reviewer.sendMessage({ to: "backend", message: "m", grantFiles: ["src/main/A.java"] }))).toMatchObject({ error: "FILE_NOT_OWNED", notYours: ["src/main/A.java"], yourFiles: ["src/test/**"] });
+    expect(await failure(s.backend, s.backend.sendMessage({ to: "reviewer", message: "m", requestFiles: ["src/main/A.java"] }))).toMatchObject({ error: "INVALID_INPUT", owners: { "src/main/A.java": ["backend"] } });
+    expect(await failure(s.backend, s.backend.sendMessage({ to: "reviewer", message: "m", requestFiles: ["a"], grantFiles: ["b"] }))).toMatchObject({ error: "INVALID_INPUT" });
+    expect(await failure(s.reviewer, s.reviewer.sendMessage({ to: "backend", message: "m", grantFiles: ["../../etc/passwd"] }))).toMatchObject({ error: "INVALID_INPUT" });
+  });
+
+  it("requests need an agreement with files", async () => {
+    const { s, task } = await setup();
+    await task();
+    await s.reviewer.context();
+    expect(await failure(s.backend, s.backend.sendMessage({ to: "reviewer", message: "m", requestFiles: ["src/A.java"] }))).toMatchObject({ error: "AGREEMENT_NOT_READY" });
+  });
+
+  it("a glob grant covered by the owner's glob is accepted", async () => {
+    const { s } = await inImplement();
+    await s.reviewer.sendMessage({ to: "backend", message: "whole fixtures dir", grantFiles: ["src/test/fixtures/**"] });
+    expect(await s.backend.complete({ result: "x", filesChanged: ["src/test/fixtures/a.json"] })).toMatchObject({ action: "IMPLEMENTATION_COMPLETED" });
   });
 });

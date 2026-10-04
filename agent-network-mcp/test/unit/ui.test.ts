@@ -25,12 +25,32 @@ async function network() {
 }
 
 describe("buildUiState", () => {
+  it("shows a BLOCKED task as waiting on the operator, and integration reports", async () => {
+    const { dir, operator, mk } = await network();
+    const backend = await mk("backend");
+    const reviewer = await mk("reviewer");
+    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], maxFixRounds: 0, verifyCommand: "npm test" });
+    await backend.swarm.propose({ summary: "s", assignments: [{ agentId: "backend", responsibility: "a", files: ["a/**"] }, { agentId: "reviewer", responsibility: "b", files: ["b/**"] }] });
+    await reviewer.swarm.context();
+    await reviewer.swarm.complete({});
+    await backend.swarm.complete({});
+    await backend.swarm.complete({ result: "a" });
+    await reviewer.swarm.complete({ result: "b" });
+    await backend.swarm.complete({ status: "PASS" });
+    await reviewer.swarm.complete({ status: "PASS" });
+    await backend.swarm.complete({ status: "NEEDS_FIX", result: "tests fail", findings: [{ severity: "ERROR", description: "b breaks a", relatedAgent: "reviewer" }] });
+
+    const state = await buildUiState(await FileStore.open(dir));
+    expect(state.tasks[0]).toMatchObject({ phase: "INTEGRATE", status: "BLOCKED", waitingOn: ["operator"], maxFixRounds: 0, verifyCommand: "npm test", blockedReason: expect.stringContaining("limit") });
+    expect(state.tasks[0]!.integrations).toEqual([expect.objectContaining({ status: "NEEDS_FIX", result: "tests fail" })]);
+  });
+
   it("shows agents, tasks, phase, waiting-on, assignments, messages and events", async () => {
     const { dir, operator, mk } = await network();
     const backend = await mk("backend");
     await operator.createTaskAsOperator({ title: "Reg", description: "d", agents: ["backend", "reviewer"] });
     await backend.swarm.sendMessage({ to: "reviewer", message: "hello" });
-    await backend.swarm.propose({ summary: "plan", assignments: [{ agentId: "backend", responsibility: "api" }, { agentId: "reviewer", responsibility: "tests" }] });
+    await backend.swarm.propose({ summary: "plan", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/main/**"] }, { agentId: "reviewer", responsibility: "tests", files: ["src/test/**"] }] });
 
     const state = await buildUiState(await FileStore.open(dir));
     expect(state.agents).toEqual([expect.objectContaining({ id: "backend", effectiveStatus: "ONLINE", tasks: ["task-001"] })]);

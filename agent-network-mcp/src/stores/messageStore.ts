@@ -10,6 +10,7 @@ export interface NewMessage {
   type: MessageType;
   content: string;
   replyTo?: string;
+  files?: string[];
 }
 
 export interface MessageFilter {
@@ -34,6 +35,7 @@ export class MessageStore {
       type: input.type,
       content: input.content,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      ...(input.files?.length ? { files: input.files } : {}),
       createdAt: new Date().toISOString(),
     }));
   }

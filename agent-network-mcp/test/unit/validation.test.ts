@@ -41,6 +41,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...env, AGENT_ID: "a,../b" })).toThrow(/AGENT_ID/);
     expect(() => loadConfig({ ...env, AGENT_ID: "a," })).toThrow(/AGENT_ID/);
   });
+  it("reads the default wait timeout", () => {
+    expect(loadConfig({ ...env, AGENT_NETWORK_WAIT_MS: "50000" }).waitMs).toBe(50000);
+    expect(loadConfig(env).waitMs).toBeUndefined();
+    expect(() => loadConfig({ ...env, AGENT_NETWORK_WAIT_MS: "10" })).toThrow(/AGENT_NETWORK_WAIT_MS/);
+    expect(() => loadConfig({ ...env, AGENT_NETWORK_WAIT_MS: "999999" })).toThrow(/AGENT_NETWORK_WAIT_MS/);
+  });
   it("normalizes NETWORK_DIR", () => {
     expect(loadConfig({ ...env, NETWORK_DIR: "/tmp/p/x/../.agent-network" }).networkDir).toBe("/tmp/p/.agent-network");
   });

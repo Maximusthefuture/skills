@@ -4,9 +4,11 @@
 (Qwen CLI, Claude Code, Codex, ...) совместно выполняют одну задачу по жёсткому протоколу:
 
 ```
-DISCUSS ──agreement одобрен всеми──▶ IMPLEMENT ──все READY_FOR_SYNC──▶ SYNC ──все PASS──▶ DONE
-                                         ▲                               │
-                                         └────────── любой NEEDS_FIX ────┘
+DISCUSS ──agreement одобрен всеми──▶ IMPLEMENT ──все READY_FOR_SYNC──▶ SYNC ──все PASS──▶ INTEGRATE ──PASS──▶ DONE
+                                         ▲                               │                   │
+                                         ├───── NEEDS_FIX (ERROR) ───────┘                   │
+                                         └───── NEEDS_FIX (сборка/тесты/конфликт) ───────────┘
+              после maxFixRounds неудачных раундов задача BLOCKED → оператор: task unblock / task cancel
 ```
 
 **Главный принцип: LLM не управляет workflow.** Фазой, одобрениями, статусами и переходами владеет сервер. Агент только
@@ -47,7 +49,8 @@ npm run build          # собирает dist/ (его запускают CLI-�
 ```bash
 node dist/index.js task create --network-dir /abs/path/project/.agent-network \
   --agents backend,reviewer --title "Короткое название" \
-  --description "Что именно сделать, в каких файлах, какой контракт, кто что делает"
+  --description "Что именно сделать, в каких файлах, какой контракт, кто что делает" \
+  --verify "mvn -q verify"          # необязательно: чем lead проверяет слитый результат
 ```
 
 Либо попросите одного из запущенных агентов: «Создай задачу для reviewer: <конкретное описание>» (агент вызовет `create_task`;
@@ -114,6 +117,9 @@ claude mcp get agent-network     # должно быть ✔ Connected
 
 ### Codex CLI *(не проверялось)*
 
+У Codex таймаут вызова tool по умолчанию 60 с, а `wait` по умолчанию ждёт 120 с: добавьте в `env`
+`AGENT_NETWORK_WAIT_MS = "50000"`.
+
 Конфиг глобальный (`~/.codex/config.toml`), поэтому идентичность удобнее задавать пулом:
 
 ```toml
@@ -134,9 +140,11 @@ CLI не бывает.
 
 ### Два агента в одной папке или в worktree?
 
-Для проверки протокола и небольших задач с непересекающимися файлами хватает одной папки проекта. Для настоящей
-параллельной работы заведите по git worktree на агента (`git worktree add ../proj-backend -b swarm-backend`) и в каждом
-положите конфиг MCP с общим `NETWORK_DIR`. Скрипт [scripts/qwen-demo.sh](scripts/qwen-demo.sh) собирает такой стенд с нуля
+Для проверки протокола и небольших задач с непересекающимися файлами хватает одной папки проекта (но параллельные
+сборки в одной папке мешают друг другу: общий `target/`, `node_modules/.cache`). Для настоящей параллельной работы
+заведите по git worktree на агента (`git worktree add ../proj-backend -b swarm-backend`) и в каждом положите конфиг MCP
+с общим `NETWORK_DIR`. Worktree одного репозитория делят базу объектов, поэтому коммит из любого worktree виден серверу
+и остальным агентам по хэшу; ветки агентов в конце сливает lead (фаза INTEGRATE). Скрипт [scripts/qwen-demo.sh](scripts/qwen-demo.sh) собирает такой стенд с нуля
 (демо-репозиторий, два worktree, конфиги Qwen, готовая задача).
 
 ---
@@ -146,16 +154,34 @@ CLI не бывает.
 | Фаза | Что происходит | Переход дальше |
 |---|---|---|
 | **DISCUSS** | Агенты обсуждают (`send_message`), один делает `propose` (agreement: summary, **по одному assignment на каждого агента**, decisions, interfaces), все делают `complete()` = approve | все assigned агентов одобрили → **IMPLEMENT** (автоматически) |
-| **IMPLEMENT** | Каждый работает над своим assignment, затем `complete({result, filesChanged, commits})` | все `READY_FOR_SYNC` → **SYNC** (автоматически) |
-| **SYNC** | Каждый проверяет работу остальных и сдаёт `complete({status: PASS \| NEEDS_FIX, findings})` | любой `NEEDS_FIX` → **IMPLEMENT**; все `PASS` → **DONE** |
+| **IMPLEMENT** | Каждый работает над своим assignment, коммитит свои файлы, затем `complete({result, filesChanged, commits})` | все `READY_FOR_SYNC` → **SYNC** (автоматически) |
+| **SYNC** | Ревьюеры проверяют чужую работу (`reviewTargets`) и сдают `complete({status: PASS \| NEEDS_FIX, findings})` | когда отчитались **все** ревьюеры раунда: хоть один `NEEDS_FIX` → **IMPLEMENT**, иначе → **INTEGRATE** |
+| **INTEGRATE** | Lead (первый в `--agents`) сливает коммиты всех, запускает сборку и все тесты (`verifyCommand`), сдаёт `complete({status, result, commits, findings?})` | `PASS` → **DONE**; `NEEDS_FIX` → **IMPLEMENT** |
 | **DONE** | Задача завершена | — |
 
-Допустимы только переходы `DISCUSS→IMPLEMENT`, `IMPLEMENT→SYNC`, `SYNC→DONE`, `SYNC→IMPLEMENT` (`PhaseManager`, любой
-другой даёт `INVALID_TRANSITION`). Фаза меняется только как следствие протокольных действий агентов.
+Допустимы только переходы `DISCUSS→IMPLEMENT`, `IMPLEMENT→SYNC`, `SYNC→INTEGRATE`, `SYNC→IMPLEMENT`, `INTEGRATE→DONE`,
+`INTEGRATE→IMPLEMENT` (`PhaseManager`, любой другой даёт `INVALID_TRANSITION`). Фаза меняется только как следствие
+протокольных действий агентов.
 
-**Цикл исправлений.** `NEEDS_FIX` возвращает задачу в IMPLEMENT *сразу* (не дожидаясь остальных отчётов). Чинят агенты,
-названные в `findings[].relatedAgent`; если не назван никто, переделывают все. Остальные остаются `READY_FOR_SYNC`. После
-исправлений начинается новый раунд SYNC (`syncRound`), в зачёт идут только PASS текущего раунда.
+**Раунд ревью собирается целиком.** `NEEDS_FIX` не прерывает раунд: задача ждёт отчётов всех ревьюеров и только потом
+уходит в IMPLEMENT. Так ничья проверка не пропадает, а исправляющий получает все замечания сразу (`fixRequests`).
+
+**`NEEDS_FIX` только для ERROR.** `NEEDS_FIX` требует хотя бы одного finding с `severity: ERROR` (дефект или нарушение
+agreement); `WARNING`/`INFO` сдаются вместе с `PASS` как заметки. `PASS` с ERROR-находкой отклоняется. Чинят агенты,
+названные в `relatedAgent` ERROR-находок; если не назван никто, переделывают все. Остальные остаются `READY_FOR_SYNC`.
+
+**Повторное ревью только исправленного.** После исправлений начинается новый раунд SYNC (`syncRound`), но проверяется только
+работа исправлявших (`reviewScope`): ревьюерами становятся все остальные, исправлявший ждёт. С двумя агентами это одно ревью
+вместо двух, с тремя — два вместо шести. Если исправляли все, все ревьюят всех.
+
+**Интеграция.** Без неё в конце остались бы неслитые ветки, а общую сборку никто бы не запускал. Lead сливает ветки (или, в
+одной папке, просто берёт HEAD), запускает `verifyCommand` (или сборку и тесты проекта) и сообщает результат. Конфликт или
+красные тесты — `NEEDS_FIX` с ERROR-находкой на виновника; после исправления — ревью исправленного и снова интеграция.
+
+**Лимит раундов.** У задачи `maxFixRounds` (по умолчанию 3, `task create --max-fix-rounds N`): сколько раз ревью или
+интеграция могут вернуть её в IMPLEMENT. Если `NEEDS_FIX` приходит, когда раунды исчерпаны, задача не зацикливается, а
+получает статус `BLOCKED` (`blockedReason`), агентам говорят ждать. Оператор решает: `task unblock --id ... [--rounds N]`
+(добавляет раунды, отложенное исправление стартует сразу) или `task cancel`.
 
 **Защита от слепого approve.** `complete()` в DISCUSS одобряет только ту версию agreement, которую процесс уже показал
 агенту (в `swarm_context`, ответе `propose` или теле ошибки `AGREEMENT_NOT_REVIEWED`). Повторный `propose` заменяет
@@ -164,7 +190,21 @@ agreement, увеличивает `version` и сбрасывает одобре
 **Текущая задача.** Агент работает с самой старой `ACTIVE` задачей, где он назначен (после её завершения или отмены
 переходит к следующей). Поэтому ни один tool не принимает `taskId`.
 
-Статусы задачи: `ACTIVE`, `COMPLETED`, `CANCELLED` (отменяет оператор).
+Статусы задачи: `ACTIVE`, `BLOCKED` (исчерпан лимит раундов, ждёт оператора), `COMPLETED`, `CANCELLED` (отменяет оператор).
+Заблокированная задача остаётся текущей для своих агентов, пока оператор её не разблокирует или не отменит.
+
+### Коммиты
+
+Если `NETWORK_DIR` лежит в git-репозитории с хотя бы одним коммитом, задача требует коммитов (`requireCommits`; выключается
+`task create --no-commits`). Коммиты — единственный способ увидеть работу агента из другого worktree.
+
+- `complete` в IMPLEMENT без `commits` отклоняется. Каждый коммит проверяется через `git`: существует и сделан поверх
+  базового коммита задачи (`task.git.commit`), то есть для этой задачи.
+- Файлы, затронутые коммитами, считаются изменёнными, что бы агент ни перечислил в `filesChanged`. Проверка владения
+  идёт по ним: незаявленная правка чужого файла в коммите даёт `FILE_NOT_OWNED`. Файлы из `filesChanged`, которых нет в
+  коммитах, дают предупреждение «не закоммичено».
+- `complete({status: "PASS"})` в INTEGRATE требует `commits` с HEAD слитого результата.
+- Вне git-репозитория (или с `--no-commits`) коммиты необязательны и не проверяются.
 
 ---
 
@@ -175,12 +215,34 @@ agreement, увеличивает `version` и сбрасывает одобре
 
 | Tool | Аргументы | Что делает |
 |---|---|---|
-| `swarm_context` | — | Всё для решения «что дальше»: задача, фаза, ваше assignment, другие агенты, `pendingMessages`, agreement, implementations коллег (`teamImplementations`), `fixRequests`, `allowedActions`, `nextAction`, `hint`, `exampleCall`. Только чтение, можно звать когда угодно |
-| `create_task` | `title`, `description`, `agents` (обязательны) | Начать новую задачу, **только если пользователь попросил**. Создатель становится lead; `agents` — id *других* зарегистрированных агентов. Подробнее ниже |
-| `send_message` | `to`, `message` (обязательны) | Сообщение одному другому агенту задачи |
-| `propose` | `summary`, `assignments[{agentId, responsibility}]` (обязательны), `decisions?`, `interfaces?` | Только DISCUSS: предложить/заменить agreement |
-| `complete` | зависит от фазы | DISCUSS: без аргументов, одобрить agreement. IMPLEMENT: `{result, filesChanged?, commits?}`. SYNC: `{status, findings?}`; `NEEDS_FIX` требует `findings` (`severity` INFO/WARNING/ERROR, `description`, `relatedAgent?`, `files?`). Аргументы чужой фазы отклоняются |
-| `wait` | `timeoutMs?` (по умолчанию 30000, максимум 300000) | Блокируется, пока агенту нечего делать |
+| `swarm_context` | — | Всё для решения «что дальше»: задача (с `lead`, `maxFixRounds`, `verifyCommand`, `blockedReason`), фаза, ваше assignment, другие агенты, `pendingMessages`, agreement, implementations коллег (`teamImplementations`), в SYNC `reviewTargets`, `integration`, `fixRequests`, `allowedActions`, `nextAction`, `hint`, `exampleCall`. Только чтение, можно звать когда угодно |
+| `create_task` | `title`, `description`, `agents` (обязательны), `verifyCommand?` | Начать новую задачу, **только если пользователь попросил**. Создатель становится lead; `agents` — id *других* зарегистрированных агентов. Подробнее ниже |
+| `send_message` | `to`, `message` (обязательны), `requestFiles?`, `grantFiles?` | Сообщение одному другому агенту задачи; через `requestFiles`/`grantFiles` ведутся переговоры о чужих файлах |
+| `propose` | `summary`, `assignments[{agentId, responsibility, files}]` (обязательны), `decisions?`, `interfaces?` | Только DISCUSS: предложить/заменить agreement. У каждого агента заявлены **файлы** (пути или маски), заявки не должны пересекаться |
+| `complete` | зависит от фазы | DISCUSS: без аргументов, одобрить agreement. IMPLEMENT: `{result, filesChanged?, commits}` (в git-проекте коммиты обязательны). SYNC: `{status, findings?}`; `NEEDS_FIX` требует finding с `severity: ERROR` (`description`, `relatedAgent?`, `files?`). INTEGRATE (только lead): `{status, result, commits, findings?}`. Аргументы чужой фазы отклоняются |
+| `wait` | `timeoutMs?` (по умолчанию 120000 или `AGENT_NETWORK_WAIT_MS`, максимум 300000) | Блокируется, пока агенту нечего делать |
+
+### Файлы: кто что меняет
+
+Чтобы агенты не затирали друг другу правки, в DISCUSS они сообщают друг другу, какие файлы будут менять, и закрепляют это в agreement:
+
+1. В `propose` у **каждого** агента обязательно поле `files` (пути или маски: `src/main/**`, `src/*.java`, `src/test/Foo.java`;
+   `dir/` = вся директория). У каждого файла ровно один владелец: пересекающиеся заявки сервер отклоняет с `FILE_OVERLAP` и
+   показывает, какие именно заявки конфликтуют. Одобряя agreement, агент видит файлы всех (`ownership` в `swarm_context`).
+2. В IMPLEMENT агент меняет только свои файлы. Нужен файл другого — просьба владельцу:
+   `send_message({to: owner, message: "зачем", requestFiles: ["src/test/Helper.java"]})`. Сообщение приходит владельцу с типом
+   `FILE_REQUEST` и списком файлов (сервер проверяет, что адресат действительно владелец).
+3. Владелец разрешает: `send_message({to, message: "условия", grantFiles: [...]})` (сервер проверяет, что файлы его, и записывает
+   разрешение в `tasks/task-NNN/grants/`; у получателя оно видно в `ownership.grantedToYou`). Отказ — обычное сообщение с причиной.
+4. `complete` в IMPLEMENT отклоняется с `FILE_NOT_OWNED`, если в `filesChanged` есть чужой файл без разрешения (ответ называет
+   файлы и владельцев). Файлы, которые никто не заявил, допускаются с предупреждением `warnings`: нужно сообщить остальным.
+
+Маски сравниваются точно: `src/*Controller.java` и `src/*Service.java` не пересекаются, поэтому делить файлы можно и внутри
+одной директории; `src/**/*Test.java` и `src/main/**` пересекаются (`src/main/FooTest.java`).
+
+Это договорённость, а не файловая блокировка: сервер не следит за диском. В git-проекте он сверяет заявки с реальными
+коммитами (см. [Коммиты](#коммиты)); без git — только с тем, что агенты сообщают. Для настоящей параллельной работы
+по-прежнему лучше worktree на каждого агента.
 
 ### `create_task` (задачу может создать агент)
 
@@ -188,9 +250,10 @@ agreement, увеличивает `version` и сбрасывает одобре
 ...». Агент зовёт `create_task({title, description, agents: ["reviewer"]})`; он добавляется автоматически и становится
 **lead**, остальные просыпаются со статусом `UPDATED`. Защиты от мусорных задач:
 
-- только если у агента нет активной задачи (`HAS_ACTIVE_TASK`; отменённая или завершённая не мешает);
+- только если у агента нет активной или заблокированной задачи (`HAS_ACTIVE_TASK`; отменённая или завершённая не мешает);
 - `description` не короче 40 символов, без заглушек: проблема, ожидаемое поведение, файлы, кто что делает; в описании
   слова пользователя, придумывать задание нельзя (`AGENTS.md` это требует);
+- `verifyCommand` — команда сборки/тестов для фазы INTEGRATE, только если пользователь её назвал;
 - все агенты из `agents` уже зарегистрированы (иначе `AGENT_NOT_REGISTERED` со списком `registeredAgents`), то есть сначала
   запускаются оба CLI, потом создаётся задача;
 - без активной задачи `swarm_context` показывает `allowedActions: ["create_task", "wait"]`, но `nextAction` остаётся `wait`:
@@ -204,8 +267,9 @@ agreement, увеличивает `version` и сбрасывает одобре
 | `approve` | DISCUSS | прочитать `agreement`, `complete()` одобряет, `propose` заменяет |
 | `implement` | IMPLEMENT | сделать свою часть, `complete({result, ...})` |
 | `fix` | IMPLEMENT | прочитать `fixRequests`, исправить, снова `complete` |
-| `sync` | SYNC | проверить чужую работу, `complete({status, ...})` |
-| `wait` | любая | ничего не делать, вызвать `wait()` |
+| `sync` | SYNC | проверить работу из `reviewTargets`, `complete({status, ...})` |
+| `integrate` | INTEGRATE | (lead) слить коммиты всех, прогнать сборку и тесты, `complete({status, result, commits})` |
+| `wait` | любая | ничего не делать, вызвать `wait()` (в том числе если задача `BLOCKED`) |
 | `done` | DONE | завершить работу |
 
 `exampleCall` в каждом ответе — готовый вызов с реальными id агентов (`{tool, args}`): помогает слабым моделям, которые
@@ -219,11 +283,14 @@ agreement, увеличивает `version` и сбрасывает одобре
 |---|---|
 | `MESSAGES` | есть непрочитанные сообщения (в `pendingMessages`) |
 | `ACTION_REQUIRED` | у агента появилось действие (`nextAction` ≠ `wait`) |
-| `UPDATED` | сменилась задача или фаза, но действия для агента нет (новая задача, откат в IMPLEMENT, отмена) |
+| `UPDATED` | сменилась задача, фаза или статус, но действия для агента нет (новая задача, откат в IMPLEMENT, отмена, `BLOCKED`) |
 | `DONE` | задача завершена |
 | `TIMEOUT` | ничего не произошло; просто вызвать `wait` снова |
 
-Всегда приходит свежий контекст. Если что-то уже требует внимания, `wait` возвращается сразу, так что заблокировать
+Со всеми статусами, кроме `TIMEOUT`, приходит полный свежий контекст. `TIMEOUT` отвечает коротко (`task` с id/фазой/статусом,
+`nextAction`, `allowedActions`, `waitingOn`, `hint`): пока агент ждёт медленного коллегу, каждый ход не тащит в его контекст
+agreement и все implementations заново. Таймаут по умолчанию 120 с (раньше 30 с), то есть ждущий агент тратит в 4 раза меньше
+ходов; его можно поменять через `AGENT_NETWORK_WAIT_MS`, держите его ниже таймаута вызова tool у клиента (у Codex 60 с). Если что-то уже требует внимания, `wait` возвращается сразу, так что заблокировать
 агента с работой он не может. Решение принимается по состоянию на диске, а не по самому событию.
 
 ### Сообщения
@@ -249,15 +316,15 @@ agreement, увеличивает `version` и сбрасывает одобре
 
 Плюс контекст по случаю: `validRecipients`, `taskAgents`, `agreement`, `networkDir`. Коды: `AGREEMENT_NOT_READY`,
 `AGREEMENT_NOT_REVIEWED`, `AGENT_NOT_REGISTERED`, `AGENT_ALREADY_REGISTERED`, `TASK_NOT_FOUND`, `NO_ACTIVE_TASK`,
-`INVALID_PHASE`, `INVALID_TRANSITION`, `NOT_ASSIGNED`, `ALREADY_COMPLETED`, `NOT_STARTED`, `MESSAGE_NOT_FOUND`,
-`FORBIDDEN`, `INVALID_INPUT`, `INVALID_CONFIG`, `LOCK_TIMEOUT`, `INTERNAL_ERROR`. После любой ошибки агент может
+`INVALID_PHASE`, `INVALID_TRANSITION`, `FILE_OVERLAP`, `FILE_NOT_OWNED`, `HAS_ACTIVE_TASK`, `NOT_ASSIGNED`, `ALREADY_COMPLETED`, `NOT_STARTED`, `MESSAGE_NOT_FOUND`,
+`FORBIDDEN`, `INVALID_INPUT`, `INVALID_CONFIG`, `TASK_BLOCKED`, `LOCK_TIMEOUT`, `INTERNAL_ERROR`. После любой ошибки агент может
 восстановиться вызовом `swarm_context`.
 
 ### Расширенный набор (только для отладки)
 
-С `AGENT_NETWORK_ADVANCED=1` дополнительно доступны 18 мелких tools: `agent_register`, `agent_list`, `agent_heartbeat`,
+С `AGENT_NETWORK_ADVANCED=1` дополнительно доступны 19 мелких tools: `agent_register`, `agent_list`, `agent_heartbeat`,
 `task_create`, `task_get`, `agreement_propose/approve/get`, `message_send/list/read`, `wait_for_event`,
-`implementation_start/complete/list`, `sync_submit`, `sync_list`, `phase_get`. Для обычной работы не включайте.
+`implementation_start/complete/list`, `sync_submit`, `sync_list`, `integration_submit`, `phase_get`. Для обычной работы не включайте.
 
 ---
 
@@ -266,15 +333,19 @@ agreement, увеличивает `version` и сбрасывает одобре
 Команды выполняются вне LLM. `--network-dir` (абсолютный путь) можно заменить переменной `NETWORK_DIR`.
 
 ```bash
-node dist/index.js task create --network-dir <dir> --agents backend,reviewer --title "..." [--description "..."]
-node dist/index.js task list   --network-dir <dir>      # id, title, phase, status, agents, syncRound
-node dist/index.js task cancel --network-dir <dir> --id task-001 [--reason "..."]
+node dist/index.js task create  --network-dir <dir> --agents backend,reviewer --title "..." [--description "..."] \
+                               [--verify "mvn -q verify"] [--max-fix-rounds 3] [--no-commits]
+node dist/index.js task list    --network-dir <dir>      # id, title, phase, status, agents, syncRound, maxFixRounds, blockedReason
+node dist/index.js task cancel  --network-dir <dir> --id task-001 [--reason "..."]
+node dist/index.js task unblock --network-dir <dir> --id task-001 [--rounds 1]
 node dist/index.js agent list  --network-dir <dir>      # id, type, role, status, lastSeenAt, pid
 node dist/index.js ui          --network-dir <dir> [--port 4777]
 ```
 
 - `task create` не требует, чтобы агенты уже были запущены: они подхватят задачу при старте (`swarm_context`/`wait`).
-- `task cancel` снимает задачу с работы (неверное или пустое задание). Агенты переходят к следующей задаче или ждут;
+- `task unblock` для `BLOCKED`-задачи добавляет `--rounds` раундов исправлений (по умолчанию 1) и сразу запускает отложенное
+  исправление; спящие агенты просыпаются.
+- `task cancel` (для `ACTIVE` и `BLOCKED`) снимает задачу с работы (неверное или пустое задание). Агенты переходят к следующей задаче или ждут;
   спящий `wait` просыпается со статусом `UPDATED`. Папка задачи не удаляется (иначе номера задач переиспользовались бы и
   курсоры событий у агентов разошлись бы).
 - Статусы агентов: `ONLINE`, `WORKING`, `WAITING` (сейчас в `wait`), `OFFLINE` (процесс завершился штатно).
@@ -287,12 +358,24 @@ node dist/index.js ui --network-dir /abs/path/project/.agent-network     # → h
 
 Страница обновляется раз в 2 с и показывает: агентов (статус, роль, активность, pid; `DEAD` значит, что процесс пропал,
 хотя статус не `OFFLINE`, то есть агент, скорее всего, упал; назначенные, но ещё не запущенные агенты помечены), задачи с
-переключателем фаз и номером раунда, «ждём:», таблицу по агентам (assignment и одобрение, implementation с файлами,
-sync-отчёт с findings), agreement, сообщения и события. Только `GET`, слушает `127.0.0.1`, чужие `Host` отклоняются,
+переключателем фаз (включая INTEGRATE) и номером раунда, «ждём:», пометку `BLOCKED` с причиной, таблицу по агентам
+(assignment и одобрение, implementation с файлами, sync-отчёт с findings), результат интеграции, agreement, сообщения и
+события. Только `GET`, слушает `127.0.0.1`, чужие `Host` отклоняются,
 ничего не пишет в сеть. UI смотрит ровно в тот каталог, который вы указали: если агенты работают в другом `NETWORK_DIR`,
 страница будет пустой.
 
 ---
+
+## Skill для агентов
+
+[skills/agent-network/SKILL.md](skills/agent-network/SKILL.md) — краткая инструкция для модели (цикл по `nextAction`, tools, правила);
+CLI подхватывает её как skill. Источник один, в этой папке; в проект её подключают копией или ссылкой:
+
+```bash
+# Qwen: .qwen/skills/<name>/SKILL.md   Claude Code: .claude/skills/<name>/SKILL.md
+mkdir -p /abs/project/.qwen/skills/agent-network
+ln -s /abs/path/agent-network-mcp/skills/agent-network/SKILL.md /abs/project/.qwen/skills/agent-network/SKILL.md   # или cp
+```
 
 ## Конфигурация
 
@@ -304,6 +387,7 @@ sync-отчёт с findings), agreement, сообщения и события. �
 | `NETWORK_DIR` | да | абсолютный путь к `.agent-network/` (не `/`); у всех агентов одинаковый |
 | `AGENT_TYPE` | нет | `qwen`, `claude`, ... (метка; по умолчанию `unknown`) |
 | `AGENT_ROLE` | нет | роль (метка) |
+| `AGENT_NETWORK_WAIT_MS` | нет | таймаут `wait` по умолчанию, 1000..300000 (по умолчанию 120000); ниже таймаута tool у клиента |
 | `AGENT_NETWORK_ADVANCED` | нет | `1` включает расширенные tools |
 
 Добавьте `.agent-network/` в `.gitignore` проекта. Процесс при старте регистрирует агента сам (отдельного `agent_register`
@@ -322,16 +406,17 @@ src/
 ├── mcp/
 │   ├── swarm.ts        фасад для агента: context, send_message, propose, complete, wait; nextAction/allowedActions/exampleCall
 │   ├── tools.ts        схемы и описания 5 tools
-│   ├── advancedTools.ts  18 мелких tools (AGENT_NETWORK_ADVANCED=1)
+│   ├── advancedTools.ts  19 мелких tools (AGENT_NETWORK_ADVANCED=1)
 │   ├── instructions.ts инструкции, которые MCP отдаёт клиенту
 │   └── toolkit.ts      обёртка регистрации tools и формат ответов
 ├── service.ts          протокольная логика (NetworkService), автопереходы фаз, события
-├── phase/phaseManager.ts   state machine: допустимые переходы, предусловия, кто должен чинить
+├── phase/phaseManager.ts   state machine: переходы, предусловия, кто ревьюит и чинит, лимит раундов
 ├── storage/fileStore.ts    атомарная запись, эксклюзивное создание, mkdir-lock, защита путей
-├── stores/             агенты, задачи, сообщения, события, agreement, implementations, sync-отчёты
+├── stores/             агенты, задачи, сообщения, события, agreement, implementations, sync- и integration-отчёты, grants
 ├── events/eventHub.ts  один fs.watch на процесс + резервный опрос, ожидание событий
 ├── ui/                 read-only веб-страница (state.ts, server.ts, page.ts)
-├── git.ts              repository / branch / commit через git CLI
+├── ownership.ts        владение файлами: маски, точное пересечение масок, владельцы (чистые функции)
+├── git.ts              repository / branch / commit, проверка коммитов агентов через git CLI
 ├── validation.ts       id, пути, коммиты
 └── errors.ts, types.ts
 ```
@@ -345,11 +430,13 @@ src/
 ├── cursors/<id>.json                курсоры прочитанных событий (per agent, per scope)
 ├── events/event-NNN.json            события вне задач (AGENT_REGISTERED)
 └── tasks/task-NNN/
-    ├── task.json                    фаза, статус, агенты, syncRound, git-контекст (repo, branch, commit)
+    ├── task.json                    фаза, статус, агенты, syncRound, maxFixRounds, reviewScope, git-контекст (repo, branch, commit)
     ├── agreement.json
     ├── implementations/<agent>.json
     ├── sync/sync-NNN.json
+    ├── integration/integration-NNN.json  результат INTEGRATE (раунд, коммиты, findings)
     ├── messages/msg-NNN.json
+    ├── grants/grant-NNN.json            разрешения владельца менять его файлы
     └── events/event-NNN.json
 ```
 
@@ -377,7 +464,8 @@ src/
 - Идентичность — только из `AGENT_ID`; из аргументов tools её получить нельзя.
 - Все пути строятся из проверенных сегментов, резолвятся и должны оставаться внутри `NETWORK_DIR`; запрещены `..`,
   абсолютные пути, разделители, NUL. Id задач/сообщений/агентов валидируются по шаблонам; `filesChanged`/`files` не
-  читаются с диска, это только отчёт агента, но тоже проверяются на `..` и абсолютные пути; `commits` только hex.
+  читаются с диска, это только отчёт агента, но тоже проверяются на `..` и абсолютные пути; `commits` только hex и
+  передаются в `git` только как аргументы (`execFile`, без shell). `verifyCommand` сервер не выполняет: его запускает lead.
 - Ошибки не содержат stack trace (он пишется в stderr процесса). stdout занят протоколом MCP.
 - UI только читает, слушает loopback и проверяет `Host`.
 - Аутентификации и авторизации нет: все процессы с доступом к `NETWORK_DIR` доверяют друг другу (локальная машина).
@@ -393,14 +481,16 @@ npm run test:integration
 npm run typecheck
 ```
 
-185 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
+231 тест, vitest 3 (vitest 4 требует Node ≥ 20.19):
 
 - **unit**: `FileStore` (атомарная запись, конкурентные создания, path traversal, lock), сторы, `PhaseManager` (все пары
-  переходов), `EventHub`, `NetworkService` и фасад `Swarm` (весь протокол, цикл `NEEDS_FIX`, misuse-сценарии: `complete`
-  без agreement, `propose` не в той фазе, сообщения несуществующему агенту и т. д.), UI-состояние и HTTP.
-- **integration** (реальные процессы MCP через stdio-клиент SDK): полный цикл через 5 tools, конкурентная запись из двух
-  процессов, crash recovery (`SIGKILL` + рестарт с идентичным `swarm_context`), пул идентичностей, CLI оператора,
-  схемы tools; `advanced.test.ts` проходит 22 шага исходного ТЗ через расширенные tools.
+  переходов, сбор раунда, ревью исправленного, лимит раундов), точное пересечение масок (с fuzz-проверкой), `EventHub`,
+  `NetworkService` (протокол, интеграция, `BLOCKED`/`unblock`, проверка коммитов на настоящем git-репозитории) и фасад
+  `Swarm` (весь протокол, цикл `NEEDS_FIX`, короткий `TIMEOUT`, misuse-сценарии), UI-состояние и HTTP.
+- **integration** (реальные процессы MCP через stdio-клиент SDK): полный цикл через 5 tools, **три агента в трёх git
+  worktree** (деление файлов масками в одной папке, коммиты, сбор всех ревью, повторное ревью только исправления, слияние
+  веток lead'ом), конкурентная запись из двух процессов, crash recovery (`SIGKILL` + рестарт), пул идентичностей, CLI
+  оператора, схемы tools; `advanced.test.ts` проходит шаги исходного ТЗ через расширенные tools.
 
 ## Если что-то не работает
 
@@ -408,7 +498,10 @@ npm run typecheck
 |---|---|
 | MCP «disconnected» / `failed to start` | в логе CLI (`~/.qwen/debug/*.txt`, строка `MCP STDERR`): `AGENT_ID environment variable is required` — в конфиге нет `AGENT_ID`; `already registered by a running process` — этот id держит живой процесс (дайте каждому агенту своё имя или используйте пул); `NETWORK_DIR must be an absolute path` |
 | Второй агент не подключается | оба CLI читают один глобальный конфиг с одним `AGENT_ID`. Используйте пул `a,b` или отдельные конфиги |
-| `HAS_ACTIVE_TASK` | у агента уже есть активная задача: завершите или отмените её (`task cancel`) |
+| `HAS_ACTIVE_TASK` | у агента уже есть активная или заблокированная задача: завершите, разблокируйте или отмените её |
+| Задача `BLOCKED`, агенты ждут | ревью/интеграция снова нашли ошибки, а раунды исправлений кончились. Посмотрите findings в UI и решите: `task unblock --id ...` или `task cancel` |
+| `complete` отклонён: «Commit your changes» | проект — git-репозиторий, работа сдаётся коммитами. Агент коммитит свои файлы и передаёт хэши; без git-процесса создайте задачу с `--no-commits` |
+| `wait` обрывается по таймауту клиента | уменьшите `AGENT_NETWORK_WAIT_MS` ниже таймаута tool у CLI (Codex: 60 с) |
 | `NO_ACTIVE_TASK` / агент вечно ждёт | задача создана в другой сети (`NETWORK_DIR`) или под другие имена. Ответ `swarm_context` показывает `networkDir`, сверьте его с `--network-dir` у `task create` |
 | Модель вызывает tools с пустым `{}` | слабая модель/неподходящий протокол. Для LM Studio поставьте `"wireApi": "chat-completions"` и выберите этот маршрут в `/model`; повторяющееся `Invalid side query response ... shouldBlock` в логе значит, что модель не справляется со структурными ответами: нужна модель сильнее. `exampleCall` в ответах упрощает копирование |
 | Агент придумал своё задание | описание задачи было пустым. Отмените (`task cancel`) и создайте с конкретным описанием |
@@ -423,9 +516,12 @@ npm run typecheck
   hard links, обычная для macOS/Linux).
 - В исходном плане tools было ровно пять; `create_task` добавлен по запросу пользователя (с защитами выше). Нет автоматической оркестрации, декомпозиции задач, интеграции с GitHub/GitLab, автомержа, HTTP/WebSocket-API и баз данных
   (см. [PLAN.md](PLAN.md)); UI только для просмотра.
-- Сервер не анализирует код: проверка совместимости в SYNC — работа самих агентов, сервер хранит результат.
+- Сервер не анализирует код и не запускает сборку: проверка совместимости в SYNC и прогон тестов в INTEGRATE — работа
+  самих агентов, сервер хранит результат и сверяет коммиты.
+- Протокол барьерный: каждая фаза ждёт всех. Параллельна только IMPLEMENT, поэтому выигрыш по времени есть, только если
+  задача делится на сопоставимые независимые части с заранее зафиксированным `interfaces`.
 - **Реальные прогоны.** Протокол проверен автотестами на реальных stdio-процессах. На живых Qwen CLI (локальная модель
   `qwen3.5-9b`) пройдены регистрация, обмен сообщениями, `propose`, одобрение и переход в IMPLEMENT; полный цикл до DONE на
   живых агентах и связка Qwen + Claude Code ещё не подтверждены. Качество работы сильно зависит от модели.
 
-Правила для самих агентов: [AGENTS.md](AGENTS.md). План и принципы дизайна: [PLAN.md](PLAN.md).
+Правила для самих агентов: [AGENTS.md](AGENTS.md); skill для CLI со skills (Qwen, Claude Code): [skills/agent-network/SKILL.md](skills/agent-network/SKILL.md). План и принципы дизайна: [PLAN.md](PLAN.md).

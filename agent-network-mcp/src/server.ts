@@ -9,12 +9,14 @@ export interface ServerOptions {
   /** Also expose the fine-grained tools (agent_*, task_*, agreement_*, ...). Off by default. */
   advanced?: boolean;
   log?: (m: string) => void;
+  /** Default wait() timeout. */
+  waitMs?: number;
 }
 
 export function createServer(service: NetworkService, opts: ServerOptions = {}): McpServer {
   const log = opts.log ?? (() => undefined);
   const server = new McpServer({ name: "agent-network-mcp", version: "0.2.0" }, { instructions: SWARM_INSTRUCTIONS });
-  registerSwarmTools(server, new Swarm(service, log));
+  registerSwarmTools(server, new Swarm(service, log, { defaultWaitMs: opts.waitMs }));
   if (opts.advanced) registerAdvancedTools(server, service, log);
   return server;
 }

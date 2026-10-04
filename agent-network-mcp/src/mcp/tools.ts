@@ -33,15 +33,18 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
       title: z.string().describe("Short title, e.g. 'POST /orders: missing amount must return 400'"),
       description: z.string().describe("Concrete spec: problem, expected behaviour, files to touch, who does what (e.g. 'backend: fix in src/main; reviewer: write the test'), what must not change"),
       agents: z.array(z.string()).describe("Ids of the OTHER agents, e.g. ['reviewer']; you are added automatically"),
+      verifyCommand: z.string().optional().describe("Build/test command for the integration step, if the user named one, e.g. 'mvn -q verify'"),
     },
     async (a) => swarm.createTask(a),
   );
   tool(
     "send_message",
-    "Send a message to ONE other agent of your task. Your identity is added automatically.",
+    "Send a message to ONE other agent of your task. Your identity is added automatically. Also used to negotiate files: requestFiles asks the owner for permission to change their file, grantFiles (owner) gives it.",
     {
       to: z.string().describe("Agent id of the recipient, one of the other agents of your task, e.g. 'reviewer'"),
       message: z.string().describe("Text of the message, e.g. 'I take the controller and service, you take validation. Agreed?'"),
+      requestFiles: z.array(z.string()).optional().describe("To change files OWNED by the recipient: list them here and explain why in message. The owner replies with grantFiles"),
+      grantFiles: z.array(z.string()).optional().describe("Owner only: let the recipient change these files of yours (after their request); message = conditions"),
     },
     async (a) => swarm.sendMessage(a),
   );
@@ -51,7 +54,13 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
     {
       summary: z.string().describe("One or two sentences: what the team will build"),
       assignments: z
-        .array(z.object({ agentId: z.string().describe("Agent id, e.g. 'backend'"), responsibility: z.string().describe("What this agent implements") }))
+        .array(
+          z.object({
+            agentId: z.string().describe("Agent id, e.g. 'backend'"),
+            responsibility: z.string().describe("What this agent implements"),
+            files: z.array(z.string()).describe("Files or globs this agent will change, e.g. ['src/main/java/A.java', 'src/test/**']. Must not overlap with other agents"),
+          }),
+        )
         .describe("One entry for EVERY agent of the task, including yourself"),
       decisions: z.array(z.string()).optional().describe("Agreed decisions, e.g. ['IDs are UUID']"),
       interfaces: z.array(z.string()).optional().describe("Agreed contracts, e.g. ['POST /users -> 201 {id}']"),
@@ -60,20 +69,20 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   );
   tool(
     "complete",
-    "Finish your step; meaning depends on the phase. DISCUSS: no arguments, approves the current agreement. IMPLEMENT: {result, filesChanged?, commits?} marks your part ready. SYNC: {status: PASS|NEEDS_FIX, findings?} submits your review (NEEDS_FIX requires findings; name the agent to fix in relatedAgent).",
+    "Finish your step; meaning depends on the phase. DISCUSS: no arguments, approves the current agreement. IMPLEMENT: {result, filesChanged?, commits} marks your part ready (in a git project commit first and pass the hashes). SYNC: {status: PASS|NEEDS_FIX, findings?} submits your review (NEEDS_FIX needs an ERROR finding naming the agent to fix in relatedAgent; WARNING/INFO go with PASS). INTEGRATE (lead): {status, result, commits, findings?} after merging everything and running the build and tests.",
     {
-      result: z.string().optional().describe("IMPLEMENT only: short summary of what you implemented"),
+      result: z.string().optional().describe("IMPLEMENT: short summary of what you implemented. INTEGRATE: what was merged, where, build/test outcome"),
       filesChanged: z.array(z.string()).optional().describe("IMPLEMENT only: project-relative paths you changed"),
-      commits: z.array(z.string()).optional().describe("IMPLEMENT only: commit hashes"),
-      status: z.string().optional().describe("SYNC only: PASS or NEEDS_FIX"),
-      findings: z.array(finding).optional().describe("SYNC only, required for NEEDS_FIX"),
+      commits: z.array(z.string()).optional().describe("IMPLEMENT: hashes of your commits. INTEGRATE: HEAD of the merged result"),
+      status: z.string().optional().describe("SYNC / INTEGRATE: PASS or NEEDS_FIX"),
+      findings: z.array(finding).optional().describe("SYNC / INTEGRATE, required for NEEDS_FIX (at least one ERROR)"),
     },
     async (a) => swarm.complete(a),
   );
   tool(
     "wait",
-    `Stop and wait while there is nothing useful for you to do. Returns when a message arrives, an action is required of you, or the task is done; status is MESSAGES | ACTION_REQUIRED | UPDATED (new task or phase change) | DONE | TIMEOUT (call wait again on TIMEOUT). Returns immediately if something is already pending. Max ${MAX_WAIT_MS}ms.`,
-    { timeoutMs: z.number().int().min(0).max(MAX_WAIT_MS).optional().describe("Milliseconds to wait, default 30000") },
+    `Stop and wait while there is nothing useful for you to do. Returns when a message arrives, an action is required of you, or the task is done; status is MESSAGES | ACTION_REQUIRED | UPDATED (new task, phase change, blocked) | DONE | TIMEOUT (short answer; call wait again). Returns immediately if something is already pending. Max ${MAX_WAIT_MS}ms.`,
+    { timeoutMs: z.number().int().min(0).max(MAX_WAIT_MS).optional().describe(`Milliseconds to wait; omit it to use the default (${swarm.defaultWaitMs})`) },
     async (a, signal) => swarm.wait(a, signal),
   );
 }
