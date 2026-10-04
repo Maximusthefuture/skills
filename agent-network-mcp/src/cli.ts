@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { isAbsolute, resolve } from "node:path";
 import { AppError } from "./errors.js";
+import { runHookCli } from "./hook.js";
 import { NetworkService } from "./service.js";
 import { startUiServer } from "./ui/server.js";
 
@@ -12,6 +13,7 @@ const USAGE = `Usage:
   agent-network-mcp task unblock --id <task-001> [--rounds 1] [--network-dir <abs path>]   more fix rounds for a BLOCKED task
   agent-network-mcp agent list [--network-dir <abs path>]
   agent-network-mcp ui [--port 4777] [--network-dir <abs path>]   read-only web viewer on http://127.0.0.1:<port>
+  agent-network-mcp hook <post-tool|stop> [--network-dir <abs path>] [--agent <id>]   Claude Code hook: new messages / stay in the loop
 
 NETWORK_DIR is used when --network-dir is not given. Tasks created here are picked up automatically by
 the agents' swarm_context / wait. The first agent of --agents is the lead (proposes first, integrates at the end).
@@ -22,6 +24,7 @@ runs on the merged result. After --max-fix-rounds failed reviews the task is BLO
 export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: string) => void): Promise<number> {
   const [group, command, ...rest] = argv;
   if (group === "ui") return runUi(command ? [command, ...rest] : rest, env, out);
+  if (group === "hook") return runHookCli(command, rest, env, out);
   const known = (group === "task" && (command === "create" || command === "list" || command === "cancel" || command === "unblock")) || (group === "agent" && command === "list");
   if (!known) {
     out(USAGE);

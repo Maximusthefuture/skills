@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /abs/path/agent-network-mcp/dist/index.js hook post-tool --network-dir /abs/path/project/.agent-network",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/hooks/backend-design-java/check_migration.py", "timeout": 10 },
+          { "type": "command", "command": "python3 ~/.claude/hooks/backend-design-java/check_backend_component.py", "timeout": 10 },
+          { "type": "command", "command": "python3 ~/.claude/hooks/backend-design-java/check_security.py", "timeout": 10 },
+          { "type": "command", "command": "python3 ~/.claude/hooks/tdd_guard.py", "timeout": 10 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /abs/path/agent-network-mcp/dist/index.js hook stop --network-dir /abs/path/project/.agent-network",
+            "timeout": 10
+          },
+          { "type": "command", "command": "python3 ~/.claude/hooks/critic_gate.py", "timeout": 30 },
+          { "type": "command", "command": "python3 ~/.claude/hooks/evidence_guard.py", "timeout": 15 }
+        ]
+      }
+    ]
+  }
+}

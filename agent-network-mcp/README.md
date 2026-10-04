@@ -115,6 +115,31 @@ claude mcp get agent-network     # должно быть ✔ Connected
 называются `mcp__agent-network__swarm_context` и т. д. Перезапустите сессию, чтобы они появились. Claude Code читает
 `CLAUDE.md`; чтобы подтянуть правила проекта, добавьте в него строку `@AGENTS.md`. Убрать: `claude mcp remove agent-network -s local`.
 
+#### Хуки: сообщения доходят до занятого агента
+
+Без хуков агент видит сообщения только в `wait()` и в ответах tools agent-network. Пока он в IMPLEMENT пишет код
+(Edit, Bash), `FILE_REQUEST` соседа лежит непрочитанным до его `complete`, а сосед всё это время ждёт. Команда
+`agent-network-mcp hook` закрывает это двумя хуками Claude Code:
+
+| Хук | Что делает |
+|---|---|
+| `PostToolUse` (`hook post-tool`) | после любого tool (кроме tools agent-network) проверяет непрочитанные сообщения этому агенту; о новых добавляет в контекст короткую сводку: от кого, тип, начало текста, файлы; `FILE_REQUEST`, `BLOCKER`, `FIX_REQUEST` помечены «X is waiting for you». Об одном сообщении говорит один раз |
+| `Stop` (`hook stop`) | пока у агента есть активная задача (`ACTIVE`, не DONE), один раз не даёт закончить ход: «вызови `wait()` и продолжай цикл». Повторная остановка (`stop_hook_active`) проходит, поэтому агент, который ждёт ответа пользователя, не застревает |
+
+Хук только читает сеть: прочитанными сообщения помечает сервер, когда агент вызывает `swarm_context` или `wait`. Свою
+память о том, что уже показано, хук держит в `.agent-network/hooks/<agent>.json`. Любая ошибка — тишина и exit 0.
+
+Агента хук находит сам: его MCP-сервер — прямой потомок того же процесса `claude`, что и хук (`pid` из
+`agents/<id>.json` + дерево `ps`). Это работает и с пулом `AGENT_ID=a,b`. Если сервер запущен через обёртку (`npx`, `sh -c`)
+или нет `ps` (Windows), передайте `--agent <id>`. Сессия без agent-network в соседнем терминале чужого агента не находит.
+
+Готовые настройки — [examples/claude-hooks/settings.json](examples/claude-hooks/settings.json); вместе с хуками
+`java-dev-flow` — [settings.with-java-dev-flow.json](examples/claude-hooks/settings.with-java-dev-flow.json). Положите
+содержимое в `.claude/settings.local.json` проекта (или каждого worktree), замените `/abs/path/...`. `--network-dir` —
+тот же каталог, что `NETWORK_DIR` у MCP; без флага берётся переменная `NETWORK_DIR` окружения `claude`. Хуки
+подхватываются при старте сессии, проверить — `/hooks`. Задержка: до следующего вызова tool, обычно секунды. Сессию,
+которая уже закончила ход и простаивает, хук не будит: этого не допускает Stop-хук.
+
 ### Codex CLI *(не проверялось)*
 
 У Codex таймаут вызова tool по умолчанию 60 с, а `wait` по умолчанию ждёт 120 с: добавьте в `env`
@@ -440,6 +465,7 @@ src/
 ├── network.json
 ├── agents/<id>.json                 агент (на время выбора имени из пула появляется временный lock agents/.claim)
 ├── cursors/<id>.json                курсоры прочитанных событий (per agent, per scope)
+├── hooks/<id>.json                  что хук Claude Code уже показал агенту (только для хука)
 ├── events/event-NNN.json            события вне задач (AGENT_REGISTERED)
 └── tasks/task-NNN/
     ├── task.json                    фаза, статус, агенты, syncRound, maxFixRounds, reviewScope, git-контекст (repo, branch, commit)
@@ -493,12 +519,13 @@ npm run test:integration
 npm run typecheck
 ```
 
-238 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
+247 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
 
 - **unit**: `FileStore` (атомарная запись, конкурентные создания, path traversal, lock), сторы, `PhaseManager` (все пары
   переходов, сбор раунда, ревью исправленного, лимит раундов), точное пересечение масок (с fuzz-проверкой), `EventHub`,
   `NetworkService` (протокол, интеграция, `BLOCKED`/`unblock`, проверка коммитов на настоящем git-репозитории) и фасад
-  `Swarm` (весь протокол, цикл `NEEDS_FIX`, короткий `TIMEOUT`, misuse-сценарии), UI-состояние и HTTP.
+  `Swarm` (весь протокол, цикл `NEEDS_FIX`, короткий `TIMEOUT`, misuse-сценарии), UI-состояние и HTTP, хуки Claude Code
+  (поиск агента по дереву процессов, одно уведомление на сообщение, Stop один раз).
 - **integration** (реальные процессы MCP через stdio-клиент SDK): полный цикл через 5 tools, **три агента в трёх git
   worktree** (деление файлов масками в одной папке, коммиты, сбор всех ревью, повторное ревью только исправления, слияние
   веток lead'ом), конкурентная запись из двух процессов, crash recovery (`SIGKILL` + рестарт), пул идентичностей, CLI
