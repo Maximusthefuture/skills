@@ -39,12 +39,12 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   );
   tool(
     "send_message",
-    "Send a message to ONE other agent of your task. Your identity is added automatically. Also used to negotiate files: requestFiles asks the owner for permission to change their file, grantFiles (owner) gives it.",
+    "Send a message to ONE other agent of your task. Your identity is added automatically. Also used to negotiate files: requestFiles asks the owner for permission to CHANGE their files (reading any file needs no permission), grantFiles (owner) gives it. A request blocks the asker until the owner answers, so owners answer first (nextAction 'respond').",
     {
       to: z.string().describe("Agent id of the recipient, one of the other agents of your task, e.g. 'reviewer'"),
       message: z.string().describe("Text of the message, e.g. 'I take the controller and service, you take validation. Agreed?'"),
-      requestFiles: z.array(z.string()).optional().describe("To change files OWNED by the recipient: list them here and explain why in message. The owner replies with grantFiles"),
-      grantFiles: z.array(z.string()).optional().describe("Owner only: let the recipient change these files of yours (after their request); message = conditions"),
+      requestFiles: z.array(z.string()).optional().describe("Only to CHANGE files OWNED by the recipient (never for reading: reading needs no permission). Explain why in message. The owner replies with grantFiles or a refusal"),
+      grantFiles: z.array(z.string()).optional().describe("Owner only: let the recipient change these files of yours (answer to their request); message = conditions. To refuse, send a normal message with the reason"),
     },
     async (a) => swarm.sendMessage(a),
   );

@@ -4,7 +4,7 @@ import { MAX_WAIT_MS, DEFAULT_WAIT_MS, type NetworkService } from "../service.js
 import type { Agent, Agreement, Implementation, IntegrationReport, Message, SyncFinding, SyncReport, Task } from "../types.js";
 
 /** What the agent should do next, computed by the server so the agent never reasons about the state machine. */
-export type NextAction = "propose" | "approve" | "implement" | "fix" | "sync" | "integrate" | "wait" | "done";
+export type NextAction = "respond" | "propose" | "approve" | "implement" | "fix" | "sync" | "integrate" | "wait" | "done";
 
 export interface Decision {
   nextAction: NextAction;
@@ -23,6 +23,10 @@ interface Snapshot {
   integrations: IntegrationReport[];
   agents: Agent[];
   unread: Message[];
+  /** FILE_REQUESTs addressed to this agent that it has not answered yet. */
+  openToMe: Message[];
+  /** FILE_REQUESTs this agent sent that the owner has not answered yet. */
+  openFromMe: Message[];
 }
 
 export type SwarmContext = Record<string, unknown> & { nextAction: NextAction; allowedActions: string[] };
@@ -30,6 +34,18 @@ export type SwarmContext = Record<string, unknown> & { nextAction: NextAction; a
 type RawFinding = Omit<SyncFinding, "severity"> & { severity: string };
 
 const MIN_DESCRIPTION = 40;
+
+const seq = (m: Message): number => Number(m.id.slice(4));
+
+/**
+ * A FILE_REQUEST stays open until the owner writes back to the requester (a grant or any reply, e.g. a refusal).
+ * Merely reading it does not close it: the requester is blocked until it gets an answer.
+ */
+export function openFileRequests(messages: Message[]): Message[] {
+  return messages.filter((m) => m.type === "FILE_REQUEST" && !messages.some((r) => r.from === m.to && r.to === m.from && seq(r) > seq(m)));
+}
+
+const BETWEEN_STEPS = "Between work steps (e.g. after each file or test run) call swarm_context once: another agent may be blocked waiting for your answer.";
 
 const SEVERITIES = ["INFO", "WARNING", "ERROR"] as const;
 
@@ -129,7 +145,8 @@ export class Swarm {
       type = "FILE_REQUEST";
     }
     const sent = await this.service.sendMessage({ taskId: task.id, to: input.to, type, content: input.message, ...(files ? { files } : {}) });
-    return { ...(await this.contextNow()), ok: true, action: type === "FILE_REQUEST" ? "FILES_REQUESTED" : "MESSAGE_SENT", messageId: sent.id, ...(files ? { requested: files } : {}) } as SwarmContext;
+    return { ...(await this.contextNow()), ok: true, action: type === "FILE_REQUEST" ? "FILES_REQUESTED" : "MESSAGE_SENT", messageId: sent.id,
+      ...(files ? { requested: files, note: `Asked ${input.to} for permission to CHANGE these files (reading needs no permission). Continue with your own work; the answer arrives in pendingMessages. Do not edit them before the grant.` } : {}) } as SwarmContext;
   }
 
   async propose(input: { summary?: string; assignments?: { agentId: string; responsibility: string; files?: string[] }[]; decisions?: string[]; interfaces?: string[] }): Promise<SwarmContext> {
@@ -324,15 +341,21 @@ export class Swarm {
   }
 
   private async snapshot(task: Task): Promise<Snapshot> {
-    const [agreement, impls, reports, integrations, agents, unread] = await Promise.all([
+    const [agreement, impls, reports, integrations, agents, messages] = await Promise.all([
       this.service.agreements.find(task.id),
       this.service.implementations.list(task.id),
       this.service.syncs.list(task.id, task.syncRound),
       this.service.integrations.list(task.id, task.syncRound),
       this.service.agents.list(),
-      this.service.messages.list(task.id, { to: this.me, unreadOnly: true }),
+      this.service.messages.list(task.id),
     ]);
-    return { task, agreement, impls, reports, integrations, agents, unread };
+    const open = openFileRequests(messages);
+    return {
+      task, agreement, impls, reports, integrations, agents,
+      unread: messages.filter((m) => m.to === this.me && !m.readAt),
+      openToMe: open.filter((m) => m.to === this.me),
+      openFromMe: open.filter((m) => m.from === this.me),
+    };
   }
 
   private async contextNow(): Promise<SwarmContext> {
@@ -355,7 +378,7 @@ export class Swarm {
     }
     const snap = await this.snapshot(task);
     const d = this.decide(snap);
-    const { agreement, impls, reports, integrations, agents, unread } = snap;
+    const { agreement, impls, reports, integrations, agents, unread, openToMe, openFromMe } = snap;
     const phases = this.service.phases;
 
     // remember what the agent has actually seen
@@ -392,6 +415,8 @@ export class Swarm {
       agreement: agreement
         ? { version: agreement.version, proposedBy: agreement.proposedBy, summary: agreement.summary, assignments: agreement.assignments, decisions: agreement.decisions, interfaces: agreement.interfaces, approvedBy: agreement.approvedBy, approvedByYou: agreement.approvedBy.includes(this.me) }
         : null,
+      ...(openToMe.length ? { openFileRequests: openToMe.map((m) => ({ messageId: m.id, from: m.from, files: m.files ?? [], reason: m.content })) } : {}),
+      ...(openFromMe.length ? { yourOpenRequests: openFromMe.map((m) => ({ messageId: m.id, to: m.to, files: m.files ?? [], note: `waiting for ${m.to} to grant or refuse; continue with your own work meanwhile` })) } : {}),
       ...(await this.ownershipView(task.id)),
       implementation: mine ? { status: mine.status, summary: mine.summary, filesChanged: mine.filesChanged, commits: mine.commits } : null,
       teamImplementations: impls.filter((i) => i.agentId !== this.me).map((i) => ({ agentId: i.agentId, status: i.status, summary: i.summary, filesChanged: i.filesChanged, commits: i.commits })),
@@ -422,7 +447,24 @@ export class Swarm {
 
   /** The decision table: phase + my own progress -> nextAction / allowedActions. */
   decide(s: Snapshot): Decision {
-    const d = this.decideCore(s);
+    const core = this.decideCore(s);
+    // an unanswered request for one of my files blocks another agent: answering it comes first
+    const req = s.openToMe[0];
+    if (req && s.task.phase !== "DONE") {
+      const files = req.files ?? [];
+      return {
+        nextAction: "respond",
+        allowedActions: [...new Set(["send_message", ...core.allowedActions])],
+        hint:
+          `${req.from} is BLOCKED until you answer: they want to change your files ${files.join(", ")} (${req.id}: "${req.content}"). ` +
+          `Answer now, then continue your own work. Allow: send_message({to: "${req.from}", message: <conditions>, grantFiles: [...]}). ` +
+          `Refuse: send_message({to: "${req.from}", message: <reason and alternative>}). Note: reading files needs no permission, only changing them.` +
+          (s.openToMe.length > 1 ? ` ${s.openToMe.length - 1} more request(s) are waiting (see openFileRequests).` : ""),
+        waitingOn: core.waitingOn,
+        exampleCall: { tool: "send_message", args: { to: req.from, message: "<conditions, or the reason for refusing>", grantFiles: files } },
+      };
+    }
+    const d = core;
     const example = this.example(s.task, d.nextAction);
     return example ? { ...d, exampleCall: example } : d;
   }
@@ -477,8 +519,8 @@ export class Swarm {
           return done("wait", ["send_message", "wait"], `Your part is ready. Waiting for: ${pending.join(", ")}.`, pending);
         }
         return task.syncRound > 0
-          ? done("fix", ["send_message", "complete", "wait"], "A sync review requested fixes (see 'fixRequests'). Fix your part, then complete({result, filesChanged, commits}).", pending)
-          : done("implement", ["send_message", "complete", "wait"], "Implement ONLY your assignment and change only your own files (see 'ownership'). Need another agent's file? send_message(requestFiles) to its owner and wait for their grant. Then complete({result, filesChanged, commits}).", pending);
+          ? done("fix", ["send_message", "complete", "wait"], "A sync review requested fixes (see 'fixRequests'). Fix your part, then complete({result, filesChanged, commits}). " + BETWEEN_STEPS, pending)
+          : done("implement", ["send_message", "complete", "wait"], "Implement ONLY your assignment and change only your own files (see 'ownership'). Reading any file needs no permission; to CHANGE another agent's file send_message(requestFiles) to its owner and continue with your own work until they answer. Reviewing the other agents' code is for SYNC, not now. Then complete({result, filesChanged, commits}). " + BETWEEN_STEPS, pending);
       }
       case "SYNC": {
         const pending = phases.reviewers(task).filter((id) => !reports.some((r) => r.agentId === id));

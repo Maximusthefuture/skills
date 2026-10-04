@@ -15,12 +15,13 @@ Loop:
 4. Stop when `nextAction` is `done`.
 
 nextAction:
+- `respond` (any phase): another agent waits for your answer to its file request (`openFileRequests`). Answer first, see File ownership.
 - `propose` (DISCUSS): first tell each other which files you will change (`send_message`). Then call
   `propose({summary, assignments: [{agentId, responsibility, files: [...]}, ...], decisions?, interfaces?})` with ONE assignment per agent,
   each with the `files` (paths or globs like `src/main/**`) that agent will change. Every file has exactly ONE owner:
   overlapping claims are refused (`FILE_OVERLAP`). Do not implement anything yet.
 - `approve` (DISCUSS): read `agreement` (assignments and each agent's files); `complete()` approves it. If you disagree, `send_message` or `propose` a replacement.
-- `implement` (IMPLEMENT): work ONLY on your own assignment and change only your own files (`ownership.yourFiles`) or files granted to you. Report blockers with `send_message`. When finished
+- `implement` (IMPLEMENT): work ONLY on your own assignment and change only your own files (`ownership.yourFiles`) or files granted to you. Reviewing the other agents' code is for SYNC, not now. Report blockers with `send_message`. When finished
   commit your own files (in a git project `complete` is refused without commits; the server reads the changed files from them) and call
   `complete({result, filesChanged, commits})`.
 - `fix` (IMPLEMENT after a review): read `fixRequests`, fix your part, call `complete({result, filesChanged, commits})` again.
@@ -45,10 +46,14 @@ You cannot create a task while you have an active one.
 On TIMEOUT just call `wait()` again. Messages addressed to you are in `pendingMessages`.
 
 File ownership:
+- Reading any file needs NO permission. Ownership is only about CHANGING files.
 - Never edit a file that another agent owns. If you must, ask the owner first:
-  `send_message({to: <owner>, message: <why>, requestFiles: [<files>]})`, then `wait()` for the answer.
-- If you receive a `FILE_REQUEST` (see `pendingMessages`, `type` and `files`) for one of your files, decide: to allow it call
-  `send_message({to: <requester>, message: <conditions>, grantFiles: [<files>]})`; to refuse just reply with a normal message and the reason.
+  `send_message({to: <owner>, message: <why>, requestFiles: [<files>]})`, then continue with your own work until the answer
+  arrives in `pendingMessages`. Do not edit those files before the grant.
+- If `nextAction` is `respond`, another agent is blocked waiting for your answer to its `FILE_REQUEST` (see `openFileRequests`).
+  Answer FIRST: allow with `send_message({to: <requester>, message: <conditions>, grantFiles: [<files>]})`, or refuse with a normal
+  message and the reason. Reading the request is not an answer.
+- Between work steps (after each file or test run) call `swarm_context` once, so you notice requests addressed to you.
 - `complete` is refused (`FILE_NOT_OWNED`) when `filesChanged` contains another agent's file without a grant. Files nobody declared are
   allowed but reported as warnings: tell the others about them.
 

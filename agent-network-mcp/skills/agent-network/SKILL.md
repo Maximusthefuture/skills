@@ -16,16 +16,17 @@ First call, always: `swarm_context`. Never call `propose`, `complete` or `send_m
 1. Call `swarm_context`. Read `nextAction`, `allowedActions`, `hint`, `waitingOn`.
 2. Do that one thing.
 3. Read `nextAction` in the response and continue.
-4. If `nextAction` is `wait`, call `wait()`. Never poll with `swarm_context`.
+4. If `nextAction` is `wait`, call `wait()`. Never poll with `swarm_context` (one call between work steps is fine).
 5. Stop when `nextAction` is `done`.
 
 ## nextAction
 
 | nextAction | Phase | What to do |
 |---|---|---|
+| `respond` | any | Another agent is BLOCKED until you answer its request for your files (`openFileRequests`). Answer first: `send_message({to, message, grantFiles})` to allow, or a normal `send_message` with the reason to refuse. Reading the request is not an answer. |
 | `propose` | DISCUSS | Tell each other which files you will change (`send_message`), then `propose({summary, assignments: [{agentId, responsibility, files}, ...], decisions?, interfaces?})` with ONE assignment per agent; `files` = paths or globs it will change, no overlaps between agents (`FILE_OVERLAP`). No code yet. |
 | `approve` | DISCUSS | Read `agreement`. `complete()` approves it; `propose(...)` replaces it; `send_message` to discuss. |
-| `implement` | IMPLEMENT | Work ONLY on your own assignment and your own files (`ownership`). Another agent's file: `send_message(to=owner, message=why, requestFiles=[...])`, wait for their `grantFiles`. Blockers go to `send_message`. Commit your own files, then finish with `complete({result, filesChanged, commits})` (in a git project commits are required). |
+| `implement` | IMPLEMENT | Work ONLY on your own assignment and your own files (`ownership`). Reading any file needs no permission; to CHANGE another agent's file: `send_message(to=owner, message=why, requestFiles=[...])` and continue your own work until the answer. Reviewing others' code is for SYNC. Between work steps call `swarm_context` once: someone may be waiting for your answer. Blockers go to `send_message`. Commit your own files, then finish with `complete({result, filesChanged, commits})` (in a git project commits are required). |
 | `fix` | IMPLEMENT | A review or the integration asked for changes: read `fixRequests` (those with `forYou: true`), fix, commit, `complete({result, filesChanged, commits})`. |
 | `sync` | SYNC | Review the work of the agents in `reviewTargets` (`teamImplementations`, real code, agreed `interfaces`, tests). Then `complete({status: "PASS"})` or `complete({status: "NEEDS_FIX", findings: [{severity, description, relatedAgent, files}]})`. NEEDS_FIX needs an `ERROR` finding; `WARNING`/`INFO` go with PASS. |
 | `integrate` | INTEGRATE | Lead only: merge everyone's commits into one branch, run the build and all tests (`task.verifyCommand`), then `complete({status: "PASS", result, commits: [<merged HEAD>]})` or `complete({status: "NEEDS_FIX", result, findings: [{severity: "ERROR", description, relatedAgent}]})`. |

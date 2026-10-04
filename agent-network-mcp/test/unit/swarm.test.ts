@@ -607,3 +607,84 @@ describe("file ownership and negotiation", () => {
     expect(await s.backend.complete({ result: "x", filesChanged: ["src/test/fixtures/a.json"] })).toMatchObject({ action: "IMPLEMENTATION_COMPLETED" });
   });
 });
+
+describe("open file requests (the requester is blocked until the owner answers)", () => {
+  async function requested() {
+    const net = await setup();
+    await net.task();
+    await toImplement(net.s);
+    await net.s.reviewer.sendMessage({ to: "backend", message: "need to tweak the controller", requestFiles: ["src/main/Controller.java"] });
+    return net;
+  }
+
+  it("the owner gets nextAction 'respond' with the request and a ready grant call", async () => {
+    const { s } = await requested();
+    const ctx = await s.backend.context();
+    expect(ctx).toMatchObject({
+      nextAction: "respond",
+      openFileRequests: [{ from: "reviewer", files: ["src/main/Controller.java"], reason: "need to tweak the controller" }],
+      exampleCall: { tool: "send_message", args: { to: "reviewer", grantFiles: ["src/main/Controller.java"] } },
+    });
+    expect(ctx.allowedActions).toEqual(expect.arrayContaining(["send_message", "complete", "wait"]));
+    expect(ctx.hint).toContain("BLOCKED");
+    expect(ctx.hint).toContain("reading files needs no permission");
+  });
+
+  it("reading the request does not close it: the busy owner is reminded on every call, and wait returns at once", async () => {
+    const { s } = await requested();
+    await s.backend.context(); // shown
+    await s.backend.complete({ result: "half done", filesChanged: ["src/main/A.java"] }).catch(() => undefined);
+    const again = await s.backend.context(); // message is read now, request still open
+    expect(again.pendingMessages).toEqual([]);
+    expect(again).toMatchObject({ nextAction: "respond", openFileRequests: [{ from: "reviewer" }] });
+    const started = Date.now();
+    expect(await s.backend.wait({ timeoutMs: 10_000 })).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "respond" });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("the requester sees its open request and continues with its own work", async () => {
+    const { s } = await requested();
+    const ctx = await s.reviewer.context();
+    expect(ctx).toMatchObject({ nextAction: "implement", yourOpenRequests: [{ to: "backend", files: ["src/main/Controller.java"] }] });
+    expect(ctx.openFileRequests).toBeUndefined();
+  });
+
+  it("a refusal (any reply to the requester) closes the request and wakes the requester", async () => {
+    const { s } = await requested();
+    await s.reviewer.complete({ result: "tests", filesChanged: ["src/test/T.java"] }); // own part done: now it only waits
+    const waiting = s.reviewer.wait({ timeoutMs: 10_000 });
+    await new Promise((r) => setTimeout(r, 100));
+    await s.backend.context();
+    const answered = await s.backend.sendMessage({ to: "reviewer", message: "no: I am rewriting it, tell me what to change" });
+    expect(answered).toMatchObject({ nextAction: "implement" });
+    expect(answered.openFileRequests).toBeUndefined();
+    expect(await waiting).toMatchObject({ status: "MESSAGES", pendingMessages: [expect.objectContaining({ from: "backend" })] });
+    expect((await s.reviewer.context()).yourOpenRequests).toBeUndefined();
+  });
+
+  it("a grant closes the request", async () => {
+    const { s } = await requested();
+    await s.backend.context();
+    await s.backend.sendMessage({ to: "reviewer", message: "ok", grantFiles: ["src/main/Controller.java"] });
+    expect((await s.backend.context()).nextAction).toBe("implement");
+  });
+
+  it("a message the owner wrote BEFORE the request does not count as an answer", async () => {
+    const { s, task } = await setup();
+    await task();
+    await toImplement(s);
+    await s.backend.sendMessage({ to: "reviewer", message: "fyi" });
+    await s.reviewer.sendMessage({ to: "backend", message: "need it", requestFiles: ["src/main/X.java"] });
+    await s.reviewer.sendMessage({ to: "backend", message: "please answer" }); // requester's own follow-up does not close it
+    expect((await s.backend.context()).nextAction).toBe("respond");
+  });
+
+  it("the requester is told that reading needs no permission", async () => {
+    const { s, task } = await setup();
+    await task();
+    await toImplement(s);
+    const res = await s.reviewer.sendMessage({ to: "backend", message: "need it", requestFiles: ["src/main/X.java"] });
+    expect(res.note).toContain("reading needs no permission");
+    expect((await s.reviewer.context()).hint).toContain("Reading any file needs no permission");
+  });
+});
