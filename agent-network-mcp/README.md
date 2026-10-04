@@ -377,6 +377,12 @@ mkdir -p /abs/project/.qwen/skills/agent-network
 ln -s /abs/path/agent-network-mcp/skills/agent-network/SKILL.md /abs/project/.qwen/skills/agent-network/SKILL.md   # или cp
 ```
 
+**Вместе со skills разработки** (например, `java-dev-flow`) слои разделены: этот skill решает *когда и кто* (фаза, assignment,
+владение файлами, кому писать), skill разработки — *как* делать свою часть внутри фазы из `nextAction`. Со стороны
+`java-dev-flow` то же самое описано в `java-dev-flow/references/swarm.md`: дизайн и план уходят в `propose`, TDD и `critic` —
+в IMPLEMENT по своему assignment, peer review в SYNC заменяет `java-code-reviewer`, вопросы — другим агентам, а не пользователю.
+На маленькой локальной модели подключайте только skill `agent-network`.
+
 ## Конфигурация
 
 Переменные окружения процесса MCP:

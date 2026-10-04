@@ -203,6 +203,12 @@ Both claim the plan and the order of work: OpenSpec has artifacts and commands, 
 
 **Resolution:** OpenSpec owns the files, statuses, checkboxes and archive. The orchestrator owns the design content, the task structure, implementation via `java-tdd` and verification. The review pause after `/opsx:propose` is needed for M too, not only for L. Details — `references/openspec.md`.
 
+### 2.13a. Agent-network swarm and the orchestrator
+
+Both claim the phases: the swarm server moves DISCUSS → IMPLEMENT → SYNC → INTEGRATE, the orchestrator has phases 0–6 and gates. Both run a review after implementation.
+
+**Resolution:** the swarm owns when and who: phases, assignments, file ownership, messages, what is submitted. The orchestrator owns how: design, plan, `java-tdd`, the critic on your own diff, the evidence rule. In SYNC the peer review replaces `java-code-reviewer`. With an OpenSpec change on top, OpenSpec owns what, the lead alone owns `openspec/changes/<name>/`, and the `/opsx:apply` loop is not used. Details — `references/swarm.md`.
+
 ### 2.14. Questions to the user: `grilling`, phase 1 and `think-before-coding`
 
 `grilling` asks every question whose premises are settled in one round and does not let go until no open decisions remain. Phase 1 used to limit questions to three at a time. `think-before-coding` and the `design` command also ask questions during the six steps.

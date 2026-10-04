@@ -1,6 +1,6 @@
 ---
 name: java-dev-flow
-description: "Development orchestrator for Java / Spring Boot — invoke it FIRST for any coding task, before think-before-coding, java-tdd and domain skills: implement, add an endpoint / field / table, change a business rule, limit or threshold, fix a bug, refactor, integrate with, «реализуй», «сделай фичу», «добавь эндпоинт», «доработай», «почини баг», «поправь», «бизнес просит», «поменяй порог / лимит», «отрефактори», /java-dev-flow. Sizes the task (S/M/L) and drives it through phases: design → plan → TDD → verification by the java-code-reviewer and critic agents → report, pulling in backend-design-java skills by signals. In an OpenSpec project it works inside /opsx. Not for diff review (java-code-review), test cleanup (test-audit), Jira, production incidents (debugging-discipline) or questions without code."
+description: "Development orchestrator for Java / Spring Boot — invoke it FIRST for any coding task, before think-before-coding, java-tdd and domain skills: implement, add an endpoint / field / table, change a business rule, limit or threshold, fix a bug, refactor, integrate with, «реализуй», «сделай фичу», «добавь эндпоинт», «доработай», «почини баг», «поправь», «бизнес просит», «поменяй порог / лимит», «отрефактори», /java-dev-flow. Sizes the task (S/M/L) and drives it through phases: design → plan → TDD → verification by the java-code-reviewer and critic agents → report, pulling in backend-design-java skills by signals. In an OpenSpec project it works inside /opsx; in an agent-network swarm it works inside the swarm phases. Not for diff review (java-code-review), test cleanup (test-audit), Jira, production incidents (debugging-discipline) or questions without code."
 compatibility: Claude Code. Relies on backend-design-java, java-tdd, java-diagnosing-bugs, java-code-review, java-extensibility-review, java-spec-review, test-audit, jira-tasks, grilling and the java-code-reviewer, critic and test-runner agents (assets/agents); without them it falls back to references/fallback-checklists.md. Maven/Gradle, Docker for Testcontainers, git.
 ---
 
@@ -28,6 +28,10 @@ Base names are used below. In a session they may carry a prefix: `backend-design
 ## OpenSpec project
 
 There is an `openspec/` directory or an `/opsx:*` command — follow [references/openspec.md](references/openspec.md): M and L go through a change, after `/opsx:propose` there is a pause for human review (`java-spec-review <name>`), inside `/opsx:apply` every task goes through `java-tdd`, and the "Verification" group runs `java-code-reviewer` and `critic`.
+
+## Agent-network swarm
+
+The `agent-network` MCP tools are present and `swarm_context` shows your active task — follow [references/swarm.md](references/swarm.md): the swarm decides when and who (phases, assignments, file ownership), this orchestrator decides how. Phases 0–3 go into the agreement in DISCUSS, phase 4 and the critic run on your own assignment in IMPLEMENT, the SYNC peer review replaces `java-code-reviewer`, the report goes into `complete({result})`, questions go to other agents, not the user. On top of an OpenSpec change the lead alone owns the change directory and nobody runs the `/opsx:apply` loop.
 
 ## If the task is not development
 

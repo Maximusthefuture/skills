@@ -98,6 +98,7 @@ The frame is the six steps of `think-before-coding`. In the `java-flow` schema t
 - **D6. Task size.** Does a task fit into one session? "Implement refunds" — split by scenarios.
 - **D7. Decisions without a scenario.** A changeset, metrics, config, ShedLock from design — does each have a task with a verification?
 - **D8. A change in progress.** Are there ticked `[x]` tasks? Then edits go through `/opsx:update`, ticked tasks are not touched.
+- **D9. Parallel work.** Only if several agents will implement the change (an `agent-network` swarm): can the groups be split between agents without one waiting on another? Groups in build order (schema → entity → service → API) cannot; vertical slices with a contract fixed in `design.md` can. Not splittable — a remark, not a blocker: one agent will be faster.
 
 ## E. Cross-checking
 

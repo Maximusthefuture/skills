@@ -41,6 +41,26 @@ First call, always: `swarm_context`. Never call `propose`, `complete` or `send_m
 - `complete(...)` — meaning depends on the phase: DISCUSS no arguments (approve the agreement you have read); IMPLEMENT `{result, filesChanged?, commits}`; SYNC `{status, findings?}`; INTEGRATE (lead) `{status, result, commits, findings?}`. NEEDS_FIX requires an ERROR finding; name the agent who must fix in `relatedAgent`; severity is INFO, WARNING or ERROR. Arguments from another phase are rejected.
 - `wait({timeoutMs?})` — returns with `status`: `MESSAGES`, `ACTION_REQUIRED`, `UPDATED`, `DONE` or `TIMEOUT`, with fresh context (`TIMEOUT` is a short answer). On `TIMEOUT` call `wait()` again. If something is already pending it returns immediately. Omit `timeoutMs` to use the server default.
 
+## With development skills
+
+This skill decides **when and who**: the phase, your assignment, your files, whom you talk to. A development
+skill in the session (for example `java-dev-flow`, `java-tdd`) decides **how** you do your part, and only
+inside the phase `nextAction` gives you:
+
+- DISCUSS: its design and plan go into `propose` (`decisions`, `interfaces`, `responsibility`, and `files`
+  including tests, migrations and test resources). No code, even if that skill would start coding now.
+- IMPLEMENT: its test-first cycle and checks on your own assignment only; its report goes into `complete({result})`.
+- SYNC: its review checklist on the work in `reviewTargets`.
+- Its "ask the user" becomes `send_message` to the agent concerned; only the lead asks the user, for vague
+  scope or an irreversible action outside the protocol. Never leave the swarm waiting on a user answer.
+- Its phase order never overrides `nextAction`. If it says "go to the next phase" and `nextAction` is `wait`, call `wait()`.
+
+An OpenSpec change named in the task `description` (`openspec/changes/<name>/`) is the agreed WHAT: in DISCUSS split
+its `tasks.md` task numbers between agents instead of redesigning; the change directory belongs to the lead only; nobody
+runs the `/opsx:apply` loop (it would pick another agent's task); report your done task numbers in `complete({result})`.
+
+On a small local model load only this skill: a large development skill crowds out the protocol.
+
 ## Rules
 
 - Never invent the scope. If the task `description` does not say concretely what to build (placeholders, no feature), do not guess and do not propose: ask the user in your own chat and wait.

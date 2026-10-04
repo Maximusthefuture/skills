@@ -110,6 +110,8 @@ No pauses between tasks without a reason. You may stop for OpenSpec's reasons (a
 
 Slices of an L task can go to subagents (`references/subagent-handoff.md`). Instead of the design summary give the paths to `proposal.md`, `design.md`, `specs/` and the group number in `tasks.md`. **Only the coordinator ticks checkboxes**, after its own check: parallel edits of one `tasks.md` break tracking.
 
+Several agents in an `agent-network` swarm on one change — see "Swarm on top of an OpenSpec change" in `references/swarm.md`: the lead owns the change directory, nobody runs the `/opsx:apply` loop, the "Verification" group is spread over the swarm phases.
+
 ## Before `/opsx:archive`
 
 - All tasks are ticked, including the "Verification" group.
