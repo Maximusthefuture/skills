@@ -1,24 +1,24 @@
 ---
 name: jira-tasks
-description: Создание задач в Jira через Atlassian MCP по списку от пользователя или по плану, который нужно нарезать на задачи. Используй, когда пользователь просит "создай задачи/таски в jira", передаёт список задач для спринта, просит "разбей на задачи" план, фичу или follow-ups, или вызывает /jira-tasks. Режет план на вертикальные срезы со связями «blocks», уточняет спринт и сторипоинты, проверяет лимит 5 задач на спринт, показывает итоговый план, создаёт задачи только после подтверждения и ведёт квартальный журнал для ревью.
+description: "Creates Jira tickets via the Atlassian MCP from the user's list or from a plan that must be sliced into tickets. Use when the user asks to create tickets/tasks in Jira («создай задачи/таски в jira»), passes a list of tasks for a sprint, asks to split a plan, feature or follow-ups into tickets («разбей на задачи»), or calls /jira-tasks. Slices a plan into vertical slices with \"blocks\" links, asks for the sprint and story points, checks the limit of 5 tickets per sprint, shows the final plan, creates tickets only after confirmation and keeps a quarterly log for the review."
 ---
 
-# Создание задач в Jira
+# Creating Jira tickets
 
-Пользователь передаёт готовый список задач или план (фичу, спеку, follow-ups из отчёта), который сначала нужно нарезать на задачи. Для каждой задачи создаётся отдельная таска в Jira через Atlassian MCP (Rovo MCP: инструменты `getAccessibleAtlassianResources`, `getVisibleJiraProjects`, `getJiraProjectIssueTypesMetadata`, `getJiraIssueTypeMetaWithFields`, `searchJiraIssuesUsingJql`, `createJiraIssue`, `editJiraIssue`, `getJiraIssue`). Точные имена бери из списка доступных инструментов сервера Atlassian — если их нет в сессии, остановись и скажи пользователю, что Atlassian MCP не подключён.
+The user passes a ready list of tasks or a plan (a feature, a spec, follow-ups from a report) that must first be sliced into tasks. Every task becomes a separate Jira ticket via the Atlassian MCP (Rovo MCP: the tools `getAccessibleAtlassianResources`, `getVisibleJiraProjects`, `getJiraProjectIssueTypesMetadata`, `getJiraIssueTypeMetaWithFields`, `searchJiraIssuesUsingJql`, `createJiraIssue`, `editJiraIssue`, `getJiraIssue`). Take the exact names from the Atlassian server's tool list — if they are not in the session, stop and tell the user the Atlassian MCP is not connected.
 
-Общайся с пользователем на русском.
+Talk to the user in Russian. Ticket summaries and descriptions go in the language of the user's list (usually Russian); the templates below show the structure.
 
-## Жёсткие правила
+## Hard rules
 
-1. **Никаких вызовов, меняющих Jira, до явного подтверждения пользователя** («да», «ок», «создавай»). Чтение (поиск спринтов, проектов, полей) можно делать сразу.
-2. **Сторипоинты спрашивать всегда** — для каждой задачи, даже если пользователь их не упомянул. Не придумывай и не подставляй значения по умолчанию. Если пользователь указал SP в исходном списке — покажи их в плане, это и будет подтверждением.
-3. **Не больше 5 задач в одном спринте.** Считаются задачи пользователя, уже лежащие в спринте, плюс новые (см. шаг 4).
-4. **Спринт обязателен.** Если не указан — спроси, затем найди его в Jira. Не угадывай.
+1. **No calls that change Jira before the user's explicit confirmation** («да», «ок», «создавай», yes). Reads (searching sprints, projects, fields) may happen right away.
+2. **Always ask for story points** — for every ticket, even if the user did not mention them. Do not invent or default values. If the user gave SP in the original list, show them in the plan — that is the confirmation.
+3. **No more than 5 tickets in one sprint.** Counted: the user's tickets already in the sprint plus the new ones (see step 4).
+4. **A sprint is mandatory.** Not given — ask, then find it in Jira. Do not guess.
 
-## Конфиг
+## Config
 
-Файл `~/.claude/skills/jira-tasks/config.json` хранит значения, найденные при первом запуске, чтобы не искать их каждый раз:
+The file `~/.claude/skills/jira-tasks/config.json` stores values found on the first run so they are not searched every time:
 
 ```json
 {
@@ -31,78 +31,78 @@ description: Создание задач в Jira через Atlassian MCP по �
 }
 ```
 
-Если файла нет или поле пустое — определи значение (шаг 1) и сохрани. Если значение из конфига приводит к ошибке API — переопредели и перезапиши.
+No file or an empty field — determine the value (step 1) and save it. A value from the config causes an API error — determine it again and overwrite.
 
-## Порядок работы
+## Workflow
 
-### 1. Подготовка
-- `cloudId`: через `getAccessibleAtlassianResources`. Если сайтов несколько — спроси, какой.
-- `projectKey`: если не в конфиге и не указан пользователем — спроси (можно показать список из `getVisibleJiraProjects`).
-- ID полей: через `getJiraIssueTypeMetaWithFields` для проекта и типа задачи найди:
-  - поле сторипоинтов — по имени `Story Points` или `Story point estimate` (обычно `customfield_10016` или `customfield_100xx`);
-  - поле спринта — по имени `Sprint` (обычно `customfield_10020`).
+### 1. Preparation
+- `cloudId`: via `getAccessibleAtlassianResources`. Several sites — ask which one.
+- `projectKey`: not in the config and not given by the user — ask (you can show the list from `getVisibleJiraProjects`).
+- Field IDs: via `getJiraIssueTypeMetaWithFields` for the project and issue type find:
+  - the story points field — by the name `Story Points` or `Story point estimate` (usually `customfield_10016` or `customfield_100xx`);
+  - the sprint field — by the name `Sprint` (usually `customfield_10020`).
 
-### 2. Разбор списка или нарезка плана
-**Готовый список.** Разбери сообщение пользователя на отдельные задачи: краткое название (summary) и, если есть, описание. Если формулировка задачи непонятна — уточни, но не задавай лишних вопросов.
+### 2. Parsing the list or slicing the plan
+**A ready list.** Split the user's message into separate tasks: a short title (summary) and, if present, a description. A task's wording is unclear — clarify, but do not ask unnecessary questions.
 
-**План, фича или спека.** Нарежь на **вертикальные срезы**:
-- срез проходит узкий, но полный путь через все слои: changeset → entity и репозиторий → сервис → controller или listener → тесты. Не «вся схема одной задачей, все сервисы другой»;
-- срез проверяем сам по себе: после него endpoint отвечает, событие обрабатывается, отчёт строится;
-- срез помещается в одну сессию работы. Если код сначала нужно подготовить (подготовительный рефакторинг), это отдельный срез, и он идёт первым.
+**A plan, feature or spec.** Slice it into **vertical slices**:
+- a slice goes along a narrow but complete path through all layers: changeset → entity and repository → service → controller or listener → tests. Not "the whole schema in one ticket, all services in another";
+- a slice is verifiable by itself: after it the endpoint responds, the event is handled, the report is built;
+- a slice fits into one working session. If the code must be prepared first (a preparatory refactoring), that is a separate slice, and it goes first.
 
-У каждой задачи — **«Блокируется»**: задачи, которые должны быть сделаны до неё. Указывай только настоящие зависимости; задача без блокеров может начинаться сразу.
+Every ticket has **"Blocked by"**: the tickets that must be done before it. Name only real dependencies; a ticket without blockers can start right away.
 
-**Широкий рефакторинг** — одна механическая правка, которая задевает весь код (переименовать колонку, сменить тип общего класса), — вертикально не режется. Режь по expand–contract:
-1. **expand** — новое рядом со старым, ничего не ломается;
-2. **миграция** — вызывающий код переводится пачками (по модулю или пакету), каждая пачка — своя задача, блокируется expand;
-3. **contract** — старое удаляется, задача блокируется всеми пачками миграции.
+**A wide refactoring** — one mechanical edit that touches all the code (renaming a column, changing the type of a shared class) — is not sliced vertically. Slice it by expand–contract:
+1. **expand** — the new next to the old, nothing breaks;
+2. **migration** — the calling code moves over in batches (per module or package), each batch is its own ticket, blocked by expand;
+3. **contract** — the old is removed, the ticket is blocked by all migration batches.
 
-Для схемы БД это тот же expand/contract, что в `migration-safety`.
+For a DB schema this is the same expand/contract as in `migration-safety`.
 
-Описание задачи — по шаблону, без путей к файлам и кода: они быстро устаревают.
+The ticket description follows the template, without file paths and code: they go stale fast. For Russian tickets use these headings:
 
 ```
-Что сделать: <поведение от лица пользователя или потребителя API, а не список слоёв>
+Что сделать: <behavior from the user's or API consumer's point of view, not a list of layers>
 
 Критерии приёмки:
-- [ ] <проверяемое условие>
-- [ ] <проверяемое условие>
+- [ ] <a verifiable condition>
+- [ ] <a verifiable condition>
 
-Блокируется: <номера задач из плана или «нет»>
+Блокируется: <ticket numbers from the plan or «нет»>
 ```
 
-Покажи нарезку пронумерованным списком (название, «Блокируется», что даёт задача) и спроси:
-- подходит ли гранулярность: не слишком ли крупно или мелко;
-- верны ли зависимости: каждая задача зависит только от того, что её действительно блокирует;
-- что объединить или разделить.
+Show the slicing as a numbered list (title, "Blocked by", what the ticket delivers) and ask:
+- is the granularity right: not too coarse or too fine;
+- are the dependencies right: every ticket depends only on what really blocks it;
+- what to merge or split.
 
-Повторяй, пока пользователь не согласится с нарезкой. Дальше — шаги 3–9, как для готового списка.
+Repeat until the user agrees with the slicing. Then steps 3–9, as for a ready list.
 
-### 3. Спринт
-- Если спринт не указан — спроси: «В какой спринт добавить задачи?»
-- Найди спринт в Jira. У Rovo MCP нет отдельного инструмента для спринтов, поэтому ищи через JQL (`searchJiraIssuesUsingJql`, запрашивай поле спринта):
-  - активные/будущие: `project = <KEY> AND sprint in (openSprints(), futureSprints())`
-  - по названию: `project = <KEY> AND sprint = "<название>"`
-  Из значения поля спринта у найденных задач возьми `id`, `name`, `state`.
-- Если подходящих спринтов несколько или точного совпадения нет — покажи найденные и попроси выбрать. Если спринт не найден совсем — сообщи и спроси снова. Закрытый (`closed`) спринт не используй, предупреди.
+### 3. Sprint
+- No sprint given — ask: «В какой спринт добавить задачи?»
+- Find the sprint in Jira. Rovo MCP has no dedicated sprint tool, so search via JQL (`searchJiraIssuesUsingJql`, request the sprint field):
+  - active/future: `project = <KEY> AND sprint in (openSprints(), futureSprints())`
+  - by name: `project = <KEY> AND sprint = "<name>"`
+  From the sprint field of the found issues take `id`, `name`, `state`.
+- Several matching sprints or no exact match — show the found ones and ask to choose. No sprint found at all — say so and ask again. Do not use a `closed` sprint; warn about it.
 
-### 4. Лимит 5 задач
-- Посчитай задачи пользователя, уже находящиеся в спринте:
+### 4. The 5-ticket limit
+- Count the user's tickets already in the sprint:
   `sprint = <sprintId> AND (assignee = currentUser() OR reporter = currentUser())`
-- `свободно = 5 − уже_в_спринте`. Если новых задач больше, чем свободных мест — не создавай лишние в этом спринте. Сообщи, сколько мест осталось, и предложи: перенести остаток в другой (следующий) спринт, выкинуть часть задач или оставить остаток без спринта. Для переноса в другой спринт снова действует шаг 3–4.
-- Если у задач есть «Блокируется», переносить в следующий спринт можно только с конца цепочки. Блокер не может стоять в более позднем спринте, чем задача, которую он блокирует.
+- `free = 5 − already_in_sprint`. More new tickets than free slots — do not create the extra ones in this sprint. Say how many slots are left and offer: move the rest to another (the next) sprint, drop some tickets, or leave the rest without a sprint. Moving to another sprint goes through steps 3–4 again.
+- If tickets have "Blocked by", only the end of a chain may move to the next sprint. A blocker cannot be in a later sprint than the ticket it blocks.
 
-### 5. Сторипоинты
-Для каждой задачи без SP спроси одним сообщением, списком, например:
+### 5. Story points
+For every ticket without SP ask in one message, as a list, e.g.:
 ```
 Сколько сторипоинтов на каждую задачу?
 1. Настроить CI для сервиса X — ?
 2. Починить таймаут в API — ?
 ```
-Принимай только числа. Если ответ неполный — переспроси недостающие.
+Accept numbers only. An incomplete answer — ask again for the missing ones.
 
-### 6. План и подтверждение
-Покажи итоговую таблицу и жди подтверждения:
+### 6. Plan and confirmation
+Show the final table and wait for confirmation:
 
 ```
 Проект: ABC   Спринт: ABC Sprint 42 (id 1234, active)   Задач в спринте после создания: 4/5
@@ -114,26 +114,26 @@ description: Создание задач в Jira через Atlassian MCP по �
 
 Итого: 2 задачи, 5 SP. Связей «blocks»: 1. Создаю?
 ```
-Столбец «Блокируется» показывай, только если зависимости есть. Подтверждение плана включает и создание связей.
+Show the "Блокируется" column only if there are dependencies. Confirming the plan includes creating the links.
 
-Если пользователь что-то правит — обнови план и покажи снова.
+If the user changes something — update the plan and show it again.
 
-### 7. Создание
-После подтверждения для каждой задачи вызови `createJiraIssue`:
-- `cloudId`, `projectKey`, `issueTypeName` из конфига, `summary`, `description` (если есть);
-- в `additional_fields`: `{"<storyPointsField>": <SP>, "<sprintField>": <sprintId>}` (спринт — числом, не объектом).
-- назначь на текущего пользователя, если это принято в проекте (`assignee_account_id`, если известен).
+### 7. Creation
+After confirmation call `createJiraIssue` for every ticket:
+- `cloudId`, `projectKey`, `issueTypeName` from the config, `summary`, `description` (if any);
+- in `additional_fields`: `{"<storyPointsField>": <SP>, "<sprintField>": <sprintId>}` (the sprint as a number, not an object);
+- assign to the current user if that is the project's practice (`assignee_account_id`, if known).
 
-Если создание с полем спринта или SP падает (поле не на экране создания) — создай задачу без него и проставь поле через `editJiraIssue`. Если и это не удалось — сообщи пользователю, какая задача и какое поле не проставились.
+Creation with the sprint or SP field fails (the field is not on the create screen) — create the ticket without it and set the field via `editJiraIssue`. If that fails too — tell the user which ticket and which field were not set.
 
-Создавай задачи по одной; при ошибке не повторяй вслепую — сначала проверь через JQL, не создалась ли задача уже (по summary в этом проекте за последние минуты), чтобы не плодить дубли.
+Create tickets one by one; on an error do not retry blindly — first check via JQL whether the ticket was created anyway (by summary in this project within the last minutes), so you do not create duplicates.
 
-**Зависимости.** Создавай задачи в порядке зависимостей: сначала блокеры. Тогда к моменту создания задачи ключи её блокеров уже известны, и в описании вместо номеров из плана стоит «Блокируется: ABC-123». Затем свяжи задачи:
-- если среди инструментов Atlassian есть создание связи между задачами (например, `createIssueLink`), создай связь типа `Blocks`: блокер → блокируемая задача;
-- если такого инструмента нет, связи остаются только в описаниях. Скажи пользователю, какие связи поставить вручную.
+**Dependencies.** Create tickets in dependency order: blockers first. Then by the time a ticket is created, its blockers' keys are known, and the description says "Блокируется: ABC-123" instead of plan numbers. Then link the tickets:
+- if the Atlassian tools include creating an issue link (e.g. `createIssueLink`), create a `Blocks` link: blocker → blocked ticket;
+- if there is no such tool, the links stay only in the descriptions. Tell the user which links to set by hand.
 
-### 8. Журнал для квартального ревью
-После создания допиши задачи в файл `<reviewLogDir>/<YYYY>-Q<N>.md` (квартал по текущей дате: янв–мар Q1, апр–июн Q2, июл–сен Q3, окт–дек Q4). Если файла нет — создай с заголовком:
+### 8. The quarterly review log
+After creation append the tickets to the file `<reviewLogDir>/<YYYY>-Q<N>.md` (the quarter by the current date: Jan–Mar Q1, Apr–Jun Q2, Jul–Sep Q3, Oct–Dec Q4). No file — create it with the header:
 
 ```markdown
 # Задачи <YYYY> Q<N>
@@ -142,15 +142,15 @@ description: Создание задач в Jira через Atlassian MCP по �
 |------|------|--------|----|--------|--------|
 ```
 
-И добавь по строке на каждую **успешно созданную** задачу, например:
+And add a line for every **successfully created** ticket, e.g.:
 ```
 | 2026-10-02 | ABC-123 | Настроить CI для сервиса X | 3 | ABC Sprint 42 | https://<site>.atlassian.net/browse/ABC-123 |
 ```
-Не перезаписывай файл — только дописывай.
+Do not overwrite the file — only append.
 
-### 9. Итог
-Покажи пользователю список созданных задач с ключами и ссылками, суммарные SP, сколько задач теперь в спринте (n/5), созданные связи «blocks» (или какие нужно поставить вручную), путь к файлу журнала и любые ошибки.
+### 9. Summary
+Show the user the created tickets with keys and links, the total SP, how many tickets are now in the sprint (n/5), the created "blocks" links (or which to set by hand), the log file path and any errors.
 
 ---
 
-Нарезка на вертикальные срезы, связи «blocks» и expand–contract для широких рефакторингов взяты из `to-tickets` в [mattpocock/skills](https://github.com/mattpocock/skills) (MIT).
+Slicing into vertical slices, "blocks" links and expand–contract for wide refactorings are taken from `to-tickets` in [mattpocock/skills](https://github.com/mattpocock/skills) (MIT).

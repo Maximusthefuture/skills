@@ -1,59 +1,60 @@
 # openspec/config.yaml — OpenSpec + java-dev-flow
-# Положи в openspec/config.yaml проекта. Если файл уже есть — перенеси разделы вручную.
-# Работает со встроенной схемой spec-driven. Для схемы java-flow поменяй строку schema
-# (правила design и tasks тогда дублируют инструкции схемы — это не мешает).
+# Put it into the project's openspec/config.yaml. If the file already exists, move the sections by hand.
+# Works with the built-in spec-driven schema. For the java-flow schema change the schema line
+# (the design and tasks rules then duplicate the schema's instructions — that does no harm).
 
 schema: spec-driven
 
-# Попадает в инструкции ВСЕХ артефактов. Только то, чего агент не выведет из кода.
-# Поправь стек под проект.
+# Goes into the instructions of ALL artifacts. Only what the agent cannot infer from the code.
+# Adjust the stack to the project.
 context: |
-  Стек: Java 21, Spring Boot 3.x, Hibernate (JPA), PostgreSQL, Liquibase; сборка через wrapper (./mvnw или ./gradlew).
-  Тесты: JUnit 5 + AssertJ; всё, что касается БД, — на Testcontainers PostgreSQL, не на H2; Kafka — на Testcontainers,
-  а если в проекте нет Testcontainers — на @EmbeddedKafka (spring-kafka-test); внешний HTTP — WireMock.
-  Инженерный процесс задаёт скилл java-dev-flow: классификация S/M/L, дизайн по think-before-coding,
-  реализация каждой задачи по java-tdd, проверка по размеру и сигналам. Доменные скиллы backend-design-java
-  подключаются только по сигналам в задаче и коде.
-  Change создаётся для задач размера M и L. Правки размера S, баги, возвращающие уже описанное в specs поведение,
-  и рефакторинг без изменения поведения делаются без change.
-  Применённые changeset'ы Liquibase не редактируются; rename, drop и смена типа — только через expand/contract.
+  Stack: Java 21, Spring Boot 3.x, Hibernate (JPA), PostgreSQL, Liquibase; build via the wrapper (./mvnw or ./gradlew).
+  Tests: JUnit 5 + AssertJ; everything that touches the DB runs on Testcontainers PostgreSQL, not H2; Kafka runs on Testcontainers,
+  or on @EmbeddedKafka (spring-kafka-test) if the project has no Testcontainers; external HTTP — WireMock.
+  The engineering process is set by the java-dev-flow skill: S/M/L classification, design per think-before-coding,
+  every task implemented per java-tdd, verification by size and signals. backend-design-java domain skills
+  are loaded only by signals in the task and the code.
+  A change is created for M and L tasks. S edits, bugs that restore behavior already described in specs,
+  and refactoring without behavior change are done without a change.
+  Applied Liquibase changesets are never edited; rename, drop and type changes only via expand/contract.
+  Write the artifacts in the language the team uses for this project.
 
 rules:
   proposal:
-    - "Первая строка раздела Impact — классификация java-dev-flow: «Маршрут: <тип> · <M|L> · сигналы: <признаки> → <скиллы>»."
-    - "В Impact явно перечисли изменения публичного API, событий и схемы БД; ломающие помечай **BREAKING**."
-    - "Для размера L предложи в What Changes разбиение на независимые PR."
+    - "The first line of the Impact section is the java-dev-flow classification: \"Route: <type> · <M|L> · signals: <evidence> → <skills>\"."
+    - "In Impact list changes to the public API, events and DB schema explicitly; mark breaking ones **BREAKING**."
+    - "For size L propose a split into independent PRs in What Changes."
   specs:
-    - "Каждый Scenario — одно наблюдаемое поведение, которое станет одним тестом (одним циклом java-tdd). В WHEN/THEN — конкретные значения: HTTP-статус, код ошибки, поле ответа, состояние в БД, опубликованное событие."
-    - "Ошибочные пути — отдельные сценарии: невалидный ввод → 400 с кодом, нет прав → 403, чужой ресурс → 404, конфликт или дубликат → 409, недоступность внешней системы."
-    - "Для операций с побочными эффектами (запись + сообщение или внешний вызов) добавь сценарий повтора: тот же запрос или событие дважды дают один эффект."
+    - "Every Scenario is one observable behavior that becomes one test (one java-tdd cycle). WHEN/THEN carry concrete values: HTTP status, error code, response field, DB state, published event."
+    - "Error paths are separate scenarios: invalid input → 400 with a code, no permission → 403, someone else's resource → 404, conflict or duplicate → 409, an external system being unavailable."
+    - "For operations with side effects (a write + a message or an external call) add a retry scenario: the same request or event twice produces one effect."
   design:
-    - "Перед написанием вызови скилл think-before-coding, если он есть, и доменные скиллы по сигналам из Impact в proposal.md."
-    - "Для change размера M и L design.md создавай всегда."
-    - "Context — тип компонента и ожидаемая нагрузка. Decisions — данные и инварианты (какие constraint'ы, какой changeset), граница транзакции, авторизация (кто, какое право, область строк), идемпотентность и конкуренция (ключ, @Version или блокировка, outbox), наблюдаемость (логи, метрики, health). Risks — режимы отказа и как их обнаружить и восстановиться."
-    - "В Decisions зафиксируй порядок сборки: changeset → entity и репозиторий → сервис с границей транзакции → controller или listener → маппинг ошибок → метрики."
-    - "Migration Plan — changeset'ы по правилам migration-safety (CONCURRENTLY, NOT VALID, expand/contract) и откат."
-    - "Если change добавляет вариант к набору, по которому код уже ветвится (способ оплаты, провайдер, канал, тип документа, статус), вызови скилл java-extensibility-review по затрагиваемым классам и запиши его вердикт в Decisions: расширяем как есть или сначала подготовительный рефакторинг."
+    - "Before writing, call the think-before-coding skill if it exists, and the domain skills by the signals from Impact in proposal.md."
+    - "For M and L changes always create design.md."
+    - "Context — component type and expected load. Decisions — data and invariants (which constraints, which changeset), the transaction boundary, authorization (who, which permission, which rows), idempotency and concurrency (key, @Version or lock, outbox), observability (logs, metrics, health). Risks — failure modes and how to detect and recover from them."
+    - "In Decisions pin the build order: changeset → entity and repository → service with a transaction boundary → controller or listener → error mapping → metrics."
+    - "Migration Plan — changesets per migration-safety (CONCURRENTLY, NOT VALID, expand/contract) and rollback."
+    - "If the change adds a variant to a set the code already branches on (payment method, provider, channel, document type, status), call the java-extensibility-review skill on the affected classes and record its verdict in Decisions: extend as is, or a preparatory refactoring first."
   tasks:
-    - "Группы — срезы в порядке сборки из design.md. Внутри группы — по задаче на поведение, обычно на один Scenario из specs."
-    - "Формат задачи: «X.Y <Scenario или поведение> — <уровень теста: unit | @DataJpaTest + Testcontainers | @WebMvcTest | @SpringBootTest + Testcontainers | @SpringBootTest + @EmbeddedKafka | WireMock> — проверка: <тест или команда>». Тест пишется первым и должен упасть до реализации."
-    - "Не выноси тесты в отдельную группу в конце: каждая группа несёт свои тесты."
-    - "Если в design.md решено сначала рефакторить, первая группа — «Подготовительный рефакторинг»: поведение не меняется, тесты зелёные до и после; новый вариант добавляется в следующих группах."
-    - "Последняя группа «Проверка» — только интеграционные проверки: полный прогон (./mvnw verify или ./gradlew check); агент java-code-reviewer по diff (если агента нет — скилл java-code-review); java-extensibility-review по изменённым классам, если в diff выросло ветвление по типу или статусу; review-migration, если есть changeset'ы; test-audit по новым тестам; для L — агенты security-reviewer, schema-reviewer, incident-thinker по сигналам."
+    - "Groups are slices in the build order from design.md. Inside a group — one task per behavior, usually per Scenario from specs."
+    - "Task format: \"X.Y <Scenario or behavior> — <test level: unit | @DataJpaTest + Testcontainers | @WebMvcTest | @SpringBootTest + Testcontainers | @SpringBootTest + @EmbeddedKafka | WireMock> — verify: <test or command>\". The test is written first and must fail before the implementation."
+    - "Do not move tests into a separate group at the end: every group carries its own tests."
+    - "If design.md decided to refactor first, the first group is \"Preparatory refactoring\": behavior does not change, tests green before and after; the new variant is added in the following groups."
+    - "The last group \"Verification\" holds only integration checks: the full run (./mvnw verify or ./gradlew check); the java-code-reviewer and critic agents on the diff — in one message, in parallel (no agents — the java-code-review skill and the critic questions from the java-dev-flow checklist); java-extensibility-review on the changed classes if branching on type or status grew in the diff; review-migration if there are changesets; test-audit on new tests; for L — the security-reviewer, schema-reviewer, incident-thinker agents by signals."
 
 operations:
   apply:
     guidance:
-      - "Перед первой задачей вызови скилл java-dev-flow и работай в его режиме OpenSpec (references/openspec.md): артефакты change — это его дизайн и план, фазы 0–3 уже пройдены."
-      - "Каждую задачу реализуй через скилл java-tdd: сначала тест, запуск и падение на assertion по ожидаемой причине, потом минимальный код, потом рефакторинг."
-      - "Подключай доменные скиллы backend-design-java по сигналам текущей задачи, а не все сразу."
-      - "Предупреждения хуков backend-design-java после записи файлов исправляй в той же задаче или фиксируй с обоснованием для итогового отчёта."
-      - "Отмечай задачу [x] только после того, как видел её тест красным, а затем зелёным вместе с тестами модуля."
-      - "Если реализация расходится с design.md или specs — остановись и предложи /opsx:update, не отклоняйся молча."
-      - "Задачи группы «Проверка» выполняй реальным запуском команд; «тесты зелёные» — только по выводу команды, запущенной после последней правки."
-      - "Ревью в группе «Проверка» поручай агенту java-code-reviewer (свежий контекст, без правок): передай область diff и путь к этому change как описание намерения. Его находки проверь по коду сам; баги исправляй через тест."
+      - "Before the first task call the java-dev-flow skill and work in its OpenSpec mode (references/openspec.md): the change artifacts are its design and plan, phases 0–3 are done."
+      - "Implement every task via the java-tdd skill: test first, run it and see it fail on an assertion for the expected reason, then minimal code, then refactoring."
+      - "Load backend-design-java domain skills by the signals of the current task, not all at once."
+      - "Fix backend-design-java hook warnings after file writes in the same task or record them with a justification for the final report."
+      - "Tick a task [x] only after you saw its test red and then green together with the module tests."
+      - "If the implementation diverges from design.md or specs — stop and suggest /opsx:update, do not deviate silently."
+      - "Run the \"Verification\" group tasks by actually running the commands; \"tests are green\" only from the output of a command run after the last edit."
+      - "Hand the review in the \"Verification\" group to the java-code-reviewer and critic agents in one message, in parallel (fresh context, no edits): pass the diff scope and the path to this change as the description of intent, and the critic also the size and what is known about production. Check their findings against the code yourself; fix bugs and confirmed blockers test-first, bring the critic's questions to the user."
   archive:
     guidance:
-      - "Архивируй, только если отмечены все задачи, включая группу «Проверка», и полный прогон тестов выполнен в этой сессии после последней правки; иначе назови, чего не хватает."
-      - "В итоговом сообщении дай отчёт по шаблону java-dev-flow (references/templates.md): сделано по сценариям, проверки и их результат, что не запускалось, решения, follow-ups."
-      - "Задачи в Jira по follow-ups — только через скилл jira-tasks и только по просьбе пользователя."
+      - "Archive only if all tasks are ticked, including the \"Verification\" group, and the full test run happened in this session after the last edit; otherwise name what is missing."
+      - "In the final message give the report per the java-dev-flow template (references/templates.md): done by scenario, checks and their results, what did not run, decisions, follow-ups."
+      - "Jira tickets for follow-ups — only via the jira-tasks skill and only at the user's request."

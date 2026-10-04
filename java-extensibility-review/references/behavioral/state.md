@@ -1,33 +1,33 @@
-# State (Состояние)
+# State
 
-Группа: поведенческий
+Group: behavioral
 
-## Суть
-Поведение объекта зависит от его текущего состояния. Вместо `if (status == …)` в каждом методе правила (какие переходы разрешены, как ведёт себя операция в этом состоянии) собираются в объекте-состоянии. В Java это обычно enum: на простом уровне — таблица переходов, на полном — абстрактные методы у каждой константы.
+## Essence
+An object's behavior depends on its current state. Instead of `if (status == …)` in every method, the rules (which transitions are allowed, how an operation behaves in this state) are gathered in a state object. In Java this is usually an enum: at the simple level — a transition table, at the full level — abstract methods on every constant.
 
-## Структура (участники)
-- **Context** — объект с изменяемым поведением (`Order`). Хранит текущее состояние и делегирует ему операции, зависящие от состояния.
-- **State** — интерфейс (или enum) с операциями, поведение которых зависит от состояния (`cancel`, `pay`, `ship`).
-- **ConcreteState** — поведение в конкретном состоянии (`NEW`, `PAID`, `SHIPPED`). Решает, разрешена ли операция и какое состояние следующее.
+## Structure (participants)
+- **Context** — the object with changing behavior (`Order`). Holds the current state and delegates state-dependent operations to it.
+- **State** — an interface (or enum) with operations whose behavior depends on the state (`cancel`, `pay`, `ship`).
+- **ConcreteState** — the behavior in a concrete state (`NEW`, `PAID`, `SHIPPED`). Decides whether the operation is allowed and which state comes next.
 
 ```
-Context ──текущее──▶ «interface» State ◀── NewState, PaidState, ShippedState
+Context ──current──▶ «interface» State ◀── NewState, PaidState, ShippedState
    ▲                                              │
-   └────────── переход: context.state = next ─────┘
+   └────────── transition: context.state = next ──┘
 ```
-Отличие от Strategy: состояние меняется изнутри, по ходу жизни объекта, и состояния знают о переходах друг в друга.
+The difference from Strategy: the state changes from inside, over the object's life, and states know about the transitions between them.
 
-## Признаки в Java/Spring коде
-- `if (order.getStatus() == NEW && target == PAID) … else if (…)` в нескольких сервисах.
-- Методы `cancel()`, `ship()`, `refund()` начинаются с одинаковых проверок статуса.
-- Статус меняется сеттером из разных мест (`order.setStatus(…)`), единой точки смены нет.
-- Баги вида «заказ отменили после отгрузки».
+## Signs in Java/Spring code
+- `if (order.getStatus() == NEW && target == PAID) … else if (…)` in several services.
+- The `cancel()`, `ship()`, `refund()` methods start with the same status checks.
+- The status is changed with a setter from different places (`order.setStatus(…)`), there is no single point of change.
+- Bugs like "the order was cancelled after shipping".
 
-## Когда не применять
-- Статус — просто метка без правил.
-- Долгие процессы с таймерами, вложенными состояниями и персистентностью процесса. Сначала прикинь, хватит ли таблицы в enum; Spring Statemachine или Camunda — только если их сложность действительно нужна.
+## When not to apply
+- The status is just a label without rules.
+- Long processes with timers, nested states and process persistence. First estimate whether a table in an enum is enough; Spring Statemachine or Camunda — only if their complexity is really needed.
 
-## До
+## Before
 ```java
 void cancel(Order o) {
     if (o.getStatus() == SHIPPED || o.getStatus() == DELIVERED) throw new IllegalStateException();
@@ -40,7 +40,7 @@ void ship(Order o) {
 }
 ```
 
-## После — уровень 1: таблица переходов в enum
+## After — level 1: a transition table in the enum
 ```java
 public enum OrderStatus {
     NEW, PAID, SHIPPED, DELIVERED, CANCELLED;
@@ -57,15 +57,15 @@ public enum OrderStatus {
     }
 }
 
-// в сущности — единственная точка смены статуса, без публичного setStatus
+// in the entity — the single point of status change, no public setStatus
 public void transitionTo(OrderStatus next) {
     if (!status.canTransitionTo(next)) throw new IllegalStatusTransitionException(status, next);
     this.status = next;
 }
 ```
 
-## После — уровень 2: поведение по состояниям
-Когда операции ведут себя по-разному в разных состояниях:
+## After — level 2: behavior per state
+When operations behave differently in different states:
 ```java
 public enum OrderState {
     NEW {
@@ -78,7 +78,7 @@ public enum OrderState {
     },
     SHIPPED, DELIVERED, CANCELLED;
 
-    // по умолчанию операция запрещена
+    // by default the operation is forbidden
     OrderState cancel(Order o, OrderEffects fx) { throw illegal("cancel"); }
     OrderState pay(Order o, OrderEffects fx)    { throw illegal("pay"); }
     OrderState ship(Order o, OrderEffects fx)   { throw illegal("ship"); }
@@ -88,30 +88,30 @@ public enum OrderState {
     }
 }
 ```
-`OrderEffects` — интерфейс, который реализует Spring-бин. Через него состояния вызывают побочные действия, при этом enum не хранит зависимостей. Если эффекты тяжёлые, лучше публиковать событие `OrderStatusChanged` (см. `observer.md`).
+`OrderEffects` is an interface implemented by a Spring bean. The states call side effects through it, and the enum holds no dependencies. If the effects are heavy, it is better to publish an `OrderStatusChanged` event (see `observer.md`).
 
-## Шаги рефакторинга
-1. Собрать все места смены статуса: `grep -rn "setStatus\|getStatus() ==" src/main/java`.
-2. Параметризованный тест по всем парам (from, to) с текущим поведением.
-3. Ввести таблицу переходов и `transitionTo`; заменить `setStatus` в сервисах.
-4. При необходимости перенести поведение по состояниям в enum или в классы состояний.
+## Refactoring steps
+1. Collect all places that change the status: `grep -rn "setStatus\|getStatus() ==" src/main/java`.
+2. A parameterized test over all (from, to) pairs with the current behavior.
+3. Introduce the transition table and `transitionTo`; replace `setStatus` in the services.
+4. If needed, move the per-state behavior into the enum or into state classes.
 
-## Подводные камни
-- Полный параметризованный тест таблицы (все пары) дешёвый и ценный. Предлагай его вместе с рефакторингом.
-- Конкурентная смена статуса требует `@Version` (оптимистическая блокировка) или условного `UPDATE … WHERE status = :expected`.
-- Enum хранится в БД (`@Enumerated(STRING)`): константы можно добавлять, но не переименовывать.
+## Pitfalls
+- A full parameterized test of the table (all pairs) is cheap and valuable. Propose it together with the refactoring.
+- A concurrent status change needs `@Version` (optimistic locking) or a conditional `UPDATE … WHERE status = :expected`.
+- The enum is stored in the DB (`@Enumerated(STRING)`): constants can be added, but not renamed.
 
-## Плюсы и минусы
-**Плюсы**
-- Правила каждого состояния собраны в одном месте, а не размазаны `if (status == …)` по сервисам.
-- Допустимые переходы явны и легко покрываются тестом таблицы.
-- Методы контекста упрощаются: нет ветвлений по статусу.
+## Pros and cons
+**Pros**
+- The rules of each state are gathered in one place, not smeared as `if (status == …)` across services.
+- Allowed transitions are explicit and easily covered by a table test.
+- The context's methods get simpler: no branching on the status.
 
-**Минусы**
-- Избыточно для 2–3 состояний без собственной логики.
-- Состояния знают друг о друге (кто следующий), и это связанность.
-- В enum-реализации нельзя внедрять бины. Побочные эффекты нужно передавать через параметр или события.
-- При десятках состояний и операций логика дробится на множество мелких методов.
+**Cons**
+- Overkill for 2–3 states without their own logic.
+- States know about each other (who is next), and that is coupling.
+- Beans cannot be injected into an enum implementation. Side effects have to go through a parameter or events.
+- With dozens of states and operations the logic splinters into many small methods.
 
-## Связанные паттерны
-Strategy (похожая структура, но выбор делается снаружи) · Observer (реакции на смену статуса) · Memento (откат состояния).
+## Related patterns
+Strategy (a similar structure, but chosen from outside) · Observer (reactions to a status change) · Memento (rolling back the state).

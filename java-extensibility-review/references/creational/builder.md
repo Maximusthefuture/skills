@@ -1,43 +1,43 @@
-# Builder (Строитель)
+# Builder
 
-Группа: порождающий
+Group: creational
 
-## Суть
-Сложный объект собирается пошагово через именованные методы, и только в конце `build()` создаёт его, часто неизменяемым и проверенным. Вместо конструктора на 9 параметров, в котором легко перепутать два `String`, получается читаемая сборка. Новый необязательный параметр не меняет сигнатуру и все места вызова.
+## Essence
+A complex object is assembled step by step through named methods, and only the final `build()` creates it, often immutable and validated. Instead of a 9-parameter constructor where two `String`s are easy to mix up, you get a readable assembly. A new optional parameter does not change the signature or every call site.
 
-## Структура (участники)
-- **Builder** — объект с методами-шагами установки частей (`recipient(…)`, `template(…)`) и финальным `build()`.
-- **Product** — создаваемый, обычно неизменяемый объект (`Notification`).
-- **Director** (необязателен) — знает типовые последовательности шагов. В Java обычно это статические фабрики-пресеты или Test Data Builder (`anOrder().paid()`).
-- **Client** — вызывает шаги и получает результат.
+## Structure (participants)
+- **Builder** — an object with step methods that set parts (`recipient(…)`, `template(…)`) and a final `build()`.
+- **Product** — the created, usually immutable object (`Notification`).
+- **Director** (optional) — knows typical step sequences. In Java it is usually static preset factories or a Test Data Builder (`anOrder().paid()`).
+- **Client** — calls the steps and gets the result.
 
 ```
-Client ──▶ Builder.a(…).b(…).c(…).build() ──▶ Product (проверенный, неизменяемый)
-Director ──задаёт типовой порядок шагов──▶ Builder
+Client ──▶ Builder.a(…).b(…).c(…).build() ──▶ Product (validated, immutable)
+Director ──sets a typical step order──▶ Builder
 ```
 
-## Признаки в Java/Spring коде
-- Конструкторы и методы на 5+ параметров, особенно подряд идущие однотипные (`String, String, String`).
-- Телескопические конструкторы (`Order(a)`, `Order(a, b)`, `Order(a, b, c)`…).
-- Boolean-флаги в вызовах: `export(report, true, false, true)` — без IDE непонятно, что значит каждый.
-- Объект собирают сеттерами, и он какое-то время существует в несогласованном состоянии.
-- Громоздкое создание тестовых данных, повторяющееся в каждом тесте.
+## Signs in Java/Spring code
+- Constructors and methods with 5+ parameters, especially consecutive ones of the same type (`String, String, String`).
+- Telescoping constructors (`Order(a)`, `Order(a, b)`, `Order(a, b, c)`…).
+- Boolean flags in calls: `export(report, true, false, true)` — without an IDE it is unclear what each one means.
+- The object is assembled with setters and exists in an inconsistent state for a while.
+- Bulky creation of test data, repeated in every test.
 
-## Когда не применять
-- 2–4 обязательных параметра — обычный конструктор или `record`.
-- Флаг выбирает алгоритм — это уже Strategy (`../behavioral/strategy.md`).
+## When not to apply
+- 2–4 required parameters — a plain constructor or a `record`.
+- The flag chooses an algorithm — that is already a Strategy (`../behavioral/strategy.md`).
 
-## Варианты решения
-**1. Boolean-флаги → отдельные методы или enum:**
+## Solution options
+**1. Boolean flags → separate methods or an enum:**
 ```java
-// было: export(report, true, false)
+// was: export(report, true, false)
 exportDraft(report);
 exportFinal(report);
-// или
+// or
 export(report, ExportMode.DRAFT);
 ```
 
-**2. Набор опций → `record` с фабриками по умолчанию:**
+**2. A set of options → a `record` with default factories:**
 ```java
 public record ExportOptions(boolean includeHeader, Locale locale, ZoneId zone, int maxRows) {
     public static ExportOptions defaults() { return new ExportOptions(true, Locale.ROOT, ZoneOffset.UTC, 10_000); }
@@ -45,7 +45,7 @@ public record ExportOptions(boolean includeHeader, Locale locale, ZoneId zone, i
 }
 ```
 
-**3. Builder (Lombok, если он есть в проекте):**
+**3. A builder (Lombok, if the project has it):**
 ```java
 @Builder(toBuilder = true)
 public record Notification(
@@ -68,36 +68,36 @@ var n = Notification.builder()
         .build();
 ```
 
-**4. Ручной builder с обязательными параметрами в конструкторе builder-а** — когда нельзя допустить `build()` без обязательных полей:
+**4. A hand-written builder with required parameters in the builder's constructor** — when `build()` without required fields must be impossible:
 ```java
 public static Builder builder(String recipient, String template) { return new Builder(recipient, template); }
 ```
 
-## Builder-ы Spring — используй их, а не свои
-`RestClient.builder()`, `WebClient.Builder` (внедряемый бин, который настраивается через `WebClientCustomizer`), `UriComponentsBuilder`, `ResponseEntity.status(…).header(…).body(…)`, `MockMvcRequestBuilders`.
+## Spring's builders — use them, not your own
+`RestClient.builder()`, `WebClient.Builder` (an injectable bean configured via `WebClientCustomizer`), `UriComponentsBuilder`, `ResponseEntity.status(…).header(…).body(…)`, `MockMvcRequestBuilders`.
 
-## Шаги рефакторинга
-1. Найти конструкторы и методы с длинными списками параметров (`get_symbols_overview` + `find_symbol` с телом, или Grep).
-2. Решить: отдельные методы, `record`-опции или builder.
-3. Добавить новый способ создания, перевести вызовы, удалить старые перегрузки.
+## Refactoring steps
+1. Find constructors and methods with long parameter lists (`get_symbols_overview` + `find_symbol` with the body, or Grep).
+2. Decide: separate methods, `record` options or a builder.
+3. Add the new way of creating, migrate the calls, remove the old overloads.
 
-## Подводные камни
-- Lombok `@Builder` на JPA-сущности: Hibernate нужен конструктор без аргументов (`@NoArgsConstructor(access = PROTECTED)` + `@AllArgsConstructor`). Поля с инициализаторами без `@Builder.Default` становятся `null`.
-- Builder, который позволяет вызвать `build()` без обязательных полей. Проверяй в `build()` или в компактном конструкторе `record`.
-- Изменяемый builder, сохранённый в поле и переиспользуемый между потоками.
-- Test Data Builder (`anOrder().withStatus(PAID).build()`) — отличный приём для тестов, и его стоит предлагать, если тесты дублируют сборку объектов.
+## Pitfalls
+- Lombok `@Builder` on a JPA entity: Hibernate needs a no-args constructor (`@NoArgsConstructor(access = PROTECTED)` + `@AllArgsConstructor`). Fields with initializers without `@Builder.Default` become `null`.
+- A builder that allows calling `build()` without required fields. Check in `build()` or in the `record`'s compact constructor.
+- A mutable builder kept in a field and reused across threads.
+- A Test Data Builder (`anOrder().withStatus(PAID).build()`) is an excellent technique for tests, and it is worth proposing if tests duplicate object assembly.
 
-## Плюсы и минусы
-**Плюсы**
-- Читаемое создание объектов с большим числом параметров.
-- Неизменяемый результат и валидация в одной точке (`build()`).
-- Новый необязательный параметр не меняет существующие вызовы.
-- Переиспользуемые пресеты, особенно в тестах.
+## Pros and cons
+**Pros**
+- Readable creation of objects with many parameters.
+- An immutable result and validation in one point (`build()`).
+- A new optional parameter does not change existing calls.
+- Reusable presets, especially in tests.
 
-**Минусы**
-- Дублирование полей в builder-е (если без Lombok).
-- Можно вызвать `build()` без обязательных полей, если это не проверяется.
-- Для простых объектов — лишний код.
+**Cons**
+- Duplicated fields in the builder (without Lombok).
+- `build()` can be called without required fields if that is not checked.
+- Extra code for simple objects.
 
-## Связанные паттерны
-Factory Method (объект целиком за один вызов) · Abstract Factory · Prototype (`toBuilder()` — копия с изменениями) · Composite (builder для дерева).
+## Related patterns
+Factory Method (the whole object in one call) · Abstract Factory · Prototype (`toBuilder()` — a copy with changes) · Composite (a builder for a tree).

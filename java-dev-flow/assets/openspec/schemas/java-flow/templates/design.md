@@ -2,47 +2,47 @@
 
 ## Context
 
-<!-- Тип компонента (endpoint, consumer, job, клиент), где живёт, ожидаемая нагрузка и бюджет задержки. Мотивация — в proposal.md, не повторяй её. -->
+<!-- Component type (endpoint, consumer, job, client), where it lives, expected load and latency budget. The motivation is in proposal.md, do not repeat it. -->
 
 ## Goals / Non-Goals
 
 **Goals:**
-<!-- Чего добивается этот дизайн -->
+<!-- What this design achieves -->
 
 **Non-Goals:**
-<!-- Что явно не входит -->
+<!-- What is explicitly out of scope -->
 
 ## Decisions
 
-### Данные и инварианты
-<!-- Сущности и связи; инварианты → constraint'ы (NOT NULL, UNIQUE, CHECK, FK); нужен ли changeset и какой -->
+### Data and invariants
+<!-- Entities and relations; invariants → constraints (NOT NULL, UNIQUE, CHECK, FK); whether a changeset is needed and which -->
 
-### Граница транзакции и порядок сборки
-<!-- Где начинается и заканчивается транзакция. Порядок срезов: changeset → entity и репозиторий → сервис → controller или listener → маппинг ошибок → метрики -->
+### Transaction boundary and build order
+<!-- Where the transaction starts and ends. Slice order: changeset → entity and repository → service → controller or listener → error mapping → metrics -->
 
-### Ошибки
-<!-- Ошибка → HTTP-статус / code / поведение; что при отказе внешней системы -->
+### Errors
+<!-- Error → HTTP status / code / behavior; what happens when an external system fails -->
 
-### Авторизация
-<!-- Кто вызывает, какое право, как ограничен доступ к строкам (владелец, tenant, RLS) -->
+### Authorization
+<!-- Who calls, which permission, how row access is limited (owner, tenant, RLS) -->
 
-### Повторы и конкуренция
-<!-- Ключ идемпотентности / дедупликация / @Version / блокировка / outbox -->
+### Retries and concurrency
+<!-- Idempotency key / deduplication / @Version / lock / outbox -->
 
-### Наблюдаемость
-<!-- Логи на границе, метрики, health -->
+### Observability
+<!-- Logs at the boundary, metrics, health -->
 
-### Расширяемость
-<!-- Только если change добавляет вариант к существующему набору: вердикт java-extensibility-review (оставить как есть / подготовительный рефакторинг) и почему. Иначе удали подраздел. -->
+### Extensibility
+<!-- Only if the change adds a variant to an existing set: the java-extensibility-review verdict (leave as is / preparatory refactoring) and why. Otherwise delete the subsection. -->
 
 ## Risks / Trade-offs
 
-<!-- [Риск] → смягчение -->
+<!-- [Risk] → mitigation -->
 
 ## Migration Plan
 
-<!-- Changeset'ы по migration-safety (CONCURRENTLY, NOT VALID, expand/contract), порядок деплоя, откат. Удали раздел, если схема не меняется. -->
+<!-- Changesets per migration-safety (CONCURRENTLY, NOT VALID, expand/contract), deploy order, rollback. Delete the section if the schema does not change. -->
 
 ## Open Questions
 
-<!-- Только то, что можно решить позже, не меняя specs, подход и tasks. Удали раздел, если вопросов нет. -->
+<!-- Only what can be decided later without changing specs, the approach and tasks. Delete the section if there are no questions. -->

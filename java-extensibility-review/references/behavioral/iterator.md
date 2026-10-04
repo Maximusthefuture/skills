@@ -1,40 +1,40 @@
-# Iterator (Итератор)
+# Iterator
 
-Группа: поведенческий
+Group: behavioral
 
-## Суть
-Обход коллекции отделён от её устройства. Клиенту нужно только «дай следующий элемент», а как устроены страницы, курсоры или дерево, он не знает. В Java это `Iterator`/`Iterable`/`Spliterator` и `Stream`, в Spring Data — `Stream<T>`, `Slice`, `Window<T>` + `ScrollPosition` (Spring Data 3.1+).
+## Essence
+Traversing a collection is separated from its structure. The client only needs "give me the next element"; it does not know how pages, cursors or a tree are organized. In Java this is `Iterator`/`Iterable`/`Spliterator` and `Stream`, in Spring Data — `Stream<T>`, `Slice`, `Window<T>` + `ScrollPosition` (Spring Data 3.1+).
 
-## Структура (участники)
-- **Iterator** — интерфейс обхода: `hasNext()`, `next()` (в Java — `java.util.Iterator`).
-- **ConcreteIterator** — хранит позицию обхода и знает устройство источника (страницы, курсор, узлы дерева).
-- **Iterable / Aggregate** — коллекция или источник, который создаёт итератор (`iterator()`).
-- **Client** — работает только с интерфейсом итератора или со `Stream` поверх него.
+## Structure (participants)
+- **Iterator** — the traversal interface: `hasNext()`, `next()` (in Java — `java.util.Iterator`).
+- **ConcreteIterator** — holds the traversal position and knows the source's structure (pages, a cursor, tree nodes).
+- **Iterable / Aggregate** — the collection or source that creates the iterator (`iterator()`).
+- **Client** — works only with the iterator interface or a `Stream` on top of it.
 
 ```
 Client ──▶ «Iterable».iterator() ──▶ «Iterator» hasNext() / next()
                                            ▲
-                                    ConcreteIterator ──знает устройство──▶ страницы API / дерево / курсор БД
+                                    ConcreteIterator ──knows the structure──▶ API pages / tree / DB cursor
 ```
 
-## Признаки в Java/Spring коде
-- Ручной цикл пагинации внешнего API (offset/cursor/`nextPageToken`) скопирован в нескольких местах, у копий разные ошибки на последней странице.
-- `while (page.hasNext()) { … page = repo.findAll(page.nextPageable()); }` повторяется в джобах.
-- `repository.findAll()` на большой таблице, данные целиком загружаются в память.
-- Рекурсивный обход дерева (категорий, документа) переписан в нескольких сервисах.
+## Signs in Java/Spring code
+- A manual pagination loop over an external API (offset/cursor/`nextPageToken`) copied in several places, the copies have different bugs on the last page.
+- `while (page.hasNext()) { … page = repo.findAll(page.nextPageable()); }` repeats across jobs.
+- `repository.findAll()` on a big table, the data is loaded into memory entirely.
+- A recursive traversal of a tree (categories, a document) rewritten in several services.
 
-## Когда не применять
-- Обычные коллекции в памяти — хватает `for-each` и `Stream`.
-- Обход в одном месте и простой.
+## When not to apply
+- Plain in-memory collections — `for-each` and `Stream` are enough.
+- The traversal is in one place and simple.
 
-## После — универсальный обход курсорного API
+## After — a universal traversal of a cursor API
 ```java
 public record CursorPage<T>(List<T> items, String nextCursor) {}
 
 public final class CursorPages {
     private CursorPages() {}
 
-    /** fetch(cursor) возвращает страницу; null-курсор — первая страница; nextCursor == null — конец. */
+    /** fetch(cursor) returns a page; a null cursor is the first page; nextCursor == null is the end. */
     public static <T> Stream<T> stream(Function<String, CursorPage<T>> fetch) {
         Iterator<T> it = new Iterator<>() {
             private Iterator<T> current = Collections.emptyIterator();
@@ -60,16 +60,16 @@ public final class CursorPages {
     }
 }
 
-// использование — клиент ничего не знает о страницах
+// usage — the client knows nothing about pages
 CursorPages.stream(cursor -> crmClient.listContacts(cursor, 200))
         .filter(Contact::isActive)
         .forEach(importer::upsert);
 ```
-Ленивость: следующая страница запрашивается, только когда предыдущая закончилась, а `limit(n)` прекращает запросы.
+Laziness: the next page is requested only when the previous one is exhausted, and `limit(n)` stops the requests.
 
-## После — большие таблицы в Spring Data
+## After — big tables in Spring Data
 ```java
-// keyset-скроллинг (Spring Data 3.1+): стабильно на меняющихся данных, без OFFSET
+// keyset scrolling (Spring Data 3.1+): stable on changing data, no OFFSET
 Window<Order> window = orders.findFirst500ByStatusOrderByIdAsc(status, ScrollPosition.keyset());
 while (!window.isEmpty()) {
     window.forEach(this::process);
@@ -77,36 +77,36 @@ while (!window.isEmpty()) {
     window = orders.findFirst500ByStatusOrderByIdAsc(status, window.positionAt(window.size() - 1));
 }
 ```
-В Spring Data уже есть готовый итератор для этого цикла:
+Spring Data already has a ready iterator for this loop:
 ```java
 WindowIterator<Order> it = WindowIterator
         .of(position -> orders.findFirst500ByStatusOrderByIdAsc(status, position))
         .startingAt(ScrollPosition.keyset());
 it.forEachRemaining(this::process);
 ```
-Ручной цикл, скопированный в несколько мест, — повод перейти на `WindowIterator`. `Stream<T>` из репозитория работает только внутри транзакции и должен закрываться (`try-with-resources`).
+A manual loop copied into several places is a reason to switch to `WindowIterator`. A `Stream<T>` from a repository works only inside a transaction and must be closed (`try-with-resources`).
 
-## Шаги рефакторинга
-1. Тест на граничные случаи: пустой результат, ровно одна страница, последняя страница неполная.
-2. Выделить итератор или стрим-утилиту; заменить копии по одной.
+## Refactoring steps
+1. A test on the edge cases: an empty result, exactly one page, an incomplete last page.
+2. Extract an iterator or a stream utility; replace the copies one at a time.
 
-## Подводные камни
-- OFFSET-пагинация по меняющимся данным пропускает или дублирует строки. Используй keyset (`id > :lastId`).
-- Ленивый `Stream` поверх JPA вне транзакции или без закрытия — утечка соединения.
-- Persistence context растёт при обходе миллионов сущностей: делай `entityManager.clear()` пачками или используй проекции.
-- Итератор, который бросает checked-исключения, неудобен: оборачивай в доменное unchecked.
+## Pitfalls
+- OFFSET pagination over changing data skips or duplicates rows. Use keyset (`id > :lastId`).
+- A lazy `Stream` over JPA outside a transaction or without closing — a connection leak.
+- The persistence context grows when traversing millions of entities: call `entityManager.clear()` in batches or use projections.
+- An iterator that throws checked exceptions is awkward: wrap them in a domain unchecked one.
 
-## Плюсы и минусы
-**Плюсы**
-- Клиент не зависит от устройства коллекции и протокола пагинации.
-- Логика обхода в одном месте вместо копий циклов.
-- Несколько независимых обходов одновременно; разные стратегии обхода без изменения коллекции.
-- Ленивость: следующая порция загружается, только когда нужна.
+## Pros and cons
+**Pros**
+- The client does not depend on the collection's structure or the pagination protocol.
+- The traversal logic is in one place instead of copies of loops.
+- Several independent traversals at once; different traversal strategies without changing the collection.
+- Laziness: the next batch is loaded only when needed.
 
-**Минусы**
-- Лишний слой для обычных коллекций в памяти.
-- Ленивые итераторы поверх ресурсов (БД, сеть) нужно закрывать, и время жизни ресурса неочевидно.
-- Изменение источника во время обхода: `ConcurrentModificationException`, пропуски и дубли.
+**Cons**
+- An extra layer for plain in-memory collections.
+- Lazy iterators over resources (DB, network) must be closed, and the resource's lifetime is not obvious.
+- Changing the source during traversal: `ConcurrentModificationException`, skips and duplicates.
 
-## Связанные паттерны
-Composite (итератор по дереву) · Visitor (операция над каждым элементом обхода).
+## Related patterns
+Composite (an iterator over a tree) · Visitor (an operation over every traversed element).

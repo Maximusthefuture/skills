@@ -1,24 +1,25 @@
-<!-- Фрагмент для CLAUDE.md проекта: маршрутизация между java-dev-flow и OpenSpec. -->
+<!-- A fragment for the project's CLAUDE.md: routing between java-dev-flow and OpenSpec. -->
 
-## Разработка: java-dev-flow + OpenSpec
+## Development: java-dev-flow + OpenSpec
 
-Инженерный процесс задаёт скилл `java-dev-flow`. Договорённости о том, что строим, живут в OpenSpec (`openspec/`). Подробности — `references/openspec.md` в скилле `java-dev-flow`.
+The engineering process is set by the `java-dev-flow` skill. Agreements on what we build live in OpenSpec (`openspec/`). Details — `references/openspec.md` in the `java-dev-flow` skill.
 
-| Ситуация | Что делать |
+| Situation | What to do |
 |---|---|
-| Задача размера S: правка без изменения схемы, API, авторизации, транзакций, внешних эффектов | без change — `java-dev-flow` напрямую |
-| Баг, который возвращает поведение, уже описанное в `openspec/specs/` | без change — `java-dev-flow`, маршрут B |
-| Баг, который показал, что спек неверен или неполон | change с MODIFIED/ADDED требованием |
-| Рефакторинг без изменения поведения | без change (или change с `skip_specs: true`, если нужен след) |
-| Задача размера M | `/opsx:propose <имя>` → ревью артефактов → `/opsx:apply` |
-| Задача размера L | `/opsx:explore` → `/opsx:propose <имя>` → ревью артефактов → `/opsx:apply` |
-| Ревью артефактов change, разбор `spec.md` вопросами | `/java-spec-review <имя или путь к spec.md>` |
-| Понимание изменилось по ходу | `/opsx:update` — не отклоняться от `design.md` молча |
-| Всё реализовано | группа «Проверка» в `tasks.md` закрыта → `/opsx:verify`, если включён → `/opsx:archive` |
-| Инцидент в проде | без change — `debugging-discipline`; код — после того, как найдена причина |
+| Size S: an edit without changes to schema, API, authorization, transactions, external effects | no change — `java-dev-flow` directly |
+| A bug that restores behavior already described in `openspec/specs/` | no change — `java-dev-flow`, route B |
+| A bug that showed the spec is wrong or incomplete | a change with a MODIFIED/ADDED requirement |
+| Refactoring without behavior change | no change (or a change with `skip_specs: true` if a trace is needed) |
+| Size M | `/opsx:propose <name>` → artifact review → `/opsx:apply` |
+| Size L | `/opsx:explore` → `/opsx:propose <name>` → artifact review → `/opsx:apply` |
+| Reviewing change artifacts, grilling a `spec.md` | `/java-spec-review <name or path to spec.md>` |
+| Understanding changed along the way | `/opsx:update` — do not deviate from `design.md` silently |
+| Everything is implemented | the "Verification" group in `tasks.md` is closed → `/opsx:verify` if enabled → `/opsx:archive` |
+| A production incident | no change — `debugging-discipline`; code comes after the cause is found |
 
-Правила:
-- Код пишется только после ревью артефактов change человеком, если пользователь не сказал иначе.
-- Каждая задача из `tasks.md` реализуется через `java-tdd`: тест первым, и он должен упасть до реализации.
-- Задачу отмечают `[x]` только после зелёного прогона её теста и тестов модуля.
-- «Готово» — только по выводу команд, запущенных после последней правки.
+Rules:
+- Code is written only after a human has reviewed the change artifacts, unless the user said otherwise.
+- Every task from `tasks.md` is implemented via `java-tdd`: the test first, and it must fail before the implementation.
+- A task is ticked `[x]` only after its test and the module tests are green.
+- The "Verification" group for M and L runs the `java-code-reviewer` and `critic` agents on the diff, in one message.
+- "Done" — only from the output of commands run after the last edit.

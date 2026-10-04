@@ -1,35 +1,35 @@
-# Composite (Компоновщик)
+# Composite
 
-Группа: структурный
+Group: structural
 
-## Суть
-Объекты собираются в дерево, и лист и группа реализуют один интерфейс. Клиент вызывает `evaluate()` / `price()` / `render()` у корня и не различает, лист перед ним или группа: группа сама делегирует детям и агрегирует результат.
+## Essence
+Objects are assembled into a tree, and the leaf and the group implement one interface. The client calls `evaluate()` / `price()` / `render()` on the root and does not distinguish a leaf from a group: the group delegates to its children and aggregates the result itself.
 
-## Структура (участники)
-- **Component** — общий интерфейс для листьев и групп (`Rule.matches`, `PriceItem.price`).
-- **Leaf** — конечный элемент без детей (`MinAmount`, `Product`).
-- **Composite** — группа: хранит детей типа Component, делегирует им операцию и агрегирует результат (`AllOf`, `Bundle`).
-- **Client** — работает с любым узлом через Component и не различает лист и группу.
+## Structure (participants)
+- **Component** — the common interface for leaves and groups (`Rule.matches`, `PriceItem.price`).
+- **Leaf** — a terminal element without children (`MinAmount`, `Product`).
+- **Composite** — a group: holds children of type Component, delegates the operation to them and aggregates the result (`AllOf`, `Bundle`).
+- **Client** — works with any node through Component and does not distinguish a leaf from a group.
 
 ```
             «interface» Component
               operation()
              ▲            ▲
            Leaf        Composite ──children──▶ Component*
-                        operation() = агрегировать(children.operation())
+                        operation() = aggregate(children.operation())
 ```
 
-## Признаки в Java/Spring коде
-- Рекурсия с `if (node instanceof Group g) … else if (node instanceof Item i)` в нескольких местах.
-- Вложенные циклы под фиксированную глубину (`for category → for sub → for subsub`), ломающиеся на четвёртом уровне.
-- Правила с комбинациями AND/OR/NOT, записанные кодом с `&&`/`||`, которые хочется хранить в конфиге или БД.
-- Бандлы и комплекты товаров с составной ценой, оргструктура, группы прав, меню.
+## Signs in Java/Spring code
+- Recursion with `if (node instanceof Group g) … else if (node instanceof Item i)` in several places.
+- Nested loops for a fixed depth (`for category → for sub → for subsub`) that break at the fourth level.
+- Rules with AND/OR/NOT combinations written in code with `&&`/`||`, which you would like to store in config or the DB.
+- Product bundles and kits with a composite price, an org structure, permission groups, menus.
 
-## Когда не применять
-- Структура плоская, или глубина строго фиксирована и мала.
-- Все элементы одного типа — хватит обычного списка.
+## When not to apply
+- The structure is flat, or the depth is strictly fixed and small.
+- All elements are of one type — a plain list is enough.
 
-## После — дерево правил
+## After — a rule tree
 ```java
 public sealed interface Rule permits AllOf, AnyOf, Not, MinAmount, CustomerSegment {
     boolean matches(OrderContext ctx);
@@ -50,14 +50,14 @@ public record CustomerSegment(String segment) implements Rule {
     public boolean matches(OrderContext ctx) { return ctx.segment().equals(segment); }
 }
 
-// "сумма ≥ 5000 И (VIP ИЛИ НЕ новый клиент)"
+// "total ≥ 5000 AND (VIP OR NOT a new customer)"
 Rule promo = new AllOf(List.of(
         new MinAmount(new BigDecimal("5000")),
         new AnyOf(List.of(new CustomerSegment("VIP"), new Not(new CustomerSegment("NEW"))))));
 ```
-С `@JsonTypeInfo` (`../java-idioms/polymorphic-json.md`) такое дерево хранится в БД или конфиге как JSON, и новые акции заводятся без деплоя. Встроенные Composite в Java/Spring: `Predicate.and/or/negate`, `Specification.allOf/anyOf`, `CompositeMeterRegistry`.
+With `@JsonTypeInfo` (`../java-idioms/polymorphic-json.md`) such a tree is stored in the DB or config as JSON, and new promotions are set up without a deploy. Built-in Composites in Java/Spring: `Predicate.and/or/negate`, `Specification.allOf/anyOf`, `CompositeMeterRegistry`.
 
-## После — составная цена
+## After — a composite price
 ```java
 public sealed interface PriceItem permits Product, Bundle {
     Money price();
@@ -70,26 +70,26 @@ public record Bundle(String name, List<PriceItem> items, Percent discount) imple
 }
 ```
 
-## Шаги рефакторинга
-1. Тесты на текущие расчёты по реальным примерам деревьев.
-2. Ввести общий интерфейс; лист и группа его реализуют; группа делегирует детям.
-3. Заменить рекурсию с `instanceof` вызовом метода корня.
+## Refactoring steps
+1. Tests on the current calculations with real example trees.
+2. Introduce the common interface; the leaf and the group implement it; the group delegates to its children.
+3. Replace the recursion with `instanceof` by a call on the root.
 
-## Подводные камни
-- Хранение деревьев в JPA: adjacency list + рекурсивный CTE или materialized path. Ленивый обход дерева сущностей — гарантированный N+1.
-- Циклы в графе (группа содержит саму себя) — бесконечная рекурсия. Валидируй при построении.
-- Глубокие деревья и рекурсия — переполнение стека. Для больших деревьев нужен итеративный обход.
+## Pitfalls
+- Storing trees in JPA: an adjacency list + a recursive CTE, or a materialized path. Lazily traversing an entity tree is a guaranteed N+1.
+- Cycles in the graph (a group containing itself) — infinite recursion. Validate at construction.
+- Deep trees and recursion — a stack overflow. Big trees need an iterative traversal.
 
-## Плюсы и минусы
-**Плюсы**
-- Единообразная работа с деревом любой глубины.
-- Новые типы узлов добавляются без изменения клиента (Open/Closed).
-- Рекурсивные структуры (правила, бандлы, категории) выражаются естественно.
+## Pros and cons
+**Pros**
+- Uniform handling of a tree of any depth.
+- New node types are added without changing the client (Open/Closed).
+- Recursive structures (rules, bundles, categories) are expressed naturally.
 
-**Минусы**
-- Общий интерфейс может быть слишком общим: операции, бессмысленные для листа.
-- Трудно ограничить, какие узлы где допустимы (проверки переносятся в рантайм).
-- Глубокие деревья: рекурсия, производительность, хранение в БД.
+**Cons**
+- The common interface may be too general: operations meaningless for a leaf.
+- It is hard to restrict which nodes are allowed where (checks move to runtime).
+- Deep trees: recursion, performance, storage in the DB.
 
-## Связанные паттерны
-Visitor и sealed-switch (операции над деревом) · Iterator (обход дерева) · Specification (Composite для запросов) · Chain of Responsibility.
+## Related patterns
+Visitor and sealed-switch (operations over the tree) · Iterator (tree traversal) · Specification (Composite for queries) · Chain of Responsibility.

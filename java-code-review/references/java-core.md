@@ -1,45 +1,45 @@
-# Java: корректность и конкурентность
+# Java: correctness and concurrency
 
-Чек-лист, а не список «что обязательно найти». Каждый пункт — повод присмотреться, находкой он становится только при конкретном сценарии отказа.
+A checklist, not a list of "what must be found". Every item is a reason to look closer; it becomes a finding only with a concrete failure scenario.
 
-## Null и Optional
-- Новый вызов метода, который может вернуть null (`Map.get`, `findXxx` без Optional, сторонние API), без проверки.
-- `Optional.get()` без `isPresent`; `Optional` в полях, параметрах или как результат сериализации DTO.
-- Изменилась nullability возвращаемого значения или параметра — проверь всех вызывающих.
-- Автораспаковка `Integer`/`Long`/`Boolean` из null (`if (dto.getEnabled())`).
+## Null and Optional
+- A new call of a method that may return null (`Map.get`, `findXxx` without Optional, third-party APIs) without a check.
+- `Optional.get()` without `isPresent`; `Optional` in fields, parameters or as a serialized DTO value.
+- The nullability of a return value or parameter changed — check all callers.
+- Auto-unboxing `Integer`/`Long`/`Boolean` from null (`if (dto.getEnabled())`).
 
-## Равенство и коллекции
-- `==` для `String`, `Long`, `Integer` вне кэша [-128..127], `BigDecimal.equals` вместо `compareTo` (2.0 ≠ 2.00).
-- Переопределён `equals` без `hashCode`; изменяемые поля в `hashCode` объекта, лежащего в `HashSet`/ключе `HashMap`.
-- JPA-сущности с Lombok `@Data`/`@EqualsAndHashCode` по всем полям (lazy-связи, рекурсия, смена hashCode после persist).
-- Модификация коллекции во время итерации; `Arrays.asList`/`List.of` + `add` → `UnsupportedOperationException`.
-- `subList`, `Collectors.toMap` без merge-функции при возможных дублях ключей.
+## Equality and collections
+- `==` for `String`, `Long`, `Integer` outside the [-128..127] cache, `BigDecimal.equals` instead of `compareTo` (2.0 ≠ 2.00).
+- `equals` overridden without `hashCode`; mutable fields in the `hashCode` of an object stored in a `HashSet`/as a `HashMap` key.
+- JPA entities with Lombok `@Data`/`@EqualsAndHashCode` over all fields (lazy associations, recursion, hashCode changing after persist).
+- Modifying a collection while iterating; `Arrays.asList`/`List.of` + `add` → `UnsupportedOperationException`.
+- `subList`, `Collectors.toMap` without a merge function when duplicate keys are possible.
 
-## Исключения и ресурсы
-- Пустой `catch`, `catch (Exception e)` с проглатыванием, потеря причины (`throw new X(e.getMessage())` вместо `new X(msg, e)`).
-- Checked-исключение обёрнуто так, что меняется поведение отката транзакции (см. spring-jpa.md).
-- Ресурсы (`InputStream`, `Connection`, `HttpClient` response) без try-with-resources.
-- `InterruptedException` проглочено без `Thread.currentThread().interrupt()`.
+## Exceptions and resources
+- An empty `catch`, `catch (Exception e)` that swallows, a lost cause (`throw new X(e.getMessage())` instead of `new X(msg, e)`).
+- A checked exception wrapped so that the transaction rollback behavior changes (see spring-jpa.md).
+- Resources (`InputStream`, `Connection`, `HttpClient` response) without try-with-resources.
+- `InterruptedException` swallowed without `Thread.currentThread().interrupt()`.
 
-## Числа, время, строки
-- Деньги в `double`/`float`; `BigDecimal` из `double` (`new BigDecimal(0.1)`), деление без `RoundingMode`.
-- Переполнение `int` при умножении/суммировании (размеры, миллисекунды).
-- `LocalDateTime` там, где нужен момент времени (`Instant`/`OffsetDateTime`); `LocalDate.now()` без `Clock` в тестируемой логике; часовые пояса по умолчанию JVM.
-- `String.format`/`toLowerCase` без `Locale` для машинно-читаемых строк.
+## Numbers, time, strings
+- Money in `double`/`float`; `BigDecimal` from a `double` (`new BigDecimal(0.1)`), division without a `RoundingMode`.
+- `int` overflow when multiplying/summing (sizes, milliseconds).
+- `LocalDateTime` where an instant is needed (`Instant`/`OffsetDateTime`); `LocalDate.now()` without a `Clock` in testable logic; the JVM default time zone.
+- `String.format`/`toLowerCase` without a `Locale` for machine-readable strings.
 
-## Конкурентность
-- Изменяемые поля в singleton-бинах (`@Service`, `@Component`, `@RestController`) без синхронизации — каждый бин общий для всех запросов.
-- `SimpleDateFormat`, `HashMap`, `ArrayList` как общие поля между потоками.
-- check-then-act (`if (!map.containsKey(k)) map.put(...)`) вместо `computeIfAbsent`/атомарных операций; то же в БД (проверка уникальности без constraint).
-- `@Async`/`CompletableFuture.supplyAsync` без своего executor (общий `ForkJoinPool`), потеря `SecurityContext`/MDC/транзакции в другом потоке.
-- Блокирующие вызовы в реактивном коде (WebFlux) или внутри `synchronized` при virtual threads (pinning, Java 21).
-- Неограниченные очереди и пулы, `Executors.newCachedThreadPool` под нагрузкой.
+## Concurrency
+- Mutable fields in singleton beans (`@Service`, `@Component`, `@RestController`) without synchronization — every bean is shared by all requests.
+- `SimpleDateFormat`, `HashMap`, `ArrayList` as fields shared between threads.
+- check-then-act (`if (!map.containsKey(k)) map.put(...)`) instead of `computeIfAbsent`/atomic operations; the same in the DB (a uniqueness check without a constraint).
+- `@Async`/`CompletableFuture.supplyAsync` without its own executor (the shared `ForkJoinPool`), losing the `SecurityContext`/MDC/transaction in another thread.
+- Blocking calls in reactive code (WebFlux) or inside `synchronized` with virtual threads (pinning, Java 21).
+- Unbounded queues and pools, `Executors.newCachedThreadPool` under load.
 
-## Стримы и API
-- Побочные эффекты в `map`/`filter`, `parallelStream` на общем пуле в веб-запросе.
-- `stream().toList()` (неизменяемый, Java 16+) там, где дальше идёт модификация.
-- Ломающее изменение публичного метода библиотечного модуля (сигнатура, исключения, семантика) без учёта вызывающих.
+## Streams and APIs
+- Side effects in `map`/`filter`, `parallelStream` on the shared pool in a web request.
+- `stream().toList()` (immutable, Java 16+) where it is modified afterwards.
+- A breaking change of a library module's public method (signature, exceptions, semantics) without accounting for callers.
 
-## Логирование
-- Конкатенация в логах на горячем пути вместо параметров `{}`; `log.error(e.getMessage())` без stacktrace.
-- Логирование целых сущностей/DTO (PII, токены, lazy-загрузка в `toString`).
+## Logging
+- String concatenation in logs on a hot path instead of `{}` parameters; `log.error(e.getMessage())` without a stack trace.
+- Logging whole entities/DTOs (PII, tokens, lazy loading in `toString`).

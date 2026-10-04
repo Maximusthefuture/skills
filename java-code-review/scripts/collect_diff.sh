@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Собирает diff для ревью и печатает: базу, список файлов, статистику и сам diff.
-# Использование:
-#   collect_diff.sh                 # ветка vs upstream/main + незакоммиченное
-#   collect_diff.sh --staged        # только staged (pre-commit)
-#   collect_diff.sh A...B           # произвольный диапазон
-#   collect_diff.sh path/File.java  # один файл (vs база)
+# Collects the diff for review and prints: the base, the file list, the stats and the diff itself.
+# Usage:
+#   collect_diff.sh                 # branch vs upstream/main + uncommitted
+#   collect_diff.sh --staged        # staged only (pre-commit)
+#   collect_diff.sh A...B           # an arbitrary range
+#   collect_diff.sh path/File.java  # one file (vs the base)
 set -euo pipefail
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "ERROR: not a git repository" >&2; exit 1; }
 
-# Сгенерированное и шум, которые не ревьюим
+# Generated files and noise we do not review
 EXCLUDES=(
   ':(exclude)**/target/**' ':(exclude)**/build/**' ':(exclude)**/generated/**'
   ':(exclude)**/*.lock' ':(exclude)**/package-lock.json'
@@ -18,8 +18,12 @@ EXCLUDES=(
 
 find_base() {
   local upstream
+  # a repository without commits: the base is the empty tree, everything in the index counts as new
+  if ! git rev-parse --verify -q HEAD >/dev/null; then
+    git hash-object -t tree /dev/null; return
+  fi
   if upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null); then
-    # если ветка уже запушена и upstream — это она сама, сравниваем с main
+    # if the branch is already pushed and its upstream is itself, compare with main
     if [[ "$upstream" != *"/$(git branch --show-current)" ]]; then
       git merge-base HEAD "$upstream"; return
     fi

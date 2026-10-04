@@ -1,35 +1,35 @@
-# Strategy (Стратегия)
+# Strategy
 
-Группа: поведенческий
+Group: behavioral
 
-## Суть
-Каждый вариант алгоритма лежит в своём классе за общим интерфейсом. Вызывающий код работает с интерфейсом и не знает, какая реализация выбрана. В Spring стратегии — это бины, а выбор делает реестр по ключу. Новый вариант — новый `@Component`, существующий код не меняется.
+## Essence
+Every variant of an algorithm lives in its own class behind a common interface. The calling code works with the interface and does not know which implementation is chosen. In Spring strategies are beans, and a registry chooses by key. A new variant is a new `@Component`; existing code does not change.
 
-## Структура (участники)
-- **Context** — класс, которому нужен алгоритм. Хранит ссылку на стратегию через интерфейс и делегирует ей работу (в Spring — сервис или реестр `PaymentHandlerRegistry`).
-- **Strategy** — общий интерфейс всех вариантов алгоритма (`PaymentHandler`).
-- **ConcreteStrategy** — реализации (`CardPaymentHandler`, `SbpPaymentHandler`). Не знают друг о друге.
-- **Client** — выбирает, какую стратегию подставить. В Spring объекты создаёт контейнер, а выбор по ключу делает реестр.
+## Structure (participants)
+- **Context** — the class that needs the algorithm. Holds a reference to the strategy through the interface and delegates the work to it (in Spring — a service or a `PaymentHandlerRegistry` registry).
+- **Strategy** — the common interface of all algorithm variants (`PaymentHandler`).
+- **ConcreteStrategy** — implementations (`CardPaymentHandler`, `SbpPaymentHandler`). They do not know about each other.
+- **Client** — chooses which strategy to plug in. In Spring the container creates the objects and a registry chooses by key.
 
 ```
-Client ──выбирает──▶ Context ─────────▶ «interface» Strategy
+Client ──chooses──▶ Context ─────────▶ «interface» Strategy
                                           ▲               ▲
                                   ConcreteStrategyA  ConcreteStrategyB
 ```
-Контекст вызывает метод интерфейса и не знает конкретный класс. Смена алгоритма — подстановка другого объекта, код контекста не меняется.
+The context calls the interface method and does not know the concrete class. Changing the algorithm means plugging in another object; the context's code does not change.
 
-## Признаки в Java/Spring коде
-- `switch`/`if` по типу (`PaymentMethod`, `provider`, `channel`), ветки — разная бизнес-логика со своими зависимостями.
-- Тот же `switch` по тому же enum повторяется в нескольких сервисах (оплата, возврат, комиссия).
-- Сервис внедряет 5 клиентов, а в каждом вызове использует только один, в зависимости от типа.
-- Варианты регулярно добавляются (видно по `git log`).
+## Signs in Java/Spring code
+- A `switch`/`if` on a type (`PaymentMethod`, `provider`, `channel`), the branches are different business logic with their own dependencies.
+- The same `switch` on the same enum repeats in several services (payment, refund, fee).
+- A service injects 5 clients and uses only one per call, depending on the type.
+- Variants are added regularly (visible in `git log`).
 
-## Когда не применять
-- Ветки — чистые вычисления без зависимостей → `java-idioms/map-lookup.md` или `java-idioms/enum-with-behavior.md`.
-- 2–3 стабильных варианта в одном месте.
-- Закрытый набор типов, а добавляются операции → `java-idioms/sealed-switch.md`.
+## When not to apply
+- The branches are pure calculations without dependencies → `java-idioms/map-lookup.md` or `java-idioms/enum-with-behavior.md`.
+- 2–3 stable variants in one place.
+- A closed set of types while operations are added → `java-idioms/sealed-switch.md`.
 
-## До
+## Before
 ```java
 @Service
 @RequiredArgsConstructor
@@ -47,13 +47,13 @@ class PaymentService {
         }
     }
 }
-// и такой же switch в RefundService, FeeCalculator ...
+// and the same switch in RefundService, FeeCalculator ...
 ```
 
-## После — вариант A (рекомендуемый): ключ — метод интерфейса, реестр из `List<…>`
+## After — option A (recommended): the key is an interface method, the registry is built from `List<…>`
 ```java
 public interface PaymentHandler {
-    PaymentMethod method();                 // ключ — enum, а не имя бина
+    PaymentMethod method();                 // the key is an enum, not a bean name
     PaymentResult pay(PaymentRequest request);
     RefundResult refund(RefundRequest request);
 }
@@ -80,23 +80,23 @@ class PaymentHandlerRegistry {
                         + ": " + a.getClass().getSimpleName() + ", " + b.getClass().getSimpleName()); },
                 () -> new EnumMap<>(PaymentMethod.class)));
 
-        // fail-fast: приложение не стартует, если для значения enum забыли написать обработчик
+        // fail-fast: the application does not start if a handler was forgotten for an enum value
         var missing = Arrays.stream(PaymentMethod.values()).filter(m -> !handlers.containsKey(m)).toList();
         if (!missing.isEmpty()) throw new IllegalStateException("No PaymentHandler for " + missing);
     }
 
     PaymentHandler get(PaymentMethod method) {
-        return handlers.get(method); // полнота проверена при старте
+        return handlers.get(method); // completeness checked at startup
     }
 }
 
-// было switch, стало:
+// the switch became:
 registry.get(request.method()).pay(request);
 ```
-Что это даёт: новый вариант — один `@Component`; забытый обработчик или дубликат ключа видны при старте, а не в проде. Если полнота не нужна (ключи — внешние строки), убери проверку `missing`, а в `get` бросай доменное исключение, которое мапится в 4xx.
+What it gives: a new variant is one `@Component`; a forgotten handler or a duplicate key shows up at startup, not in production. If completeness is not needed (the keys are external strings), drop the `missing` check and throw a domain exception from `get` that maps to a 4xx.
 
-## После — вариант B: `Map<String, Bean>` с именами бинов
-Spring сам соберёт все реализации в `Map<String, PaymentHandler>`, где ключ — имя бина:
+## After — option B: `Map<String, Bean>` with bean names
+Spring itself collects all implementations into a `Map<String, PaymentHandler>`, where the key is the bean name:
 ```java
 @Component("CARD") class CardPaymentHandler implements PaymentHandler { … }
 @Component("SBP")  class SbpPaymentHandler  implements PaymentHandler { … }
@@ -113,41 +113,41 @@ class PaymentService {
     }
 }
 ```
-Слабые места, которые стоит назвать в ревью:
-- Ключ — имя бина, это неявный контракт. Без явного `@Component("CARD")` имя бина — имя класса с маленькой буквы, и переименование класса тихо ломает маршрутизацию.
-- Имена бинов глобальны: `@Component("CARD")` в двух разных реестрах (оплата и доставка) вызовет конфликт при старте.
-- Нет проверки полноты и дубликатов: ошибка появится только на первом запросе.
+Weak spots worth naming in a review:
+- The key is the bean name, an implicit contract. Without an explicit `@Component("CARD")` the bean name is the class name with a lowercase first letter, and renaming the class silently breaks the routing.
+- Bean names are global: `@Component("CARD")` in two different registries (payment and delivery) causes a conflict at startup.
+- No completeness or duplicate check: the error shows up only on the first request.
 
-Вариант B приемлем для внешних строковых ключей, если имена бинов заданы явно и есть тест на маршрутизацию. В остальных случаях предпочтителен A.
+Option B is acceptable for external string keys if the bean names are set explicitly and there is a routing test. Otherwise prefer A.
 
-## После — вариант C: выбор по условию `supports(...)`
-Когда ключ не один, а условие (страна + сумма + тип клиента), используй `supports(ctx)` + `List` с `@Order`. Это уже Chain of Responsibility, см. `chain-of-responsibility.md`.
+## After — option C: choosing by a `supports(...)` condition
+When the key is not one value but a condition (country + amount + customer type), use `supports(ctx)` + a `List` with `@Order`. That is already Chain of Responsibility, see `chain-of-responsibility.md`.
 
-## Шаги рефакторинга
-1. Характеризационный тест на текущее поведение каждой ветки, включая неизвестный ключ.
-2. Ввести интерфейс и реестр; первая реализация делегирует в старый код.
-3. Переносить ветки в реализации по одной, после каждой прогоняя тесты.
-4. Заменить `switch` вызовом реестра во всех местах, найденных grep-ом, и удалить старый код.
-5. Тест: контекст поднимается и все значения enum покрыты (или unit-тест реестра без Spring).
+## Refactoring steps
+1. A characterization test on the current behavior of every branch, including an unknown key.
+2. Introduce the interface and the registry; the first implementation delegates to the old code.
+3. Move the branches into implementations one at a time, running the tests after each.
+4. Replace the `switch` with a registry call at every place grep found, and delete the old code.
+5. A test: the context starts and all enum values are covered (or a unit test of the registry without Spring).
 
-## Подводные камни
-- Не делай базовый абстрактный класс с общими полями только ради переиспользования кода. Общий код лучше вынести во внедряемый helper.
-- `@Transactional` на методах стратегии работает: вызов идёт через прокси из реестра.
-- Реестр легко тестировать без Spring: `new PaymentHandlerRegistry(List.of(new CardPaymentHandler(mock), …))`.
-- Generic-реестр по классу сообщения: явный метод `Class<C> type()` надёжнее рефлексии по generic-параметру. Для CGLIB-прокси нужен `AopUtils.getTargetClass`.
+## Pitfalls
+- Do not make a base abstract class with shared fields just for code reuse. Shared code is better moved into an injected helper.
+- `@Transactional` on strategy methods works: the call goes through the proxy from the registry.
+- The registry is easy to test without Spring: `new PaymentHandlerRegistry(List.of(new CardPaymentHandler(mock), …))`.
+- A generic registry by message class: an explicit `Class<C> type()` method is more reliable than reflection on the generic parameter. CGLIB proxies need `AopUtils.getTargetClass`.
 
-## Плюсы и минусы
-**Плюсы**
-- Новый вариант добавляется без правки контекста и других вариантов (Open/Closed).
-- Каждый алгоритм изолирован: свои зависимости, свои тесты.
-- Условные операторы выбора алгоритма исчезают из бизнес-кода.
-- Алгоритм можно заменить в рантайме или конфигурацией.
+## Pros and cons
+**Pros**
+- A new variant is added without editing the context or the other variants (Open/Closed).
+- Every algorithm is isolated: its own dependencies, its own tests.
+- Algorithm-selection conditionals disappear from business code.
+- The algorithm can be replaced at runtime or by configuration.
 
-**Минусы**
-- Больше классов и косвенности: логику приходится искать по реализациям.
-- Кто-то должен знать, по какому ключу выбирать (реестр), и это новая точка отказа.
-- Для однострочных вариантов без зависимостей лямбда, `Map` или enum проще.
-- Общий интерфейс иногда заставляет передавать данные, нужные только части стратегий.
+**Cons**
+- More classes and indirection: the logic has to be found across implementations.
+- Someone must know which key to choose by (the registry), and that is a new point of failure.
+- For one-line variants without dependencies a lambda, a `Map` or an enum is simpler.
+- A common interface sometimes forces passing data only some strategies need.
 
-## Связанные паттерны
-State (стратегия, которая меняется изнутри) · Command (что сделать, а не как) · Abstract Factory (стратегия из согласованного семейства объектов) · Adapter (стратегия на границе с внешней системой) · Template Method (альтернатива через наследование).
+## Related patterns
+State (a strategy that changes from inside) · Command (what to do, not how) · Abstract Factory (a strategy from a consistent family of objects) · Adapter (a strategy at the boundary with an external system) · Template Method (an alternative via inheritance).

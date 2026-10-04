@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Собирает OpenSpec change для скилла java-spec-review.
+"""Collects an OpenSpec change for the java-spec-review skill.
 
-Принимает путь к spec.md (дельте в change или главному спеку), к любому файлу или
-каталогу change, к корню проекта или просто имя change. Находит change, читает
-proposal, design, tasks, дельты спеков и базовые спеки из openspec/specs и печатает:
-инвентарь требований и сценариев, трассировку «сценарий ↔ задача» и находки по
-формату OpenSpec и правилам java-dev-flow.
+Accepts a path to a spec.md (a delta in a change or a main spec), to any file or
+directory of a change, to the project root, or just a change name. Finds the change, reads
+proposal, design, tasks, spec deltas and base specs from openspec/specs and prints:
+an inventory of requirements and scenarios, "scenario ↔ task" traceability and findings on
+the OpenSpec format and java-dev-flow rules.
 
-Это механическая проверка формы. Смысл артефактов разбирает скилл.
+This is a mechanical form check. The skill reviews the meaning of the artifacts.
 
     python3 collect_change.py openspec/changes/add-refunds/specs/refunds/spec.md
-    python3 collect_change.py add-refunds            # имя change, поиск от cwd
+    python3 collect_change.py add-refunds            # a change name, searched from cwd
     python3 collect_change.py . --json
 
-Код выхода: 0 — собрано; 2 — не удалось однозначно найти change (кандидаты в выводе).
-Только stdlib, ничего не пишет на диск.
+Exit code: 0 — collected; 2 — the change could not be found unambiguously (candidates in the output).
+Stdlib only, writes nothing to disk.
 """
 
 import argparse
@@ -53,7 +53,7 @@ RE_GROUP_NUM = re.compile(r"^\d+\.?\s*")
 RE_TEST_GROUP = re.compile(r"^(тесты|тестирование|tests?|testing)\b", re.I)
 RE_CHECK_GROUP = re.compile(r"провер|verif", re.I)
 RE_EXEMPT_GROUP = re.compile(r"провер|verif|рефактор|refactor|подготов|setup|настрой", re.I)
-RE_ROUTE = re.compile(r"Маршрут:.*")
+RE_ROUTE = re.compile(r"(?:Маршрут|Route):.*")
 RE_SIZE = re.compile(r"·\s*([SML])\s*(?:·|$)")
 RE_CAP_ITEM = re.compile(r"^\s*[-*]\s+`?([^`:\s]+)`?\s*:?")
 RE_PLACEHOLDER = re.compile(r"\bTBD\b|\bTODO\b|<capability-path>|<existing-capability-path>|\?\?\?")
@@ -62,7 +62,7 @@ REQ_TEXT_LIMIT = 500
 PURPOSE_MIN = 50
 
 
-# ---------- разбор markdown ----------
+# ---------- markdown parsing ----------
 
 def norm(text):
     text = text.lower().replace("ё", "е")
@@ -71,7 +71,7 @@ def norm(text):
 
 
 def parse_spec(text):
-    """Разбирает дельту или главный спек: разделы, требования, сценарии, RENAMED."""
+    """Parses a delta or a main spec: sections, requirements, scenarios, RENAMED."""
     spec = {"sections": [], "purpose_line": None, "purpose_text": "",
             "requirements": [], "renames": [], "bad_scenarios": []}
     section = None
@@ -153,7 +153,7 @@ def scenario_flags(body):
 
 
 def section_lines(text, heading_re):
-    """Строки под заголовком, пока не начнётся заголовок того же или более высокого уровня."""
+    """Lines under a heading until a heading of the same or a higher level starts."""
     out, level = [], None
     for no, line in enumerate(text.splitlines(), 1):
         h = RE_HEADING.match(line)
@@ -227,7 +227,7 @@ def parse_tasks(text):
         task = {"id": idm.group(1) if idm else None, "line": no, "done": done, "text": body,
                 "has_check": bool(RE_TASK_CHECK.search(body)), "scenario_refs": []}
         if group is None:
-            group = {"title": "(без группы)", "name": "", "line": no, "tasks": []}
+            group = {"title": "(no group)", "name": "", "line": no, "tasks": []}
             groups.append(group)
         group["tasks"].append(task)
     return {"groups": groups, "bad_checkboxes": bad}
@@ -242,7 +242,7 @@ def simple_yaml(text):
     return out
 
 
-# ---------- поиск change ----------
+# ---------- finding the change ----------
 
 def find_openspec_root(start):
     for d in [start, *start.parents]:
@@ -284,7 +284,7 @@ def changes_touching(root, capability, exclude=None):
 
 
 def resolve(target, cwd):
-    """Возвращает (root, mode, change_dir|None, main_spec|None, focus|None, resolved_via, candidates)."""
+    """Returns (root, mode, change_dir|None, main_spec|None, focus|None, resolved_via, candidates)."""
     path = Path(target)
     if not path.is_absolute():
         path = Path(cwd) / path
@@ -293,16 +293,16 @@ def resolve(target, cwd):
     if not path.exists():
         root = find_openspec_root(Path(cwd).resolve())
         if root is None:
-            raise ResolveError(f"Не найден каталог openspec/ от {cwd}, и '{target}' — не путь.")
+            raise ResolveError(f"No openspec/ directory found from {cwd}, and '{target}' is not a path.")
         for cand in (root / "changes" / target, root / "changes" / "archive" / target):
             if cand.is_dir():
-                return root, "change", cand, None, None, f"имя change «{target}»", []
-        raise ResolveError(f"Change «{target}» не найден в {root / 'changes'}. "
-                           f"Активные: {', '.join(active_changes(root)) or 'нет'}.")
+                return root, "change", cand, None, None, f"change name «{target}»", []
+        raise ResolveError(f"Change «{target}» not found in {root / 'changes'}. "
+                           f"Active: {', '.join(active_changes(root)) or 'none'}.")
 
     root = find_openspec_root(path)
     if root is None:
-        raise ResolveError(f"Не найден каталог openspec/ (с changes/ или specs/) от {path} и выше.")
+        raise ResolveError(f"No openspec/ directory (with changes/ or specs/) found from {path} upwards.")
 
     try:
         parts = path.relative_to(root).parts
@@ -312,9 +312,9 @@ def resolve(target, cwd):
 
     if parts and parts[0] == "changes":
         if len(parts) >= 3 and parts[1] == "archive":
-            return root, "change", root / "changes" / "archive" / parts[2], None, focus, "путь внутри архивного change", []
+            return root, "change", root / "changes" / "archive" / parts[2], None, focus, "a path inside an archived change", []
         if len(parts) >= 2 and parts[1] != "archive":
-            return root, "change", root / "changes" / parts[1], None, focus, "путь внутри change", []
+            return root, "change", root / "changes" / parts[1], None, focus, "a path inside a change", []
 
     if parts and parts[0] == "specs" and len(parts) >= 2:
         cap_dir = path.parent if path.is_file() else path
@@ -326,20 +326,20 @@ def resolve(target, cwd):
             change_dir = root / "changes" / touching[0]
             delta = change_dir / "specs" / capability / "spec.md"
             return (root, "change", change_dir, None, delta if delta.is_file() else None,
-                    f"{rel_main} → единственный активный change с дельтой этой capability", [])
+                    f"{rel_main} → the only active change with a delta of this capability", [])
         if len(touching) > 1:
-            return root, "ambiguous", None, None, None, f"{rel_main} меняют несколько change", touching
-        return root, "main-spec", None, main_spec, main_spec, f"{rel_main} — активных change с дельтой нет", []
+            return root, "ambiguous", None, None, None, f"{rel_main} is modified by several changes", touching
+        return root, "main-spec", None, main_spec, main_spec, f"{rel_main} — no active change with a delta", []
 
     names = active_changes(root)
     if len(names) == 1:
-        return root, "change", root / "changes" / names[0], None, None, "единственный активный change", []
+        return root, "change", root / "changes" / names[0], None, None, "the only active change", []
     if len(names) > 1:
-        return root, "ambiguous", None, None, None, "несколько активных change", names
-    raise ResolveError(f"В {root / 'changes'} нет активных change.")
+        return root, "ambiguous", None, None, None, "several active changes", names
+    raise ResolveError(f"No active changes in {root / 'changes'}.")
 
 
-# ---------- проверки ----------
+# ---------- checks ----------
 
 class Issues:
     def __init__(self, project_root):
@@ -355,35 +355,35 @@ def check_requirement_shape(req, spec_path, issues):
     if req["op"] in ("ADDED", "MODIFIED", "MAIN"):
         if not req["scenarios"]:
             issues.add("error", spec_path, req["line"], "req-no-scenario",
-                       f"«{req['name']}»: у требования нет ни одного `#### Scenario:`")
+                       f"«{req['name']}»: the requirement has no `#### Scenario:`")
         if not RE_SHALL.search(req["text"]):
             issues.add("error", spec_path, req["line"], "req-no-shall-must",
-                       f"«{req['name']}»: в тексте требования нет SHALL или MUST — openspec validate его не примет")
+                       f"«{req['name']}»: the requirement text has no SHALL or MUST — openspec validate will reject it")
         if len(req["text"]) > REQ_TEXT_LIMIT:
             issues.add("hint", spec_path, req["line"], "req-too-long",
-                       f"«{req['name']}»: описание {len(req['text'])} > {REQ_TEXT_LIMIT} символов — "
-                       "возможно, в одном требовании несколько поведений")
+                       f"«{req['name']}»: description {len(req['text'])} > {REQ_TEXT_LIMIT} characters — "
+                       "possibly several behaviors in one requirement")
     for s in req["scenarios"]:
         flags = scenario_flags(s["body"])
         s.update(flags)
         if not flags["when"]:
-            issues.add("warn", spec_path, s["line"], "scenario-no-when", f"сценарий «{s['name']}» без WHEN")
+            issues.add("warn", spec_path, s["line"], "scenario-no-when", f"scenario «{s['name']}» has no WHEN")
         if not flags["then"]:
-            issues.add("warn", spec_path, s["line"], "scenario-no-then", f"сценарий «{s['name']}» без THEN")
+            issues.add("warn", spec_path, s["line"], "scenario-no-then", f"scenario «{s['name']}» has no THEN")
         if flags["vague"]:
             issues.add("hint", spec_path, s["line"], "scenario-vague",
-                       f"сценарий «{s['name']}»: в THEN нет конкретного значения (статус, код, поле, состояние) "
-                       "или есть слова вроде «корректно», «успешно»")
+                       f"scenario «{s['name']}»: THEN has no concrete value (status, code, field, state) "
+                       "or has words like \"correctly\", \"successfully\"")
 
 
 def check_placeholders(path, text, issues):
     comments = [no for no, line in enumerate(text.splitlines(), 1) if "<!--" in line]
     if comments:
         issues.add("hint", path, comments[0], "placeholder",
-                   f"остались комментарии шаблона: {len(comments)} (первый — строка {comments[0]})")
+                   f"template comments left: {len(comments)} (the first one — line {comments[0]})")
     for no, line in enumerate(text.splitlines(), 1):
         if RE_PLACEHOLDER.search(line):
-            issues.add("warn", path, no, "placeholder", f"заглушка: {line.strip()[:80]}")
+            issues.add("warn", path, no, "placeholder", f"placeholder: {line.strip()[:80]}")
 
 
 def collect(target, cwd=None):
@@ -416,12 +416,12 @@ def collect(target, cwd=None):
         result["files"].append({"path": rel(main_spec), "lines": len(text.splitlines()), "kind": "spec"})
         for line in spec["bad_scenarios"]:
             issues.add("error", main_spec, line, "scenario-heading",
-                       "заголовок сценария не `#### Scenario:` (ровно 4 #) — OpenSpec его не увидит")
+                       "scenario heading is not `#### Scenario:` (exactly 4 #) — OpenSpec will not see it")
         for req in spec["requirements"]:
             check_requirement_shape(req, main_spec, issues)
         if not spec["purpose_text"] or "TBD" in spec["purpose_text"]:
             issues.add("warn", main_spec, spec["purpose_line"] or 1, "purpose-missing",
-                       "нет Purpose или осталась заглушка TBD после archive")
+                       "no Purpose, or the TBD placeholder left after archive")
         result["specs"].append({"path": rel(main_spec), "capability": capability_of(main_spec, root / "specs"),
                                 "base_path": None, "is_new": False, "requirements": spec["requirements"],
                                 "renames": spec["renames"]})
@@ -458,9 +458,9 @@ def collect(target, cwd=None):
         check_placeholders(proposal_path, ptext, issues)
         if not proposal["route"]:
             issues.add(jf, proposal_path, None, "route-missing",
-                       "в Impact нет строки классификации «Маршрут: <тип> · <S|M|L> · сигналы: …»")
+                       "Impact has no classification line \"Route: <type> · <S|M|L> · signals: …\"")
     else:
-        issues.add("error", proposal_path, None, "missing-artifact", "нет proposal.md")
+        issues.add("error", proposal_path, None, "missing-artifact", "no proposal.md")
 
     size = proposal["size"] if proposal else None
     if design_path.is_file():
@@ -471,12 +471,12 @@ def collect(target, cwd=None):
         if open_q:
             first = next(no for no, line in enumerate(dtext.splitlines(), 1) if re.match(r"^##\s+Open Questions", line, re.I))
             issues.add("hint", design_path, first, "open-questions",
-                       f"пунктов в Open Questions: {len(open_q)}. Каждый должен быть откладываемым, "
-                       "то есть не менять specs, подход и tasks")
+                       f"Open Questions items: {len(open_q)}. Each must be deferrable, "
+                       "i.e. not change specs, the approach and tasks")
     elif size in ("M", "L"):
-        issues.add(jf, design_path, None, "missing-artifact", f"нет design.md, а размер {size}")
+        issues.add(jf, design_path, None, "missing-artifact", f"no design.md, and the size is {size}")
     else:
-        issues.add("hint", design_path, None, "missing-artifact", "нет design.md — допустимо только для S без сигналов")
+        issues.add("hint", design_path, None, "missing-artifact", "no design.md — acceptable only for S without signals")
 
     tasks = None
     if tasks_path.is_file():
@@ -485,16 +485,16 @@ def collect(target, cwd=None):
         result["tasks"] = tasks
         check_placeholders(tasks_path, ttext, issues)
     else:
-        issues.add("warn", tasks_path, None, "missing-artifact", "нет tasks.md")
+        issues.add("warn", tasks_path, None, "missing-artifact", "no tasks.md")
 
-    # ---- спеки ----
+    # ---- specs ----
     files = spec_files(change_dir)
     specs_dir = change_dir / "specs"
     if not files and not skip_specs:
         issues.add("error", specs_dir, None, "no-specs",
-                   "нет ни одной дельты в specs/ и нет skip_specs: true в .openspec.yaml — openspec validate отклонит change")
+                   "no deltas in specs/ and no skip_specs: true in .openspec.yaml — openspec validate will reject the change")
     if files and skip_specs:
-        issues.add("warn", meta_path, None, "skip-specs-with-specs", "skip_specs: true, но дельты в specs/ есть")
+        issues.add("warn", meta_path, None, "skip-specs-with-specs", "skip_specs: true, but there are deltas in specs/")
 
     trace_scenarios = []
     caps_in_change = []
@@ -511,51 +511,51 @@ def collect(target, cwd=None):
 
         if not spec["sections"]:
             issues.add("error", spec_path, None, "no-delta-sections",
-                       "нет ни одного раздела `## ADDED|MODIFIED|REMOVED|RENAMED Requirements`")
+                       "no `## ADDED|MODIFIED|REMOVED|RENAMED Requirements` section")
         for line in spec["bad_scenarios"]:
             issues.add("error", spec_path, line, "scenario-heading",
-                       "заголовок сценария не `#### Scenario:` (ровно 4 #) — OpenSpec его молча пропустит")
+                       "scenario heading is not `#### Scenario:` (exactly 4 #) — OpenSpec will silently skip it")
         if is_new:
             if not spec["purpose_text"]:
                 issues.add("warn", spec_path, None, "purpose-missing",
-                           "новая capability без `## Purpose` — после archive в спеке останется TBD")
+                           "a new capability without `## Purpose` — TBD will remain in the spec after archive")
             elif len(spec["purpose_text"].strip()) < PURPOSE_MIN:
                 issues.add("hint", spec_path, spec["purpose_line"], "purpose-short",
-                           f"Purpose короче {PURPOSE_MIN} символов — validate --strict отметит")
+                           f"Purpose is shorter than {PURPOSE_MIN} characters — validate --strict will flag it")
         elif spec["purpose_line"]:
             issues.add("hint", spec_path, spec["purpose_line"], "purpose-ignored",
-                       "Purpose в дельте существующей capability игнорируется при archive")
+                       "Purpose in a delta of an existing capability is ignored by archive")
 
         seen = set()
         for req in spec["requirements"]:
             key = norm(req["name"])
             if key in seen:
                 issues.add("error", spec_path, req["line"], "duplicate-requirement",
-                           f"требование «{req['name']}» встречается в дельте дважды")
+                           f"requirement «{req['name']}» appears twice in the delta")
             seen.add(key)
             check_requirement_shape(req, spec_path, issues)
             base_req = base_reqs.get(key)
             if req["op"] == "ADDED" and base_req:
                 issues.add("error", spec_path, req["line"], "added-exists-in-base",
-                           f"«{req['name']}» уже есть в {rel(base_path)} — нужен MODIFIED, иначе archive упадёт")
+                           f"«{req['name']}» already exists in {rel(base_path)} — MODIFIED is needed, otherwise archive fails")
             if req["op"] in ("MODIFIED", "REMOVED"):
                 if base is None:
                     issues.add("error", spec_path, req["line"], "modified-no-base",
-                               f"{req['op']} «{req['name']}», но главного спека {rel(base_path)} нет")
+                               f"{req['op']} «{req['name']}», but the main spec {rel(base_path)} does not exist")
                 elif base_req is None:
                     issues.add("error", spec_path, req["line"], "delta-header-not-found",
-                               f"{req['op']} «{req['name']}»: такого требования нет в {rel(base_path)} — "
-                               "заголовок должен совпадать с главным спеком")
+                               f"{req['op']} «{req['name']}»: no such requirement in {rel(base_path)} — "
+                               "the heading must match the main spec")
             if req["op"] == "MODIFIED" and base_req:
                 names = {norm(s["name"]) for s in req["scenarios"]}
                 lost = [s["name"] for s in base_req["scenarios"] if norm(s["name"]) not in names]
                 if lost:
                     issues.add("warn", spec_path, req["line"], "modified-lost-scenario",
-                               f"«{req['name']}»: после archive из спека пропадут сценарии "
-                               f"{', '.join('«' + n + '»' for n in lost)} — намеренно?")
+                               f"«{req['name']}»: after archive these scenarios disappear from the spec: "
+                               f"{', '.join('«' + n + '»' for n in lost)} — on purpose?")
             if req["op"] == "REMOVED" and not ("**Reason**" in req["text"] and "**Migration**" in req["text"]):
                 issues.add("warn", spec_path, req["line"], "removed-no-reason",
-                           f"REMOVED «{req['name']}» без **Reason** и **Migration**")
+                           f"REMOVED «{req['name']}» without **Reason** and **Migration**")
             if req["op"] in ("ADDED", "MODIFIED"):
                 base_bodies = {norm(s["name"]): norm(s["body"]) for s in base_req["scenarios"]} if base_req else {}
                 for s in req["scenarios"]:
@@ -566,7 +566,7 @@ def collect(target, cwd=None):
         for r in spec["renames"]:
             if base is None or norm(r["from"]) not in base_reqs:
                 issues.add("error", spec_path, r["line"], "delta-header-not-found",
-                           f"RENAMED FROM «{r['from']}»: такого требования нет в {rel(base_path)}")
+                           f"RENAMED FROM «{r['from']}»: no such requirement in {rel(base_path)}")
 
         result["specs"].append({"path": rel(spec_path), "capability": capability,
                                 "base_path": rel(base_path) if base else None, "is_new": is_new,
@@ -579,40 +579,40 @@ def collect(target, cwd=None):
         for cap in listed_new + listed_mod:
             if cap not in caps_in_change:
                 issues.add("error", proposal_path, None, "capability-without-spec",
-                           f"capability `{cap}` перечислена в proposal, но specs/{cap}/spec.md нет")
+                           f"capability `{cap}` is listed in the proposal, but specs/{cap}/spec.md does not exist")
         if listed_new or listed_mod:
             for cap in caps_in_change:
                 if cap not in listed_new + listed_mod:
                     issues.add("warn", specs_dir / cap, None, "spec-not-in-proposal",
-                               f"дельта specs/{cap}/ не перечислена в Capabilities proposal.md")
+                               f"delta specs/{cap}/ is not listed in Capabilities of proposal.md")
         for cap in listed_mod:
             if not (root / "specs" / cap / "spec.md").is_file():
                 issues.add("error", proposal_path, None, "modified-cap-not-found",
-                           f"Modified capability `{cap}` нет в openspec/specs/ — опечатка или это новая capability")
+                           f"Modified capability `{cap}` is not in openspec/specs/ — a typo, or it is a new capability")
         for cap in listed_new:
             if (root / "specs" / cap / "spec.md").is_file():
                 issues.add("warn", proposal_path, None, "new-cap-exists",
-                           f"New capability `{cap}` уже есть в openspec/specs/ — нужна Modified")
+                           f"New capability `{cap}` already exists in openspec/specs/ — Modified is needed")
 
     # ---- tasks ----
     if tasks:
         for b in tasks["bad_checkboxes"]:
             issues.add("warn", tasks_path, b["line"], "task-bad-checkbox",
-                       f"чекбокс `[{b['marker']}]` OpenSpec считает невыполненной задачей; нужен `[ ]` или `[x]`")
+                       f"OpenSpec treats checkbox `[{b['marker']}]` as an unfinished task; use `[ ]` or `[x]`")
         groups = tasks["groups"]
         for g in groups:
             if RE_TEST_GROUP.match(g["name"]):
                 issues.add("warn", tasks_path, g["line"], "tasks-test-group",
-                           f"группа «{g['title']}»: тесты собраны отдельно — каждая группа несёт свои тесты")
+                           f"group «{g['title']}»: tests are collected separately — every group carries its own tests")
             for t in g["tasks"]:
                 if not t["has_check"]:
                     issues.add("warn", tasks_path, t["line"], "task-no-check",
-                               f"задача {t['id'] or t['text'][:40]}: не сказано, как проверить выполнение")
+                               f"task {t['id'] or t['text'][:40]}: does not say how to verify it")
                 if t["id"] is None:
-                    issues.add("hint", tasks_path, t["line"], "task-no-id", "задача без номера X.Y")
+                    issues.add("hint", tasks_path, t["line"], "task-no-id", "task without an X.Y number")
         if groups and not RE_CHECK_GROUP.search(groups[-1]["name"]):
             issues.add(jf, tasks_path, groups[-1]["line"], "tasks-last-group",
-                       f"последняя группа «{groups[-1]['title']}», а не «Проверка»")
+                       f"the last group is «{groups[-1]['title']}», not «Verification»")
 
         all_tasks = [(g, t) for g in groups for t in g["tasks"]]
         for sc in trace_scenarios:
@@ -623,25 +623,25 @@ def collect(target, cwd=None):
             if not hits:
                 result["trace"]["scenarios_without_tasks"].append(sc)
                 issues.add(jf, sc["spec"], sc["line"], "scenario-no-task",
-                           f"на сценарий «{sc['scenario']}» не ссылается ни одна задача (сверка по имени)")
+                           f"no task refers to scenario «{sc['scenario']}» (matched by name)")
         for g, t in all_tasks:
             if not t["scenario_refs"] and not RE_EXEMPT_GROUP.search(g["name"]):
                 result["trace"]["tasks_without_scenario"].append({"id": t["id"], "line": t["line"], "text": t["text"]})
                 issues.add("hint", tasks_path, t["line"], "task-no-scenario",
-                           f"задача {t['id'] or ''} не ссылается на сценарий по имени — поведение без сценария или scope creep?")
+                           f"task {t['id'] or ''} does not refer to a scenario by name — a behavior without a scenario, or scope creep?")
 
-    # ---- другие change ----
+    # ---- other changes ----
     if not result["change"]["archived"]:
         for cap in caps_in_change:
             others = changes_touching(root, cap, exclude=change_dir.name)
             if others:
                 issues.add("warn", specs_dir / cap, None, "overlapping-change",
-                           f"capability `{cap}` меняют и другие активные change: {', '.join(others)} — "
-                           "согласуй требования до archive")
+                           f"capability `{cap}` is also modified by other active changes: {', '.join(others)} — "
+                           "reconcile the requirements before archive")
     return result
 
 
-# ---------- вывод ----------
+# ---------- output ----------
 
 LEVEL_ORDER = {"error": 0, "warn": 1, "hint": 2}
 
@@ -653,39 +653,39 @@ def where(item):
 def render(result):
     out = []
     if result["mode"] == "ambiguous":
-        out.append(f"Несколько кандидатов ({result['resolved_via']}). Укажи change:")
+        out.append(f"Several candidates ({result['resolved_via']}). Specify the change:")
         out += [f"- {c}" for c in result["candidates"]]
         return "\n".join(out) + "\n"
 
     ch = result["change"]
     if ch:
-        title = f"# Change `{ch['name']}`" + (" (архив)" if ch["archived"] else "")
+        title = f"# Change `{ch['name']}`" + (" (archived)" if ch["archived"] else "")
     else:
-        title = f"# Главный спек `{result['specs'][0]['capability']}` (без change)"
+        title = f"# Main spec `{result['specs'][0]['capability']}` (no change)"
     out += [title, "",
-            f"- Проект: `{result['project_root']}`",
-            f"- Вход: `{result['input']}` → {result['resolved_via']}"]
+            f"- Project: `{result['project_root']}`",
+            f"- Input: `{result['input']}` → {result['resolved_via']}"]
     if result["focus_spec"]:
-        out.append(f"- Фокус: `{result['focus_spec']}`")
+        out.append(f"- Focus: `{result['focus_spec']}`")
     if ch:
-        out.append(f"- Схема: {ch['schema'] or '—'} · правила java-dev-flow: {'да' if ch['java_flow'] else 'нет'}"
-                   f" · skip_specs: {'да' if ch['skip_specs'] else 'нет'}")
+        out.append(f"- Schema: {ch['schema'] or '—'} · java-dev-flow rules: {'yes' if ch['java_flow'] else 'no'}"
+                   f" · skip_specs: {'yes' if ch['skip_specs'] else 'no'}")
     p = result["proposal"]
     if p:
-        out.append(f"- {p['route'] or 'Маршрут: — (нет в Impact)'}")
+        out.append(f"- {p['route'] or 'Route: — (not in Impact)'}")
         caps = p["capabilities"]
         out.append(f"- Capabilities: new {', '.join(caps['new']) or '—'}; modified {', '.join(caps['modified']) or '—'}"
-                   + (" · есть **BREAKING**" if p["breaking"] else ""))
+                   + (" · has **BREAKING**" if p["breaking"] else ""))
 
-    out += ["", "## Файлы", ""]
-    out += [f"- `{f['path']}` — {f['lines']} стр." for f in result["files"]]
+    out += ["", "## Files", ""]
+    out += [f"- `{f['path']}` — {f['lines']} lines" for f in result["files"]]
 
-    out += ["", "## Требования и сценарии", ""]
+    out += ["", "## Requirements and scenarios", ""]
     for s in result["specs"]:
-        base = f"база `{s['base_path']}`" if s["base_path"] else "новая capability"
+        base = f"base `{s['base_path']}`" if s["base_path"] else "new capability"
         out.append(f"### `{s['path']}` — {base}")
         for r in s["requirements"]:
-            out.append(f"- [{r['op']}] {r['name']} (L{r['line']}) — сценариев: {len(r['scenarios'])}")
+            out.append(f"- [{r['op']}] {r['name']} (L{r['line']}) — scenarios: {len(r['scenarios'])}")
             for sc in r["scenarios"]:
                 out.append(f"  - {sc['name']} (L{sc['line']})")
         for r in s["renames"]:
@@ -694,34 +694,34 @@ def render(result):
 
     t = result["tasks"]
     if t:
-        out += ["## Задачи", ""]
+        out += ["## Tasks", ""]
         for g in t["groups"]:
             done = sum(1 for x in g["tasks"] if x["done"])
-            out.append(f"- {g['title']} (L{g['line']}): {done}/{len(g['tasks'])} отмечено")
+            out.append(f"- {g['title']} (L{g['line']}): {done}/{len(g['tasks'])} ticked")
         tr = result["trace"]
-        out += ["", "## Трассировка (сверка по имени сценария)", ""]
-        out.append(f"- Новых и изменённых сценариев без задачи: {len(tr['scenarios_without_tasks'])}")
+        out += ["", "## Traceability (matched by scenario name)", ""]
+        out.append(f"- New and changed scenarios without a task: {len(tr['scenarios_without_tasks'])}")
         out += [f"  - {x['scenario']} — `{x['spec']}:{x['line']}`" for x in tr["scenarios_without_tasks"]]
-        out.append(f"- Задач вне «Проверки» и рефакторинга без сценария: {len(tr['tasks_without_scenario'])}")
+        out.append(f"- Tasks outside «Verification» and refactoring without a scenario: {len(tr['tasks_without_scenario'])}")
         out += [f"  - {x['id'] or '?'} (L{x['line']}): {x['text'][:90]}" for x in tr["tasks_without_scenario"]]
         out.append("")
 
     issues = sorted(result["issues"], key=lambda i: (LEVEL_ORDER[i["level"]], i["file"], i["line"] or 0))
     counts = {lvl: sum(1 for i in issues if i["level"] == lvl) for lvl in LEVEL_ORDER}
-    out += [f"## Находки скрипта — error {counts['error']} · warn {counts['warn']} · hint {counts['hint']}", ""]
-    out += [f"- **{i['level']}** `{where(i)}` {i['code']} — {i['message']}" for i in issues] or ["- нет"]
+    out += [f"## Script findings — error {counts['error']} · warn {counts['warn']} · hint {counts['hint']}", ""]
+    out += [f"- **{i['level']}** `{where(i)}` {i['code']} — {i['message']}" for i in issues] or ["- none"]
     return "\n".join(out) + "\n"
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("target", nargs="?", default=".", help="spec.md, файл или каталог change, корень проекта или имя change")
-    ap.add_argument("--json", action="store_true", help="вывести JSON вместо markdown")
+    ap.add_argument("target", nargs="?", default=".", help="spec.md, a change file or directory, the project root or a change name")
+    ap.add_argument("--json", action="store_true", help="print JSON instead of markdown")
     args = ap.parse_args(argv)
     try:
         result = collect(args.target)
     except ResolveError as e:
-        print(f"Ошибка: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else render(result), end="")
     return 2 if result["mode"] == "ambiguous" else 0

@@ -1,138 +1,138 @@
-# Банк вопросов к OpenSpec change
+# Question bank for an OpenSpec change
 
-**Открывай, когда:** идёшь по шагу 3 скилла, а также если доменного скилла нет в сессии.
+**Open when:** you go through step 3 of the skill, and also if a domain skill is missing in the session.
 
-Пометки у вопроса:
-- **[код]** — ответ проверяется по репозиторию: Grep, Read, changelog, тесты, `pom.xml`;
-- **[решение]** — обычно решает пользователь, если ответа нет ни в артефактах, ни в коде.
+Question tags:
+- **[code]** — the answer is checked against the repository: Grep, Read, changelog, tests, `pom.xml`;
+- **[decision]** — usually the user decides if neither the artifacts nor the code have the answer.
 
-Вопрос без ответа в артефактах — ещё не находка. Сначала поищи ответ в коде и конвенциях проекта.
+A question without an answer in the artifacts is not yet a finding. First look for the answer in the code and the project's conventions.
 
-Разделы:
+Sections:
 - [A. proposal.md](#a-proposalmd)
-- [B. specs — требования и сценарии](#b-specs--требования-и-сценарии)
+- [B. specs — requirements and scenarios](#b-specs--requirements-and-scenarios)
 - [C. design.md](#c-designmd)
 - [D. tasks.md](#d-tasksmd)
-- [E. Сквозная сверка](#e-сквозная-сверка)
-- [F. Факты из кода](#f-факты-из-кода)
-- [G. Пре-мортем по артефактам](#g-пре-мортем-по-артефактам)
-- [Чего не спрашивать](#чего-не-спрашивать)
+- [E. Cross-checking](#e-cross-checking)
+- [F. Facts from the code](#f-facts-from-the-code)
+- [G. Pre-mortem on the artifacts](#g-pre-mortem-on-the-artifacts)
+- [What not to ask](#what-not-to-ask)
 
 ---
 
 ## A. proposal.md
 
-- **A1. Why.** Какая проблема, у кого, почему сейчас? Сформулирована ли она так, чтобы потом можно было понять, решена ли? **[решение]**
-- **A2. What Changes ↔ specs.** Каждый пункт What Changes покрыт требованием в specs? Каждое требование выводится из What Changes? Требование, которое ни из чего не выводится, — это scope creep.
-- **A3. Capabilities.** Имя описывает устойчивое поведение системы (`order-refunds`), а не задачу (`add-refund-endpoint`)? Нет ли в `openspec/specs/` похожей capability под другим именем? **[код]**: `ls openspec/specs`, `openspec list --specs`.
-- **A4. Маршрут.** Размер и сигналы соответствуют содержимому? Новая таблица, внешний вызов или деньги при размере S — неверная классификация. Скиллы в строке совпадают с сигналами в артефактах?
-- **A5. Impact.** Изменения API, событий и схемы БД перечислены явно? Ломающие помечены **BREAKING**? Кто потребляет изменённый API и события: в репозитории **[код]** — клиенты, контрактные тесты, слушатели; вне его — **[решение]**.
-- **A6. L.** Предложено разбиение на независимые PR?
-- **A7. Текущее поведение.** Утверждения вида «сейчас отменить PAID нельзя» верны? **[код]**
+- **A1. Why.** Which problem, for whom, why now? Is it phrased so that later you can tell whether it is solved? **[decision]**
+- **A2. What Changes ↔ specs.** Is every What Changes item covered by a requirement in specs? Does every requirement follow from What Changes? A requirement that follows from nothing is scope creep.
+- **A3. Capabilities.** Does the name describe a durable system behavior (`order-refunds`) rather than a task (`add-refund-endpoint`)? Is there a similar capability under another name in `openspec/specs/`? **[code]**: `ls openspec/specs`, `openspec list --specs`.
+- **A4. Route.** Do the size and signals match the content? A new table, an external call or money at size S is a wrong classification. Do the skills in the line match the signals in the artifacts?
+- **A5. Impact.** Are API, event and DB schema changes listed explicitly? Breaking ones marked **BREAKING**? Who consumes the changed API and events: inside the repository **[code]** — clients, contract tests, listeners; outside it — **[decision]**.
+- **A6. L.** Is a split into independent PRs proposed?
+- **A7. Current behavior.** Are claims like "PAID cannot be cancelled now" true? **[code]**
 
-## B. specs — требования и сценарии
+## B. specs — requirements and scenarios
 
-Для каждого требования и сценария в дельтах, начиная с фокусной.
+For every requirement and scenario in the deltas, starting with the focus one.
 
-- **B1. Форма.** Одно требование — одно поведение? В тексте есть SHALL или MUST? У каждого требования есть сценарий? (Скрипт ловит механику, ты — смысл: требование «система SHALL обрабатывать возвраты» на пять поведений нужно разбить.)
-- **B2. Сценарий = тест.** WHEN задаёт входные условия: состояние, запрос, роль. THEN — наблюдаемый результат с литералами: HTTP-статус, `code` ошибки, поле ответа, состояние строки в БД, опубликованное событие с ключом. «Корректно», «успешно», «возвращает ошибку» без кода — переписать.
-- **B3. Тест без design.** Можно ли написать тест, читая только сценарий? Если для этого нужен design.md, в сценарии не хватает значения.
-- **B4. Ошибочные пути — отдельными сценариями:**
-  - невалидный ввод → 400 и `code`;
-  - нет аутентификации → 401;
-  - нет права → 403;
-  - чужой или несуществующий ресурс → 404 (или 403 — **[решение]**, но одинаково по всему API **[код]**);
-  - конфликт состояния или дубликат → 409;
-  - нарушено бизнес-правило → 422 (или 409 — как принято в проекте **[код]**);
-  - внешняя система недоступна или отвечает таймаутом → что видит клиент и что остаётся в БД.
-- **B5. Состояния.** Поведение зависит от статуса? Составь матрицу «статус × операция» по enum из кода **[код]** и сверь со сценариями. Для каждой клетки понятно, разрешено или нет? У запрещённых переходов есть сценарии с кодом? Новый статус: что с ним делают все существующие операции?
-- **B6. Повтор.** У операции есть побочный эффект: запись вместе с событием, внешний вызов, деньги? Нужен сценарий «тот же запрос или событие дважды → один эффект». Тот же ключ, но другое тело → что?
-- **B7. Конкуренция.** Два одновременных запроса к одному ресурсу: двойной клик, два оператора, вебхук и пользователь, два пода. Какой результат у второго?
-- **B8. Границы.** Пустой список, 0, отрицательное число, максимум, длина строки, `null` и отсутствующее поле, округление денег, дата на границе суток и часовой пояс, последняя страница пагинации.
-- **B9. Старые данные.** Строки, созданные до изменения (без нового поля, в старом статусе): что с ними видит API? Нужен сценарий или решение в design.
-- **B10. Совместимость.** Старые клиенты, которые не шлют новое поле. Потребители, которые получат новое значение enum или новое поле в событии. Существующие вызовы изменённого эндпоинта. Если что-то ломается, в proposal это помечено BREAKING.
-- **B11. MODIFIED.** Блок скопирован из главного спека целиком? Сценарии базы, которые пропали (скрипт: `modified-lost-scenario`), убраны намеренно? Если поведение остаётся — вернуть сценарий. Если убирается — это изменение поведения, и оно названо в proposal.
-- **B12. Противоречия.** Требование не противоречит другим — в этом change, в главных спеках, в других активных change (скрипт: `overlapping-change`)?
-- **B13. Без реализации.** В спеке нет имён классов, таблиц и фреймворков, если они не часть внешнего контракта. Им место в design.
-- **B14. Нефункциональное.** Лимиты, таймауты, SLA, порядок событий, гарантия доставки — то, на что полагаются потребители, — описано в спеке или явно исключено?
+- **B1. Form.** One requirement — one behavior? Does the text have SHALL or MUST? Does every requirement have a scenario? (The script catches mechanics, you catch meaning: a requirement "the system SHALL handle refunds" covering five behaviors must be split.)
+- **B2. Scenario = test.** WHEN sets the input conditions: state, request, role. THEN is an observable result with literals: HTTP status, error `code`, a response field, a DB row state, a published event with its key. "Correctly", "successfully", "returns an error" without a code — rewrite.
+- **B3. A test without design.** Can a test be written reading only the scenario? If design.md is needed for that, the scenario lacks a value.
+- **B4. Error paths — as separate scenarios:**
+  - invalid input → 400 and a `code`;
+  - no authentication → 401;
+  - no permission → 403;
+  - someone else's or a non-existent resource → 404 (or 403 — **[decision]**, but the same across the API **[code]**);
+  - a state conflict or duplicate → 409;
+  - a broken business rule → 422 (or 409 — as the project does it **[code]**);
+  - an external system unavailable or timing out → what the client sees and what remains in the DB.
+- **B5. States.** Does behavior depend on a status? Build a "status × operation" matrix from the enum in the code **[code]** and compare it with the scenarios. Is every cell clearly allowed or not? Do forbidden transitions have scenarios with a code? A new status: what do all existing operations do with it?
+- **B6. Retry.** Does the operation have a side effect: a write together with an event, an external call, money? A scenario "the same request or event twice → one effect" is needed. The same key but a different body → what?
+- **B7. Concurrency.** Two simultaneous requests to one resource: a double click, two operators, a webhook and a user, two pods. What does the second one get?
+- **B8. Edges.** An empty list, 0, a negative number, a maximum, string length, `null` and a missing field, money rounding, a date at the day boundary and time zone, the last pagination page.
+- **B9. Existing data.** Rows created before the change (without the new field, in an old status): what does the API show for them? A scenario or a decision in design is needed.
+- **B10. Compatibility.** Old clients that do not send the new field. Consumers that will get a new enum value or a new field in an event. Existing calls of the changed endpoint. If something breaks, the proposal marks it BREAKING.
+- **B11. MODIFIED.** Was the block copied from the main spec in full? Are base scenarios that disappeared (script: `modified-lost-scenario`) removed on purpose? If the behavior stays — restore the scenario. If it goes — it is a behavior change, and the proposal names it.
+- **B12. Contradictions.** Does a requirement contradict others — in this change, in main specs, in other active changes (script: `overlapping-change`)?
+- **B13. No implementation.** The spec has no class, table or framework names unless they are part of the external contract. They belong in design.
+- **B14. Non-functional.** Limits, timeouts, SLA, event order, delivery guarantees — what consumers rely on — described in the spec or explicitly excluded?
 
 ## C. design.md
 
-Каркас — шесть шагов `think-before-coding`. В схеме `java-flow` они совпадают с подразделами Decisions; в `spec-driven` ищи ответы по всему документу.
+The frame is the six steps of `think-before-coding`. In the `java-flow` schema they match the Decisions subsections; in `spec-driven` look for the answers across the whole document.
 
-- **C1. Context.** Тип компонента, где живёт, нагрузка числом: rps, объём затронутых таблиц, размер батча. Нет в репозитории — **[решение]**.
-- **C2. Данные и инварианты.** Каждый инвариант из сценариев («не больше одного активного платежа», «сумма возвратов не больше суммы оплаты») закреплён constraint'ом (UNIQUE, partial UNIQUE, CHECK, FK), а не только проверкой в сервисе? Типы: деньги — `numeric` / `BigDecimal`, моменты времени — `timestamptz` / `Instant`, статус — `text` + CHECK и `@Enumerated(STRING)`. Как это сделано в существующих changeset'ах и entity **[код]**.
-- **C3. Граница транзакции и порядок сборки.** Где транзакция начинается и где заканчивается? Внешних вызовов и публикации событий внутри нет? Порядок срезов записан, и `tasks.md` ему следует?
-- **C4. Ошибки.** Таблица «ситуация → статус → `code`» совпадает со сценариями в specs буква в букву? Коды стабильные и в стиле существующего `@RestControllerAdvice` **[код]**? Есть таймауты и поведение при отказе внешней системы?
-- **C5. Авторизация.** Кто вызывает, с каким правом, как ограничен доступ к строкам? Владелец или tenant берётся из principal, а не из тела запроса? Так же, как в соседних эндпоинтах **[код]**?
-- **C6. Повторы и конкуренция.** Ключ идемпотентности: откуда приходит, где хранится, сколько живёт. Дедупликация событий, `@Version` или блокировка, outbox. У каждого сценария повтора и конкуренции из specs есть механизм здесь?
-- **C7. Наблюдаемость.** Логи на границе с бизнес-идентификаторами, метрики (RED, лаг, ретраи, DLT), health. Как дежурный заметит поломку?
-- **C8. Decisions.** У каждого решения есть отвергнутая альтернатива и причина? Решение, видимое снаружи, отражено сценарием в specs?
-- **C9. Расширяемость.** Change добавляет вариант к набору, по которому код уже ветвится? Найди ветвления **[код]** и прогони по ним `java-extensibility-review`. Вердикт записан? Если «сначала рефакторинг» — первая группа в tasks «Подготовительный рефакторинг».
-- **C10. Risks.** У каждого риска есть смягчение и способ обнаружения? Риски из пре-мортема (раздел G) здесь есть?
-- **C11. Migration Plan** — если меняется схема:
-  - changeset'ы новые, применённые не правятся **[код]**: changelog;
-  - NOT NULL на большой таблице — CHECK `NOT VALID` → `VALIDATE` → `SET NOT NULL`; FK — `NOT VALID`; индекс — `CONCURRENTLY`;
-  - rename, drop и смена типа — через expand/contract;
-  - backfill вне changeset'а; есть `lock_timeout`;
-  - откат кода без отката схемы возможен: при rolling deploy старая версия кода работает с новой схемой;
-  - объём таблиц — **[решение]**, если его нет в репозитории.
-- **C12. Open Questions.** Каждый вопрос можно отложить? Если ответ меняет specs, подход или tasks, это не Open Question, а вопрос пользователю сейчас — блокер.
-- **C13. Факты.** Имена таблиц и классов, существующие статусы, текущие ограничения, версия Spring Boot и доступные библиотеки совпадают с кодом **[код]**?
-- **C14. Новая технология или зависимость** защищена по `boring-by-default`: какую измеримую проблему не решает текущий стек?
+- **C1. Context.** Component type, where it lives, load as a number: rps, size of the affected tables, batch size. Not in the repository — **[decision]**.
+- **C2. Data and invariants.** Is every invariant from the scenarios ("at most one active payment", "the sum of refunds is at most the paid amount") pinned by a constraint (UNIQUE, partial UNIQUE, CHECK, FK), not only by a check in the service? Types: money — `numeric` / `BigDecimal`, instants — `timestamptz` / `Instant`, status — `text` + CHECK and `@Enumerated(STRING)`. How existing changesets and entities do it **[code]**.
+- **C3. Transaction boundary and build order.** Where does the transaction start and end? No external calls or event publishing inside? Is the slice order written down, and does `tasks.md` follow it?
+- **C4. Errors.** Does the "situation → status → `code`" table match the scenarios in specs letter for letter? Are the codes stable and in the style of the existing `@RestControllerAdvice` **[code]**? Are there timeouts and behavior for an external system failing?
+- **C5. Authorization.** Who calls, with which permission, how is row access limited? Does the owner or tenant come from the principal, not the request body? The same as neighboring endpoints **[code]**?
+- **C6. Retries and concurrency.** The idempotency key: where it comes from, where it is stored, how long it lives. Event deduplication, `@Version` or a lock, outbox. Does every retry and concurrency scenario from specs have a mechanism here?
+- **C7. Observability.** Logs at the boundary with business identifiers, metrics (RED, lag, retries, DLT), health. How will the on-call engineer notice a breakage?
+- **C8. Decisions.** Does every decision have a rejected alternative and a reason? Is a decision visible from outside reflected by a scenario in specs?
+- **C9. Extensibility.** Does the change add a variant to a set the code already branches on? Find the branching **[code]** and run `java-extensibility-review` on it. Is the verdict recorded? If "refactor first" — the first group in tasks is "Preparatory refactoring".
+- **C10. Risks.** Does every risk have a mitigation and a way to detect it? Are the risks from the pre-mortem (section G) here?
+- **C11. Migration Plan** — if the schema changes:
+  - the changesets are new, applied ones are not edited **[code]**: changelog;
+  - NOT NULL on a big table — CHECK `NOT VALID` → `VALIDATE` → `SET NOT NULL`; FK — `NOT VALID`; index — `CONCURRENTLY`;
+  - rename, drop and type change — via expand/contract;
+  - backfill outside the changeset; `lock_timeout` is there;
+  - rolling back the code without rolling back the schema is possible: during a rolling deploy the old code version works with the new schema;
+  - table size — **[decision]** if it is not in the repository.
+- **C12. Open Questions.** Can every question be deferred? If the answer changes specs, the approach or tasks, it is not an Open Question but a question for the user now — a blocker.
+- **C13. Facts.** Do table and class names, existing statuses, current constraints, the Spring Boot version and the available libraries match the code **[code]**?
+- **C14. A new technology or dependency** is defended per `boring-by-default`: which measurable problem does the current stack not solve?
 
 ## D. tasks.md
 
-- **D1. Формат.** `- [ ] X.Y …`, и у каждой задачи «— проверка: <тест или команда>». Механику ловит скрипт.
-- **D2. Сценарии ↔ задачи.** Каждый новый или изменённый сценарий → задача. Задача без сценария — это одно из трёх: поведение, которого нет в specs (дописать сценарий); scope creep (убрать задачу); подготовительная или инфраструктурная работа (оставить). Скрипт сверяет по имени — перепроверь глазами.
-- **D3. Порядок.** Группы — срезы в порядке сборки из design. Задача зависит только от задач выше, не ниже.
-- **D4. Уровень теста** соответствует сценарию (`testing-with-discernment`):
-  - БД и constraint'ы — `@DataJpaTest` + Testcontainers, не H2;
-  - HTTP-контракт — `@WebMvcTest`;
-  - сценарий целиком — `@SpringBootTest` + Testcontainers;
-  - Kafka — Testcontainers или `@EmbeddedKafka`, по тому, что есть в проекте **[код]**: `pom.xml`;
-  - внешний HTTP — WireMock; время — `Clock`.
+- **D1. Format.** `- [ ] X.Y …`, and every task has "— verify: <test or command>". The script catches the mechanics.
+- **D2. Scenarios ↔ tasks.** Every new or changed scenario → a task. A task without a scenario is one of three: a behavior missing from specs (add a scenario); scope creep (remove the task); preparatory or infrastructure work (keep it). The script matches by name — recheck by eye.
+- **D3. Order.** Groups are slices in the build order from design. A task depends only on tasks above it, not below.
+- **D4. The test level** fits the scenario (`testing-with-discernment`):
+  - DB and constraints — `@DataJpaTest` + Testcontainers, not H2;
+  - HTTP contract — `@WebMvcTest`;
+  - the whole scenario — `@SpringBootTest` + Testcontainers;
+  - Kafka — Testcontainers or `@EmbeddedKafka`, whichever the project has **[code]**: `pom.xml`;
+  - external HTTP — WireMock; time — `Clock`.
 
-  Нужная тестовая инфраструктура в проекте есть **[код]**?
-- **D5. Группы.** Тестов в отдельной группе в конце нет. Последняя группа «Проверка» содержит только интеграционные проверки, и её состав соответствует сигналам: `review-migration` при changeset'ах; `java-code-reviewer` и `critic` для M и L; `security-reviewer` для endpoint и ролей в L; `incident-thinker` для consumer, job и денег в L; `java-extensibility-review`, если выросло ветвление; `test-audit` по новым тестам.
-- **D6. Размер задачи.** Задача помещается в одну сессию? «Реализовать возвраты» — разбить по сценариям.
-- **D7. Решения без сценария.** Changeset, метрики, конфиг, ShedLock из design — у каждого есть задача с проверкой?
-- **D8. Change в работе.** Есть отмеченные `[x]`? Тогда правки идут через `/opsx:update`, отмеченные задачи не трогаются.
+  Does the project have the needed test infrastructure **[code]**?
+- **D5. Groups.** No tests in a separate group at the end. The last group "Verification" holds only integration checks, and its contents match the signals: `review-migration` for changesets; `java-code-reviewer` and `critic` for M and L; `security-reviewer` for endpoints and roles in L; `incident-thinker` for consumers, jobs and money in L; `java-extensibility-review` if branching grew; `test-audit` for new tests.
+- **D6. Task size.** Does a task fit into one session? "Implement refunds" — split by scenarios.
+- **D7. Decisions without a scenario.** A changeset, metrics, config, ShedLock from design — does each have a task with a verification?
+- **D8. A change in progress.** Are there ticked `[x]` tasks? Then edits go through `/opsx:update`, ticked tasks are not touched.
 
-## E. Сквозная сверка
+## E. Cross-checking
 
-- **E1. Имена.** Статусы, поля, коды ошибок, события, эндпоинты называются одинаково во всех артефактах. `REFUND_EXCEEDS_PAID` в design и `REFUND_TOO_LARGE` в спеке — находка.
-- **E2. proposal ↔ design.** Каждый сигнал из строки «Маршрут» разобран в Decisions.
-- **E3. design ↔ specs.** Каждое решение, видимое снаружи (код ошибки, статус, событие, лимит), имеет сценарий.
-- **E4. design ↔ tasks.** На Migration Plan, метрики, конфиг и подготовительный рефакторинг есть задачи.
-- **E5. specs ↔ tasks.** См. D2.
-- **E6. config.yaml.** Правила `rules` проекта выполнены во всех артефактах.
+- **E1. Names.** Statuses, fields, error codes, events, endpoints are named the same in all artifacts. `REFUND_EXCEEDS_PAID` in design and `REFUND_TOO_LARGE` in the spec is a finding.
+- **E2. proposal ↔ design.** Every signal from the "Route" line is addressed in Decisions.
+- **E3. design ↔ specs.** Every decision visible from outside (an error code, a status, an event, a limit) has a scenario.
+- **E4. design ↔ tasks.** The Migration Plan, metrics, config and preparatory refactoring have tasks.
+- **E5. specs ↔ tasks.** See D2.
+- **E6. config.yaml.** The project's `rules` are met in all artifacts.
 
-## F. Факты из кода
+## F. Facts from the code
 
-- **F1.** Сущности, таблицы, эндпоинты и события из артефактов существуют там, где сказано, или явно новые. Grep по именам.
-- **F2.** Текущее поведение, на которое опираются proposal и MODIFIED, действительно такое: контроллер, сервис, тесты.
-- **F3.** Ветвление по типу или статусу, к которому добавляется вариант, — где оно и в скольких местах (для C9).
-- **F4.** Какие существующие тесты сломаются от изменения поведения? Их правка — тоже задачи.
-- **F5.** Конвенции проекта: формат ошибок, стиль changeset'ов, базовый класс интеграционных тестов, профили. Артефакты им следуют?
-- **F6.** Вызывающий код изменяемых методов и потребители событий внутри репозитория.
+- **F1.** Entities, tables, endpoints and events from the artifacts exist where stated, or are explicitly new. Grep by name.
+- **F2.** The current behavior the proposal and MODIFIED rely on really is so: controller, service, tests.
+- **F3.** The branching on type or status to which a variant is added — where it is and in how many places (for C9).
+- **F4.** Which existing tests break from the behavior change? Fixing them is a task too.
+- **F5.** The project's conventions: error format, changeset style, the integration test base class, profiles. Do the artifacts follow them?
+- **F6.** The calling code of the changed methods and the event consumers inside the repository.
 
-## G. Пре-мортем по артефактам
+## G. Pre-mortem on the artifacts
 
-Представь: change реализован точно по артефактам, через две недели после релиза случился инцидент. Почему? Это оси агента `critic`, только применённые к артефактам, а не к diff. Записывай только сценарии, которые артефакты не закрывают.
+Imagine: the change was implemented exactly per the artifacts, and two weeks after the release an incident happened. Why? These are the `critic` agent's axes, applied to the artifacts rather than to a diff. Write down only the scenarios the artifacts do not close.
 
-- **G1. Старые данные** — B9, C11.
-- **G2. Деплой и откат.** При rolling deploy старая и новая версии работают одновременно: совместимы ли они с одной схемой и форматом событий? Можно ли откатить код без отката схемы?
-- **G3. Потребители** — A5, B10.
-- **G4. Повторы и гонки** — B6, B7, C6.
-- **G5. Частичные отказы.** Сбой между шагами: БД записана, а событие не ушло; деньги списаны, а статус не обновлён. Какое состояние останется и кто его доведёт — воркер, ретрай, ручное действие? Ответ должен быть в design.
-- **G6. Нагрузка.** Неограниченные выборки, отчёты и batch на прод-объёмах.
-- **G7. Безопасность.** IDOR, mass assignment, webhook без проверки подписи, PII в логах и ответах об ошибках.
-- **G8. Наблюдаемость.** Как заметим поломку ночью и как починим без деплоя: повтор из DLT, ручной перезапуск, флаг.
+- **G1. Existing data** — B9, C11.
+- **G2. Deploy and rollback.** During a rolling deploy the old and new versions run at the same time: are they compatible with one schema and event format? Can the code be rolled back without rolling back the schema?
+- **G3. Consumers** — A5, B10.
+- **G4. Retries and races** — B6, B7, C6.
+- **G5. Partial failures.** A failure between steps: the DB is written but the event did not go out; money is charged but the status is not updated. What state remains and who finishes it — a worker, a retry, a manual action? The answer must be in design.
+- **G6. Load.** Unbounded selects, reports and batch at production volumes.
+- **G7. Security.** IDOR, mass assignment, a webhook without a signature check, PII in logs and error responses.
+- **G8. Observability.** How we notice a breakage at night and fix it without a deploy: a replay from the DLT, a manual restart, a flag.
 
-## Чего не спрашивать
+## What not to ask
 
-- Стиль и формулировки, если они не мешают написать тест.
-- То, что уже решено в артефактах и не противоречит коду.
-- Факты, которые можно найти самому.
-- Реализацию на уровне строк кода: это работа `/opsx:apply`.
+- Style and wording, unless they prevent writing a test.
+- What is already decided in the artifacts and does not contradict the code.
+- Facts you can find yourself.
+- Line-level implementation: that is the job of `/opsx:apply`.

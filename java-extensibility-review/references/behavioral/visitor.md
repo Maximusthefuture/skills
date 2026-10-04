@@ -1,36 +1,36 @@
-# Visitor (Посетитель)
+# Visitor
 
-Группа: поведенческий
+Group: behavioral
 
-## Суть
-Операции над структурой элементов разных типов выносятся из самих элементов в отдельные классы-посетители. Элемент «принимает» посетителя и вызывает у него метод для своего типа (двойная диспетчеризация). Новая операция — новый посетитель, классы элементов не трогаются.
+## Essence
+Operations over a structure of elements of different types move out of the elements into separate visitor classes. An element "accepts" a visitor and calls its method for the element's own type (double dispatch). A new operation is a new visitor; the element classes are not touched.
 
-В Java 21 ту же задачу обычно проще решает sealed-иерархия + `switch` с pattern matching (`../java-idioms/sealed-switch.md`): компилятор так же проверяет полноту, а церемоний меньше.
+In Java 21 the same task is usually solved more simply by a sealed hierarchy + a `switch` with pattern matching (`../java-idioms/sealed-switch.md`): the compiler checks completeness just the same, with less ceremony.
 
-## Структура (участники)
-- **Visitor** — интерфейс с методом на каждый тип элемента (`visitText`, `visitTable`).
-- **ConcreteVisitor** — одна операция над всей структурой (`HtmlRenderer`, `MarkdownRenderer`).
-- **Element** — интерфейс с методом `accept(visitor)`.
-- **ConcreteElement** — в `accept` вызывает метод посетителя для своего типа: `v.visitTable(this)` (двойная диспетчеризация).
-- **ObjectStructure** — коллекция или дерево элементов, которые обходит посетитель.
+## Structure (participants)
+- **Visitor** — an interface with a method per element type (`visitText`, `visitTable`).
+- **ConcreteVisitor** — one operation over the whole structure (`HtmlRenderer`, `MarkdownRenderer`).
+- **Element** — an interface with an `accept(visitor)` method.
+- **ConcreteElement** — in `accept` calls the visitor's method for its own type: `v.visitTable(this)` (double dispatch).
+- **ObjectStructure** — a collection or tree of elements the visitor traverses.
 
 ```
 Client ──▶ element.accept(visitor)
                  │
-                 └──▶ visitor.visitTable(this)   // выбор метода по типу элемента и типу посетителя
+                 └──▶ visitor.visitTable(this)   // the method is chosen by the element type and the visitor type
 ```
 
-## Признаки в Java/Spring коде
-- Есть стабильная иерархия элементов (AST выражений, дерево документа или отчёта, дерево правил, элементы прайса), и над ней регулярно добавляются операции: рендер в HTML/PDF, валидация, расчёт, экспорт.
-- Код операций — цепочки `if (node instanceof X) … else if (node instanceof Y)`, разбросанные по сервисам; при добавлении операции что-то забывают.
-- Классы элементов обрастают методами `toHtml()`, `toPdf()`, `validate()`, `calculate()`, не относящимися к их сути.
+## Signs in Java/Spring code
+- There is a stable hierarchy of elements (an expression AST, a document or report tree, a rule tree, price list elements), and operations are regularly added over it: rendering to HTML/PDF, validation, calculation, export.
+- The operations' code is `if (node instanceof X) … else if (node instanceof Y)` chains scattered across services; something gets forgotten when an operation is added.
+- The element classes grow `toHtml()`, `toPdf()`, `validate()`, `calculate()` methods unrelated to their essence.
 
-## Когда не применять
+## When not to apply
 - Java 21+ → sealed + `switch`.
-- Набор типов элементов часто пополняется: каждый новый тип ломает всех посетителей. Для такой оси изменений нужна Strategy или полиморфизм.
-- Операция одна.
+- The set of element types grows often: every new type breaks all visitors. That axis of change needs a Strategy or polymorphism.
+- There is one operation.
 
-## После — классический Visitor (Java < 21)
+## After — the classic Visitor (Java < 21)
 ```java
 public interface ReportElement {
     <R> R accept(ReportVisitor<R> v);
@@ -57,10 +57,10 @@ class HtmlRenderer implements ReportVisitor<String> {
     public String visitText(TextBlock t) { return "<p>" + escape(t.text) + "</p>"; }
     public String visitTable(Table t)    { /* … */ }
 }
-// новая операция (экспорт в Markdown) — новый класс MarkdownRenderer, элементы не меняются
+// a new operation (export to Markdown) is a new MarkdownRenderer class, the elements do not change
 ```
 
-## После — Java 21
+## After — Java 21
 ```java
 public sealed interface ReportElement permits TextBlock, Table {}
 public record TextBlock(String text) implements ReportElement {}
@@ -74,25 +74,25 @@ String toHtml(ReportElement e) {
 }
 ```
 
-## Шаги рефакторинга
-1. Тесты на каждую существующую операцию по всем типам элементов.
-2. Java 21: перевести иерархию на `sealed` и заменить `instanceof`-цепочки на `switch` без `default`. Java < 21: ввести `accept`/`Visitor`, перенести операции по одной.
+## Refactoring steps
+1. Tests on every existing operation across all element types.
+2. Java 21: move the hierarchy to `sealed` and replace the `instanceof` chains with a `switch` without `default`. Java < 21: introduce `accept`/`Visitor`, move the operations one at a time.
 
-## Подводные камни
-- `default` в `switch` или базовый посетитель с пустыми методами по умолчанию отключают проверку полноты. Новый тип молча пройдёт мимо.
-- Посетителю нужен доступ к внутренностям элементов, и это ослабляет инкапсуляцию. Для `record` это естественно.
-- Библиотеки, которые уже на нём построены (JavaParser `VoidVisitorAdapter`, jOOQ, ASM): используй их посетителей, не изобретай свои.
+## Pitfalls
+- A `default` in the `switch` or a base visitor with empty default methods disables the completeness check. A new type silently slips by.
+- The visitor needs access to the elements' internals, which weakens encapsulation. For a `record` that is natural.
+- Libraries already built on it (JavaParser `VoidVisitorAdapter`, jOOQ, ASM): use their visitors, do not invent your own.
 
-## Плюсы и минусы
-**Плюсы**
-- Новая операция добавляется без изменения классов элементов.
-- Логика одной операции собрана в одном классе, а не размазана по элементам.
-- Посетитель может накапливать состояние во время обхода (счётчики, буфер вывода).
+## Pros and cons
+**Pros**
+- A new operation is added without changing the element classes.
+- The logic of one operation is gathered in one class, not smeared across elements.
+- A visitor can accumulate state during the traversal (counters, an output buffer).
 
-**Минусы**
-- Новый тип элемента требует правки всех посетителей.
-- Посетителю нужен доступ к данным элементов, и это ослабляет инкапсуляцию.
-- Много церемоний (`accept` в каждом классе). В Java 21 sealed + `switch` даёт то же короче.
+**Cons**
+- A new element type requires editing every visitor.
+- The visitor needs access to the elements' data, which weakens encapsulation.
+- Lots of ceremony (`accept` in every class). In Java 21 sealed + `switch` gives the same, shorter.
 
-## Связанные паттерны
-Composite (посетитель обходит дерево) · Iterator (обход, к которому применяется посетитель) · Strategy (противоположная ось расширения).
+## Related patterns
+Composite (the visitor traverses a tree) · Iterator (the traversal the visitor is applied to) · Strategy (the opposite axis of extension).

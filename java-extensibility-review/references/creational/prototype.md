@@ -1,33 +1,33 @@
-# Prototype (Прототип)
+# Prototype
 
-Группа: порождающий
+Group: creational
 
-## Суть
-Новый объект создаётся копированием существующего (прототипа), а не сборкой с нуля. Сам объект знает, как правильно себя скопировать, поэтому клиенту не нужно знать его конкретный класс и внутренние поля. В Java `clone()` считается неудачным API. Используй copy-методы, copy-конструкторы, `with`-методы у `record` или `toBuilder()`.
+## Essence
+A new object is created by copying an existing one (the prototype), not by assembling from scratch. The object itself knows how to copy itself correctly, so the client does not need to know its concrete class and internal fields. In Java `clone()` is considered a failed API. Use copy methods, copy constructors, `with` methods on a `record` or `toBuilder()`.
 
-## Структура (участники)
-- **Prototype** — интерфейс или соглашение с методом копирования (`copy…()`).
-- **ConcretePrototype** — сам реализует копирование себя: знает свои поля и что копировать глубоко (`Tariff.copyAsDraft`).
-- **Client** — создаёт новые объекты копированием, не зная конкретного класса.
-- **Prototype Registry** (необязателен) — хранит преднастроенные прототипы по ключу (шаблоны тарифов или документов).
+## Structure (participants)
+- **Prototype** — an interface or convention with a copy method (`copy…()`).
+- **ConcretePrototype** — implements copying itself: knows its fields and what to copy deeply (`Tariff.copyAsDraft`).
+- **Client** — creates new objects by copying, without knowing the concrete class.
+- **Prototype Registry** (optional) — stores preconfigured prototypes by key (tariff or document templates).
 
 ```
 Client ──copy()──▶ «Prototype» ◀── ConcretePrototype
-Registry { "basic" → prototype, "premium" → prototype } ──copy()──▶ новый объект
+Registry { "basic" → prototype, "premium" → prototype } ──copy()──▶ a new object
 ```
 
-## Признаки в Java/Spring коде
-- Фичи «дублировать тариф», «создать документ по шаблону», «копировать настройки проекта».
-- Ручное копирование полей `copy.setX(orig.getX())` в нескольких местах, и при добавлении нового поля его забывают.
-- Реализован `Cloneable` / `clone()`, особенно с изменяемыми полями.
-- Дорогая сборка объекта (загрузка из нескольких источников) повторяется ради небольших вариаций.
+## Signs in Java/Spring code
+- Features like "duplicate a tariff", "create a document from a template", "copy project settings".
+- Manual field copying `copy.setX(orig.getX())` in several places, and a new field gets forgotten.
+- `Cloneable` / `clone()` is implemented, especially with mutable fields.
+- An expensive object assembly (loading from several sources) repeats for small variations.
 
-## Когда не применять
-- Объекты неизменяемые (`record`, value-объекты) — их можно просто разделять. Для вариации хватит `withX(...)`.
-- Простой объект на 2–3 поля.
-- Не путай со Spring `@Scope("prototype")` — это «новый бин на каждый запрос к контейнеру», а не копирование.
+## When not to apply
+- The objects are immutable (`record`, value objects) — they can simply be shared. `withX(...)` is enough for a variation.
+- A simple object with 2–3 fields.
+- Do not confuse it with Spring's `@Scope("prototype")` — that is "a new bean per request to the container", not copying.
 
-## После
+## After
 ```java
 @Entity
 public class Tariff {
@@ -40,7 +40,7 @@ public class Tariff {
 
     protected Tariff() {}
 
-    /** Копия для «дублировать тариф»: без id/version, с глубокой копией опций. */
+    /** A copy for "duplicate tariff": without id/version, with a deep copy of the options. */
     public Tariff copyAsDraft(String newName) {
         var copy = new Tariff();
         copy.name = newName;
@@ -52,36 +52,36 @@ public class Tariff {
     public void addOption(TariffOption o) { options.add(o); o.attachTo(this); }
 }
 ```
-Для `record`: `withName(...)`, `toBuilder()` (Lombok) или MapStruct-маппер `Tariff copy(Tariff source)` с `@Mapping(target = "id", ignore = true)`.
+For a `record`: `withName(...)`, `toBuilder()` (Lombok) or a MapStruct mapper `Tariff copy(Tariff source)` with `@Mapping(target = "id", ignore = true)`.
 
-## Тест, который ловит забытые поля
+## A test that catches forgotten fields
 ```java
 assertThat(copy).usingRecursiveComparison()
         .ignoringFields("id", "version", "name", "options.id", "options.tariff")
         .isEqualTo(original);
 ```
-Когда в класс добавят поле и не скопируют его, тест упадёт.
+When a field is added to the class and not copied, the test fails.
 
-## Шаги рефакторинга
-1. Собрать все места ручного копирования; написать тест на рекурсивное сравнение.
-2. Перенести копирование в сам класс (`copy…`), заменить вызовы.
-3. Убрать `Cloneable`/`clone()`.
+## Refactoring steps
+1. Collect all manual copying sites; write a recursive comparison test.
+2. Move the copying into the class itself (`copy…`), replace the calls.
+3. Remove `Cloneable`/`clone()`.
 
-## Подводные камни
-- Поверхностная копия изменяемых коллекций и объектов: изменения копии видны в оригинале.
-- JPA: копия должна быть новой сущностью — без `id` и `@Version`, с правильно перепривязанными двусторонними связями. Копирование lazy-коллекций вне транзакции даёт `LazyInitializationException`.
-- Что копировать, а что разделять (ссылка на общий справочник или копия), — бизнес-решение. Зафиксируй его в имени метода и в тесте.
+## Pitfalls
+- A shallow copy of mutable collections and objects: changes to the copy are visible in the original.
+- JPA: the copy must be a new entity — without `id` and `@Version`, with bidirectional associations properly rebound. Copying lazy collections outside a transaction gives `LazyInitializationException`.
+- What to copy and what to share (a reference to a shared dictionary or a copy) is a business decision. Pin it in the method name and in the test.
 
-## Плюсы и минусы
-**Плюсы**
-- Копирование без знания конкретного класса и внутренних полей.
-- Нет повторной дорогой инициализации.
-- Удобные преднастроенные шаблоны вместо подклассов под каждую конфигурацию.
+## Pros and cons
+**Pros**
+- Copying without knowing the concrete class and internal fields.
+- No repeated expensive initialization.
+- Handy preconfigured templates instead of a subclass per configuration.
 
-**Минусы**
-- Глубокое копирование графов объектов (циклы, связи, ресурсы) сложно.
-- Каждый класс иерархии должен корректно поддерживать копирование.
-- Для JPA-сущностей нужно явно решать, что делать с id, версией и связями.
+**Cons**
+- Deep copying of object graphs (cycles, associations, resources) is hard.
+- Every class of the hierarchy must support copying correctly.
+- For JPA entities you must decide explicitly what to do with the id, version and associations.
 
-## Связанные паттерны
-Builder (`toBuilder()` — копия с изменениями) · Memento (снимок для восстановления, а не для нового объекта) · Factory Method · Flyweight (разделять вместо копировать).
+## Related patterns
+Builder (`toBuilder()` — a copy with changes) · Memento (a snapshot for restoring, not for a new object) · Factory Method · Flyweight (share instead of copy).

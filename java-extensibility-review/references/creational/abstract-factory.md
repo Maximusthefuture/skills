@@ -1,16 +1,16 @@
-# Abstract Factory (Абстрактная фабрика)
+# Abstract Factory
 
-Группа: порождающий
+Group: creational
 
-## Суть
-Абстрактная фабрика создаёт **семейство** связанных объектов, которые должны работать вместе. Клиент получает одну фабрику (например, «всё для провайдера X») и не может случайно смешать части разных семейств. Новое семейство — новая реализация фабрики.
+## Essence
+An abstract factory creates a **family** of related objects that must work together. The client gets one factory (e.g. "everything for provider X") and cannot accidentally mix parts of different families. A new family is a new factory implementation.
 
-## Структура (участники)
-- **AbstractFactory** — интерфейс с методами получения каждого продукта семейства (`PaymentProviderKit`: `client()`, `mapper()`, `webhookVerifier()`).
-- **ConcreteFactory** — одна реализация на семейство (`StripeKit`, `YooKassaKit`).
-- **AbstractProduct** — интерфейсы видов продуктов (`PaymentClient`, `PaymentMapper`).
-- **ConcreteProduct** — продукты конкретного семейства. Совместимы только между собой.
-- **Client** — работает только с абстракциями и получает всё семейство из одной фабрики.
+## Structure (participants)
+- **AbstractFactory** — an interface with methods to get each product of the family (`PaymentProviderKit`: `client()`, `mapper()`, `webhookVerifier()`).
+- **ConcreteFactory** — one implementation per family (`StripeKit`, `YooKassaKit`).
+- **AbstractProduct** — interfaces of the product kinds (`PaymentClient`, `PaymentMapper`).
+- **ConcreteProduct** — products of a concrete family. Compatible only with each other.
+- **Client** — works only with abstractions and gets the whole family from one factory.
 
 ```
 «interface» AbstractFactory: createA(), createB()
@@ -19,27 +19,27 @@
    → StripeA, StripeB         → YooA, YooB
 ```
 
-## Признаки в Java/Spring коде
-- Несколько `switch (provider)` / `switch (country)` / `switch (tenant)` в разных местах выбирают объекты, которые должны совпадать: клиент API, маппер ответов, проверка подписи вебхука, формат номера документа.
-- Возможна ошибка «клиент провайдера A + маппер провайдера B».
-- Подключение нового провайдера или страны требует правок в 4–5 местах.
-- Мультитенантность или мультирегиональность с наборами реализаций на регион.
+## Signs in Java/Spring code
+- Several `switch (provider)` / `switch (country)` / `switch (tenant)` in different places choose objects that must match: the API client, the response mapper, the webhook signature check, the document number format.
+- An error "provider A's client + provider B's mapper" is possible.
+- Connecting a new provider or country requires edits in 4–5 places.
+- Multitenancy or multiregion setups with a set of implementations per region.
 
-## Когда не применять
-- На один деплой активно ровно одно семейство → `@Profile` / `@ConditionalOnProperty` на `@Configuration`: контейнер Spring сам работает как абстрактная фабрика.
-- «Семейство» из одного объекта → Strategy.
-- Набор видов продуктов часто меняется: добавление нового вида меняет интерфейс фабрики и все реализации.
+## When not to apply
+- Exactly one family is active per deployment → `@Profile` / `@ConditionalOnProperty` on a `@Configuration`: the Spring container itself works as the abstract factory.
+- A "family" of one object → Strategy.
+- The set of product kinds changes often: adding a new kind changes the factory interface and all implementations.
 
-## До
+## Before
 ```java
 PaymentClient client = switch (provider) { case STRIPE -> stripeClient; case YOOKASSA -> yooClient; };
-// … в другом сервисе
+// … in another service
 PaymentMapper mapper = switch (provider) { case STRIPE -> new StripeMapper(); case YOOKASSA -> new YooMapper(); };
-// … в контроллере вебхуков
+// … in the webhook controller
 WebhookVerifier verifier = switch (provider) { … };
 ```
 
-## После — семейство как один бин
+## After — the family as one bean
 ```java
 public interface PaymentProviderKit {
     Provider provider();
@@ -61,12 +61,12 @@ class StripeKit implements PaymentProviderKit {
     public WebhookVerifier webhookVerifier() { return verifier; }
 }
 
-// реестр по Provider — как в ../behavioral/strategy.md (List → EnumMap + проверка полноты)
+// a registry by Provider — as in ../behavioral/strategy.md (List → EnumMap + a completeness check)
 var kit = kits.get(order.provider());
 var response = kit.client().charge(kit.mapper().toRequest(order));
 ```
 
-## После — одно семейство на деплой
+## After — one family per deployment
 ```java
 @Configuration
 @ConditionalOnProperty(name = "region", havingValue = "eu")
@@ -75,28 +75,28 @@ class EuConfig {
     @Bean AddressFormatter addressFormatter() { return new EuAddressFormatter(); }
     @Bean InvoiceNumbering invoiceNumbering() { return new EuInvoiceNumbering(); }
 }
-// RuConfig с havingValue = "ru" — то же семейство для другого региона
+// RuConfig with havingValue = "ru" — the same family for another region
 ```
 
-## Шаги рефакторинга
-1. Найти все `switch` по одному признаку: `find_referencing_symbols` по enum провайдера, страны или тенанта (или Grep).
-2. Определить, какие объекты всегда выбираются вместе — это и есть семейство.
-3. Ввести интерфейс семейства и реализацию на каждый вариант; заменить `switch` получением семейства из реестра.
+## Refactoring steps
+1. Find all `switch` blocks on the same discriminator: `find_referencing_symbols` on the provider, country or tenant enum (or Grep).
+2. Determine which objects are always chosen together — that is the family.
+3. Introduce the family interface and an implementation per variant; replace the `switch` blocks with getting the family from a registry.
 
-## Подводные камни
-- Kit, превращающийся в Service Locator: если в нём 10 методов и клиенты используют по одному, лучше несколько отдельных стратегий.
-- Части семейства часто разделяют конфигурацию (URL, ключи). Свяжи их через `@ConfigurationProperties` провайдера.
+## Pitfalls
+- A kit turning into a Service Locator: if it has 10 methods and clients use one each, several separate strategies are better.
+- Parts of a family often share configuration (URLs, keys). Tie them together through the provider's `@ConfigurationProperties`.
 
-## Плюсы и минусы
-**Плюсы**
-- Продукты одного семейства гарантированно совместимы.
-- Клиент отвязан от конкретных классов.
-- Новое семейство (провайдер, регион) добавляется без изменения клиента.
+## Pros and cons
+**Pros**
+- Products of one family are guaranteed to be compatible.
+- The client is decoupled from concrete classes.
+- A new family (provider, region) is added without changing the client.
 
-**Минусы**
-- Новый *вид* продукта меняет интерфейс фабрики и все её реализации.
-- Много классов и интерфейсов.
-- Без дисциплины фабрика превращается в Service Locator.
+**Cons**
+- A new *kind* of product changes the factory interface and all its implementations.
+- Many classes and interfaces.
+- Without discipline the factory turns into a Service Locator.
 
-## Связанные паттерны
-Factory Method (один продукт) · Strategy (семейство из одного) · Bridge · Facade (может скрывать семейство за простым API).
+## Related patterns
+Factory Method (one product) · Strategy (a family of one) · Bridge · Facade (can hide a family behind a simple API).

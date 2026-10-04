@@ -1,15 +1,15 @@
-# Observer (Наблюдатель)
+# Observer
 
-Группа: поведенческий
+Group: behavioral
 
-## Суть
-Объект публикует событие «что-то произошло» и не знает, кто на него реагирует. Подписчики добавляются, не трогая издателя. В Spring это `ApplicationEventPublisher` + `@EventListener` / `@TransactionalEventListener` внутри приложения, а между сервисами — брокер (Kafka, RabbitMQ).
+## Essence
+An object publishes an event "something happened" and does not know who reacts to it. Subscribers are added without touching the publisher. In Spring this is `ApplicationEventPublisher` + `@EventListener` / `@TransactionalEventListener` inside the application, and a broker (Kafka, RabbitMQ) between services.
 
-## Структура (участники)
-- **Publisher (Subject)** — объект, в котором происходит событие. Публикует его и не знает подписчиков (`OrderService` + `ApplicationEventPublisher`).
-- **Event** — неизменяемое сообщение о том, что произошло (`OrderCreated`).
-- **Subscriber (Listener)** — интерфейс или метод реакции (`@EventListener`, `@TransactionalEventListener`).
-- **ConcreteSubscribers** — реакции: письмо, аудит, аналитика. Регистрирует их контейнер Spring, а не издатель вручную.
+## Structure (participants)
+- **Publisher (Subject)** — the object where the event happens. Publishes it and does not know the subscribers (`OrderService` + `ApplicationEventPublisher`).
+- **Event** — an immutable message about what happened (`OrderCreated`).
+- **Subscriber (Listener)** — the reaction interface or method (`@EventListener`, `@TransactionalEventListener`).
+- **ConcreteSubscribers** — the reactions: an email, audit, analytics. The Spring container registers them, not the publisher by hand.
 
 ```
 Publisher ──publish(event)──▶ ApplicationEventMulticaster ──▶ ListenerA
@@ -17,8 +17,8 @@ Publisher ──publish(event)──▶ ApplicationEventMulticaster ──▶ Li
                                                          └──▶ ListenerC
 ```
 
-## Признаки в Java/Spring коде
-- После основного действия идёт хвост побочных эффектов:
+## Signs in Java/Spring code
+- The main action is followed by a tail of side effects:
   ```java
   orderRepository.save(order);
   emailService.sendConfirmation(order);
@@ -26,15 +26,15 @@ Publisher ──publish(event)──▶ ApplicationEventMulticaster ──▶ Li
   analyticsClient.track(order);
   loyaltyService.addPoints(order);
   ```
-- Каждая новая реакция на «заказ создан» требует правки `OrderService`.
-- Конструктор сервиса принимает много не связанных с его задачей зависимостей.
-- Модули знают друг о друге только ради уведомлений.
+- Every new reaction to "order created" requires editing `OrderService`.
+- The service constructor takes many dependencies unrelated to its job.
+- Modules know about each other only for notifications.
 
-## Когда не применять
-- Эффект — часть бизнес-инварианта (списать остаток на складе при создании заказа). Он должен быть явным вызовом в той же транзакции, а не реакцией, которую легко потерять.
-- Нужен результат реакции (вернуть ответ клиенту) — это обычный вызов.
+## When not to apply
+- The effect is part of a business invariant (deducting stock when an order is created). It must be an explicit call in the same transaction, not a reaction that is easy to lose.
+- The reaction's result is needed (to answer the client) — that is a plain call.
 
-## После
+## After
 ```java
 public record OrderCreated(UUID orderId, UUID customerId, BigDecimal total) {}
 
@@ -61,36 +61,36 @@ class OrderConfirmationEmail {
     void on(OrderCreated e) { email.sendConfirmation(e.orderId()); }
 }
 ```
-Новая реакция — новый класс со слушателем. `OrderService` не меняется.
+A new reaction is a new class with a listener. `OrderService` does not change.
 
-## Надёжность — обязательно упомяни в рекомендации
-- `@EventListener` синхронный и работает внутри транзакции издателя. Исключение в слушателе откатит создание заказа.
-- `@TransactionalEventListener(AFTER_COMMIT)` срабатывает после коммита, но событие живёт только в памяти: если процесс упадёт, реакция потеряется. Для денег и внешних систем нужен outbox (таблица событий в той же транзакции) или Spring Modulith Event Publication Registry.
-- Внутри `AFTER_COMMIT` транзакции уже нет. Если слушателю нужно писать в БД, используй `@Transactional(propagation = REQUIRES_NEW)`.
-- `@Async` на слушателе убирает задержку из запроса, но требует своего пула потоков и решения про потерю событий при рестарте.
-- Событие — неизменяемый `record` с идентификаторами, а не JPA-сущность: сущность может быть detached или lazy.
+## Reliability — always mention it in the recommendation
+- `@EventListener` is synchronous and runs inside the publisher's transaction. An exception in the listener rolls back the order creation.
+- `@TransactionalEventListener(AFTER_COMMIT)` fires after the commit, but the event lives only in memory: if the process dies, the reaction is lost. Money and external systems need an outbox (an event table in the same transaction) or the Spring Modulith Event Publication Registry.
+- Inside `AFTER_COMMIT` there is no transaction anymore. If the listener must write to the DB, use `@Transactional(propagation = REQUIRES_NEW)`.
+- `@Async` on a listener removes the latency from the request but needs its own thread pool and a decision about losing events on restart.
+- An event is an immutable `record` with identifiers, not a JPA entity: an entity may be detached or lazy.
 
-## Шаги рефакторинга
-1. Определи, какие эффекты — инварианты (остаются явными), а какие — реакции.
-2. Введи событие-`record`, опубликуй его рядом с текущими вызовами.
-3. Переноси реакции в слушатели по одной, выбирая фазу и синхронность.
-4. Тест: публикация события (`@RecordApplicationEvents` в Spring Test) и отдельный тест каждого слушателя.
+## Refactoring steps
+1. Decide which effects are invariants (they stay explicit) and which are reactions.
+2. Introduce an event `record`, publish it next to the current calls.
+3. Move the reactions into listeners one at a time, choosing the phase and synchronicity.
+4. Tests: event publication (`@RecordApplicationEvents` in Spring Test) and a separate test per listener.
 
-## Подводные камни
-- Неявный поток управления: по `OrderService` больше не видно, что отправляется письмо. Называй события в прошедшем времени, а слушатели — по реакции.
-- Цепочки событий (слушатель публикует следующее событие) быстро становятся нечитаемыми. Если появился процесс, нужен `mediator.md`.
+## Pitfalls
+- Implicit control flow: `OrderService` no longer shows that an email is sent. Name events in the past tense and listeners after the reaction.
+- Event chains (a listener publishes the next event) quickly become unreadable. Once a process appears, you need `mediator.md`.
 
-## Плюсы и минусы
-**Плюсы**
-- Издатель не зависит от подписчиков; новая реакция не требует его правки (Open/Closed).
-- Реакции можно добавлять из других модулей.
-- Связи устанавливаются в рантайме и конфигурацией.
+## Pros and cons
+**Pros**
+- The publisher does not depend on subscribers; a new reaction does not require editing it (Open/Closed).
+- Reactions can be added from other modules.
+- Links are established at runtime and by configuration.
 
-**Минусы**
-- Поток управления неявный: по издателю не видно, что произойдёт.
-- Порядок уведомлений не очевиден (нужен `@Order`).
-- Ошибки и транзакционность: синхронный слушатель может откатить транзакцию издателя, а асинхронный — потерять событие.
-- Цепочки событий быстро становятся нечитаемыми.
+**Cons**
+- Implicit control flow: the publisher does not show what will happen.
+- The notification order is not obvious (`@Order` is needed).
+- Errors and transactions: a synchronous listener can roll back the publisher's transaction, an asynchronous one can lose the event.
+- Event chains quickly become unreadable.
 
-## Связанные паттерны
-Mediator (координатор, который знает участников) · Command (событие против команды: «произошло» против «сделай») · State (события на смену статуса).
+## Related patterns
+Mediator (a coordinator that knows the participants) · Command (event vs command: "happened" vs "do it") · State (events on a status change).

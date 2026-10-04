@@ -1,125 +1,125 @@
 ---
 name: java-code-review
-description: Локальное ревью изменений в Java / Spring Boot проекте (git diff ветки, отдельный файл, диапазон коммитов или GitHub PR) с проверкой каждой находки по коду и оценкой уверенности. Use this skill whenever the user asks to review, check or audit code changes in a Java, Kotlin-free JVM or Spring project, even casually - "сделай ревью", "проверь мои изменения", "посмотри diff перед PR", "что не так с этой веткой", "review my changes", "check this PR", "code review", "/java-code-review", or before committing, pushing or opening a pull request. Also use it with "--fix" to apply the fixes it finds. Covers correctness, null-safety, concurrency, Spring and JPA/Hibernate pitfalls, transactions, security, API contracts, performance and the project's own CLAUDE.md rules.
+description: "Local review of changes in a Java / Spring Boot project — instead of the built-in code-review for Java: a branch's git diff, a single file, a commit range or a GitHub PR, with every finding checked against the code and a confidence score. Use this skill whenever the user asks to review, check or audit code changes in a Java, Kotlin-free JVM or Spring project, even casually - \"review my changes\", \"check this PR\", \"code review\", «сделай ревью», «проверь мои изменения», «посмотри diff перед PR», «что не так с этой веткой», \"/java-code-review\", or before committing, pushing or opening a pull request. Also use it with \"--fix\" to apply the fixes it finds. Covers correctness, null-safety, concurrency, Spring and JPA/Hibernate pitfalls, transactions, security, API contracts, performance and the project's own CLAUDE.md rules."
 compatibility: Claude Code (or any agent with bash and file read access) in a git repository. gh CLI is optional and needed only for reviewing GitHub PRs by number.
 ---
 
 # Java Code Review
 
-Ревью изменений в Java / Spring Boot проекте. Цель — найти немного, но настоящих проблем: баги, регрессии, дыры в безопасности и нарушения правил проекта. Ревью, которое выдаёт 30 замечаний про стиль, никто не читает, поэтому здесь важнее точность, чем полнота.
+Review of changes in a Java / Spring Boot project. The goal is to find few but real problems: bugs, regressions, security holes and violations of the project's rules. A review with 30 style remarks is read by nobody, so precision matters more than completeness here.
 
-## 1. Определи, что ревьюить
+## 1. Decide what to review
 
-Разбери аргументы из запроса пользователя:
+Parse the arguments from the user's request:
 
-| Запрос | Что ревьюить |
+| Request | What to review |
 |---|---|
-| без аргументов | ветка относительно upstream (или main/master) + незакоммиченные и staged изменения |
-| путь к файлу | только этот файл: его diff, а если diff пуст — файл целиком |
-| `A...B` или `A..B` | `git diff A...B` |
-| число (`123`, `#123`) | GitHub PR: `gh pr diff 123` и `gh pr view 123` |
-| `--staged` | только `git diff --cached` (удобно для pre-commit) |
-| `--fix` | после ревью исправить находки (см. раздел 6) |
+| no arguments | the branch against upstream (or main/master) + uncommitted and staged changes |
+| a file path | only that file: its diff, and if the diff is empty — the whole file |
+| `A...B` or `A..B` | `git diff A...B` |
+| a number (`123`, `#123`) | a GitHub PR: `gh pr diff 123` and `gh pr view 123` |
+| `--staged` | only `git diff --cached` (handy for pre-commit) |
+| `--fix` | fix the findings after the review (see section 6) |
 
-Для сбора diff используй `scripts/collect_diff.sh` — он находит базу, отфильтровывает сгенерированные файлы и печатает список изменённых файлов и сам diff:
+Collect the diff with `scripts/collect_diff.sh` — it finds the base (an empty tree in a repository without commits), filters out generated files and prints the list of changed files and the diff itself:
 
 ```bash
-bash <путь-к-скиллу>/scripts/collect_diff.sh            # по умолчанию
-bash <путь-к-скиллу>/scripts/collect_diff.sh main...feature
-bash <путь-к-скиллу>/scripts/collect_diff.sh --staged
+bash <skill-path>/scripts/collect_diff.sh            # default
+bash <skill-path>/scripts/collect_diff.sh main...feature
+bash <skill-path>/scripts/collect_diff.sh --staged
 ```
 
-Если diff пустой — скажи об этом и остановись, не выдумывай замечаний.
-Если diff огромный (больше ~3000 строк), сначала покажи пользователю список файлов и предложи сузить область или ревьюить по модулям.
+The diff is empty — say so and stop, do not invent remarks.
+The diff is huge (more than ~3000 lines) — first show the user the file list and propose narrowing the scope or reviewing module by module.
 
-## 2. Собери контекст проекта
+## 2. Collect the project context
 
-Прежде чем судить о коде, узнай правила, по которым он написан:
+Before judging the code, learn the rules it is written by:
 
-- `CLAUDE.md` в корне и в каталогах изменённых файлов — это правила проекта, их нарушения считаются полноценными находками.
-- `pom.xml` / `build.gradle(.kts)`: версия Java (от неё зависит, уместны ли records, sealed, pattern matching, virtual threads), версия Spring Boot (2.x — `javax.*`, 3.x — `jakarta.*`), используемые библиотеки (Lombok, MapStruct, Flyway/Liquibase, Testcontainers).
-- Конфиги линтеров и форматтера (Checkstyle, Spotless, PMD, ErrorProne). То, что они уже ловят, не дублируй.
+- `CLAUDE.md` at the root and in the directories of changed files — these are the project's rules, and their violations are full findings.
+- `pom.xml` / `build.gradle(.kts)`: the Java version (decides whether records, sealed, pattern matching, virtual threads fit), the Spring Boot version (2.x — `javax.*`, 3.x — `jakarta.*`), the libraries in use (Lombok, MapStruct, Flyway/Liquibase, Testcontainers).
+- Linter and formatter configs (Checkstyle, Spotless, PMD, ErrorProne). Do not duplicate what they already catch.
 
-Diff показывает только изменённые строки, а большинство серьёзных багов видно лишь в контексте. Для каждого изменённого метода открой файл целиком и найди вызывающий код (`grep -rn "имяМетода(" src/`), особенно если менялась сигнатура, контракт, nullability, исключения или поведение транзакций.
+The diff shows only changed lines, and most serious bugs are visible only in context. For every changed method open the whole file and find the calling code (`grep -rn "methodName(" src/`), especially if the signature, contract, nullability, exceptions or transaction behavior changed.
 
-## 3. Пройдись по областям
+## 3. Go through the areas
 
-Для каждого изменённого файла проверь по порядку. Подробные чек-листы — в `references/`; открывай нужный, когда в diff есть соответствующий код, а не все сразу.
+For every changed file check in order. Detailed checklists are in `references/`; open the one you need when the diff has the matching code, not all at once.
 
-1. **Корректность** — логика, граничные случаи, null, equals/hashCode, исключения, ресурсы. → `references/java-core.md`
-2. **Конкурентность** — общее изменяемое состояние в синглтонах, `@Async`, пулы потоков, гонки. → `references/java-core.md`
-3. **Spring** — бины, транзакции, прокси и self-invocation, конфигурация, валидация. → `references/spring-jpa.md`
-4. **Персистентность** — N+1, lazy loading вне транзакции, миграции, блокировки. → `references/spring-jpa.md`
-5. **Безопасность** — инъекции, авторизация на эндпоинтах, секреты, логирование PII, десериализация. → `references/security.md`
-6. **Контракты API** — обратная совместимость REST/DTO/событий, коды ответов, версионирование.
-7. **Тесты** — покрыто ли новое поведение. Если в окружении есть скилл `test-audit`, качество самих тестов оценивай по нему, а здесь только отметь отсутствие тестов на рискованную логику.
-8. **Правила проекта** — всё, что явно требует CLAUDE.md.
+1. **Correctness** — logic, edge cases, null, equals/hashCode, exceptions, resources. → `references/java-core.md`
+2. **Concurrency** — shared mutable state in singletons, `@Async`, thread pools, races. → `references/java-core.md`
+3. **Spring** — beans, transactions, proxies and self-invocation, configuration, validation. → `references/spring-jpa.md`
+4. **Persistence** — N+1, lazy loading outside a transaction, migrations, locks. → `references/spring-jpa.md`
+5. **Security** — injections, endpoint authorization, secrets, logging PII, deserialization. → `references/security.md`
+6. **API contracts** — backward compatibility of REST/DTOs/events, response codes, versioning.
+7. **Tests** — is the new behavior covered. If the environment has the `test-audit` skill, judge the quality of the tests themselves by it, and here only note missing tests for risky logic.
+8. **Project rules** — everything CLAUDE.md explicitly demands.
 
-Не ищи проблем в коде, который не менялся, если только изменение не ломает его (например, новый вызов старого метода с null).
+Do not look for problems in unchanged code unless the change breaks it (e.g. a new call of an old method with null).
 
-## 4. Проверь каждую находку и оцени уверенность
+## 4. Check every finding and estimate confidence
 
-Это самый важный шаг: каждое потенциальное замечание перед выводом нужно попытаться опровергнуть.
+This is the most important step: before reporting, try to refute every potential remark.
 
-- Открой код, на который ссылаешься, и убедись, что строка и поведение именно такие.
-- Проверь, не обработан ли случай выше по стеку (валидация в контроллере, `@NotNull`, глобальный `@ControllerAdvice`, фильтр безопасности).
-- Для «возможного NPE» найди, откуда реально приходит значение.
-- Если можно дёшево проверить запуском — проверь: `./mvnw -q -DskipTests compile`, `./gradlew compileJava`, или прогон одного теста.
+- Open the code you refer to and make sure the line and the behavior are exactly so.
+- Check whether the case is handled higher up the stack (validation in the controller, `@NotNull`, a global `@ControllerAdvice`, a security filter).
+- For a "possible NPE", find where the value really comes from.
+- If a run can check it cheaply — check: `./mvnw -q -DskipTests compile`, `./gradlew compileJava`, or a single test run.
 
-Затем поставь уверенность от 0 до 100:
+Then assign a confidence from 0 to 100:
 
-- **90–100** — подтверждено кодом или запуском, ясно, как воспроизвести.
-- **80–89** — очень вероятно, контекст проверен, остаётся небольшая неизвестность.
-- **50–79** — правдоподобно, но не проверено до конца.
-- **ниже 50** — догадка.
+- **90–100** — confirmed by the code or a run, clear how to reproduce.
+- **80–89** — very likely, the context is checked, a little uncertainty remains.
+- **50–79** — plausible but not fully checked.
+- **below 50** — a guess.
 
-В отчёт попадают только находки с уверенностью **80 и выше**. Находки 50–79 собери одной короткой строкой в раздел «Стоит перепроверить» (максимум 5). Остальное отбрось.
+Only findings with confidence **80 and above** go into the report. Collect findings at 50–79 as one short line each in "Worth rechecking" (at most 5). Drop the rest.
 
-Не включай в отчёт: стилистику, которую ловит форматтер; вкусовые предпочтения без явного правила в CLAUDE.md; «можно было бы использовать Optional/stream»; уже существовавшие до diff проблемы; гипотетические проблемы без конкретного сценария.
+Do not include: style a formatter catches; taste without an explicit rule in CLAUDE.md; "could have used Optional/stream"; problems that existed before the diff; hypothetical problems without a concrete scenario.
 
-## 5. Оформи отчёт
+## 5. Write the report
 
-Пиши на языке пользователя. Используй этот шаблон:
+Write in the user's language. Use this template:
 
 ```markdown
-## Ревью: <что ревьюили, напр. "feature/payments vs origin/main, 14 файлов">
+## Review: <what was reviewed, e.g. "feature/payments vs origin/main, 14 files">
 
-**Итог:** <одно предложение: можно ли мержить и что блокирует>
+**Verdict:** <one sentence: can it be merged and what blocks it>
 
-### 🔴 Блокирующие
-**1. <короткое название>** — `src/main/java/.../OrderService.java:142` · уверенность 95
-<что не так и при каком сценарии сломается, 1–3 предложения>
-<как исправить: конкретно, при необходимости короткий фрагмент кода>
+### 🔴 Blocking
+**1. <short title>** — `src/main/java/.../OrderService.java:142` · confidence 95
+<what is wrong and in which scenario it breaks, 1–3 sentences>
+<how to fix: concretely, a short code fragment if needed>
 
-### 🟡 Важные
+### 🟡 Important
 ...
 
-### 🔵 Улучшения
-(только если реально стоят внимания; не больше 3)
+### 🔵 Improvements
+(only if they are really worth attention; at most 3)
 
-### Стоит перепроверить
-- `File.java:88` — <одна строка>
+### Worth rechecking
+- `File.java:88` — <one line>
 
-### Что сделано хорошо
-<1–2 предложения, только если есть что-то конкретное>
+### Done well
+<1–2 sentences, only if there is something concrete>
 ```
 
-Критерии серьёзности:
-- 🔴 **Блокирующие** — баг, потеря или порча данных, уязвимость, ломающее изменение контракта, нарушение обязательного правила CLAUDE.md.
-- 🟡 **Важные** — проблема проявится в реалистичных условиях (нагрузка, конкурентность, пограничные данные), отсутствие тестов на рискованную логику.
-- 🔵 **Улучшения** — заметное упрощение или производительность без бага.
+Severity criteria:
+- 🔴 **Blocking** — a bug, data loss or corruption, a vulnerability, a breaking contract change, a violation of a mandatory CLAUDE.md rule.
+- 🟡 **Important** — the problem shows up under realistic conditions (load, concurrency, edge data), missing tests for risky logic.
+- 🔵 **Improvements** — a notable simplification or performance gain without a bug.
 
-Если находок нет — так и напиши, коротко, и перечисли, что именно проверил. Пустое ревью — нормальный результат.
+No findings — say so briefly and list what exactly you checked. An empty review is a normal result.
 
-## 6. Режим `--fix`
+## 6. `--fix` mode
 
-Если пользователь передал `--fix` или после отчёта попросил исправить:
+If the user passed `--fix` or asked to fix after the report:
 
-1. Исправляй только находки с уверенностью 80+, начиная с блокирующих. Улучшения — только если пользователь попросил.
-2. Каждое исправление — минимальное, без попутного рефакторинга.
-3. После правок запусти сборку и тесты затронутых модулей (`./mvnw -q test -pl <module>` или `./gradlew :<module>:test`). Если тестов на исправленное поведение нет и это блокирующая находка — добавь тест.
-4. Не коммить и не пушь — покажи итоговый `git diff` и коротко перечисли, что исправлено, а что нет и почему.
+1. Fix only findings with confidence 80+, starting with blocking ones. Improvements — only if the user asked.
+2. Every fix is minimal, without side refactoring.
+3. After the edits run the build and the tests of the affected modules (`./mvnw -q test -pl <module>` or `./gradlew :<module>:test`). If there are no tests for the fixed behavior and the finding is blocking — add a test.
+4. Do not commit or push — show the final `git diff` and briefly list what was fixed and what was not and why.
 
-## 7. Режим PR (`--comment`)
+## 7. PR mode (`--comment`)
 
-Если пользователь просит оставить комментарии в GitHub PR, сначала покажи отчёт, затем спроси подтверждение и только после него публикуй через `gh pr review <номер> --comment --body-file <файл>`. Никогда не используй `--approve` или `--request-changes` без явной просьбы.
+If the user asks to leave comments on a GitHub PR, first show the report, then ask for confirmation and only then publish via `gh pr review <number> --comment --body-file <file>`. Never use `--approve` or `--request-changes` without an explicit request.

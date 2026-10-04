@@ -1,37 +1,37 @@
-# Flyweight (Легковес)
+# Flyweight
 
-Группа: структурный
+Group: structural
 
-## Суть
-Когда в памяти много объектов, у которых большая часть состояния одинакова, это общее неизменяемое состояние (внутреннее) хранится в одном экземпляре и разделяется. Уникальное (внешнее) состояние хранится отдельно или передаётся в методы. Это оптимизация памяти, а не расширяемости. В ревью она уместна только при подтверждённой проблеме.
+## Essence
+When memory holds many objects whose state is mostly the same, that shared immutable state (intrinsic) is stored in one instance and shared. The unique (extrinsic) state is stored separately or passed into methods. This is a memory optimization, not an extensibility one. In a review it fits only when the problem is confirmed.
 
-## Структура (участники)
-- **Flyweight** — неизменяемый объект с внутренним (разделяемым) состоянием, одинаковым для многих контекстов (`Category`).
-- **Extrinsic state** — внешнее, уникальное состояние. Хранится в контексте или передаётся в методы (id строки, сумма).
-- **FlyweightFactory** — кэш или пул: по ключу возвращает существующий экземпляр или создаёт новый (`CategoryFlyweights`).
-- **Context / Client** — хранит внешнее состояние и ссылку на общий легковес (`SaleLine`).
+## Structure (participants)
+- **Flyweight** — an immutable object with intrinsic (shared) state, the same for many contexts (`Category`).
+- **Extrinsic state** — the external, unique state. Stored in the context or passed into methods (a row id, an amount).
+- **FlyweightFactory** — a cache or pool: returns the existing instance by key or creates a new one (`CategoryFlyweights`).
+- **Context / Client** — holds the extrinsic state and a reference to the shared flyweight (`SaleLine`).
 
 ```
-Client ──get(key)──▶ FlyweightFactory ──кэш──▶ Flyweight (один на key, разделяется)
+Client ──get(key)──▶ FlyweightFactory ──cache──▶ Flyweight (one per key, shared)
 Context { extrinsic: id, amount;  flyweight ──▶ Flyweight }
 ```
 
-## Признаки в Java/Spring коде
-- Heap dump или профайлер показывают миллионы экземпляров одного класса с повторяющимися значениями (одинаковые строки, справочные объекты, стили).
-- Обработка больших файлов или потоков в памяти: каждая из миллиона строк держит свою копию справочных данных (валюта, тип, категория с описанием).
-- Массовое создание одинаковых value-объектов в горячем цикле (`new Currency("RUB", …)` на каждой итерации).
-- OOM или долгие GC-паузы на пакетной обработке.
+## Signs in Java/Spring code
+- A heap dump or profiler shows millions of instances of one class with repeating values (identical strings, reference objects, styles).
+- Processing big files or streams in memory: each of a million rows holds its own copy of reference data (currency, type, a category with a description).
+- Mass creation of identical value objects in a hot loop (`new Currency("RUB", …)` on every iteration).
+- OOM or long GC pauses during batch processing.
 
-## Когда не применять
-- Нет данных профилирования — это преждевременная оптимизация. В типичном CRUD-бэкенде почти никогда не нужно.
-- Объекты изменяемые — разделять их нельзя.
+## When not to apply
+- There is no profiling data — it is a premature optimization. A typical CRUD backend almost never needs it.
+- The objects are mutable — they cannot be shared.
 
-## Что уже есть в Java
-`Integer.valueOf` / `Boolean.valueOf` (кэш), enum (идеальный легковес), `Currency.getInstance`, `String`-литералы и `String.intern()` (с осторожностью), дедупликация строк в G1 (`-XX:+UseStringDeduplication`). Сначала проверь, не решает ли проблему замена на enum или на ссылку по id.
+## What Java already has
+`Integer.valueOf` / `Boolean.valueOf` (a cache), enums (the ideal flyweight), `Currency.getInstance`, `String` literals and `String.intern()` (with care), string deduplication in G1 (`-XX:+UseStringDeduplication`). First check whether replacing with an enum or a reference by id solves the problem.
 
-## После
+## After
 ```java
-public record Category(String code, String title, String description) {}   // неизменяемый
+public record Category(String code, String title, String description) {}   // immutable
 
 @Component
 class CategoryFlyweights {
@@ -41,33 +41,33 @@ class CategoryFlyweights {
     CategoryFlyweights(CategoryRepository repo) { this.repo = repo; }
 
     Category get(String code) {
-        return cache.get(code, repo::loadByCode);   // один экземпляр на code
+        return cache.get(code, repo::loadByCode);   // one instance per code
     }
 }
 
-// при разборе файла на 5 млн строк — ссылка на общий объект, а не копия
+// when parsing a file of 5 million rows — a reference to a shared object, not a copy
 record SaleLine(long id, BigDecimal amount, Category category) {}
 ```
 
-## Шаги
-1. Подтвердить проблему: heap histogram (`jcmd <pid> GC.class_histogram`), JFR, VisualVM.
-2. Выделить неизменяемую разделяемую часть, сделать фабрику с кэшем.
-3. Повторно измерить. Если выигрыша нет, откатить.
+## Steps
+1. Confirm the problem: a heap histogram (`jcmd <pid> GC.class_histogram`), JFR, VisualVM.
+2. Extract the immutable shared part, make a factory with a cache.
+3. Measure again. No gain — roll back.
 
-## Подводные камни
-- Неограниченный кэш легковесов — утечка памяти. Используй Caffeine с лимитом или enum.
-- Разделяемый объект обязан быть неизменяемым, иначе изменение «одной» строки поменяет все.
-- Конкурентный доступ к фабрике: `ConcurrentHashMap.computeIfAbsent` или Caffeine, без ручного `synchronized`.
+## Pitfalls
+- An unbounded flyweight cache is a memory leak. Use Caffeine with a limit, or an enum.
+- A shared object must be immutable, otherwise changing "one" row changes them all.
+- Concurrent access to the factory: `ConcurrentHashMap.computeIfAbsent` or Caffeine, no hand-written `synchronized`.
 
-## Плюсы и минусы
-**Плюсы**
-- Экономия памяти при огромном количестве похожих объектов.
+## Pros and cons
+**Pros**
+- Memory savings with a huge number of similar objects.
 
-**Минусы**
-- Усложнение кода: состояние разделено на внутреннее и внешнее.
-- CPU на поиск в кэше и передачу внешнего состояния.
-- Строгое требование неизменяемости разделяемых объектов.
-- Имеет смысл только при доказанной профилированием проблеме.
+**Cons**
+- More complex code: state is split into intrinsic and extrinsic.
+- CPU spent on cache lookups and passing extrinsic state.
+- A strict immutability requirement for shared objects.
+- Makes sense only when profiling has proven the problem.
 
-## Связанные паттерны
-Factory Method (фабрика легковесов) · Composite (разделяемые листья дерева) · Singleton (один экземпляр, а не много разделяемых).
+## Related patterns
+Factory Method (the flyweight factory) · Composite (shared tree leaves) · Singleton (one instance, not many shared ones).

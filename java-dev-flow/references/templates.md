@@ -1,139 +1,141 @@
-# Шаблоны артефактов
+# Artifact templates
 
-**Открывай, когда:** пишешь дизайн-резюме (фаза 2), план L-задачи (фаза 3) или итоговый отчёт (фаза 6).
+**Open when:** you write a design summary (phase 2), an L-task plan (phase 3) or the final report (phase 6).
 
-Артефакт нужен не для красоты. Он закрывает фазу, и по нему видно, что фаза пройдена. Ещё его можно передать субагенту, и тот не будет заново выводить контекст.
+An artifact is not decoration. It closes a phase and shows that the phase was done. It can also be handed to a subagent, so it does not have to rebuild the context.
 
----
-
-## Строка классификации (фаза 0)
-
-```
-Маршрут: <фича | изменение | багфикс | рефакторинг | схема | производительность> · <S | M | L> · сигналы: <признаки> → <скиллы>
-```
-
-Примеры:
-
-```
-Маршрут: изменение · S · сигналов нет → java-tdd
-Маршрут: фича · M · сигналы: новая таблица, список с фильтром → data-modeling-discipline, migration-safety, query-discipline
-Маршрут: багфикс (локальный) · S · сигналы: @Transactional → jpa-and-transactions
-Маршрут: фича · L · сигналы: webhook, платёж, новая таблица, роли → idempotency-and-side-effects, data-modeling-discipline, migration-safety, auth-and-authorization
-```
+The templates fix the structure. Write the text and headings in the user's language.
 
 ---
 
-## Дизайн-резюме (фаза 2)
+## Classification line (phase 0)
 
-M — в чате, L — в начале файла плана. 10–20 строк. Пункты без содержания не заполняй ради формы. Например, «Авторизация: как у остальных эндпоинтов модуля, роль USER» — это нормальный ответ.
+```
+Route: <feature | change | bugfix | refactoring | schema | performance> · <S | M | L> · signals: <evidence> → <skills>
+```
+
+Examples:
+
+```
+Route: change · S · no signals → java-tdd
+Route: feature · M · signals: new table, filtered list → data-modeling-discipline, migration-safety, query-discipline
+Route: bugfix (local) · S · signals: @Transactional → jpa-and-transactions
+Route: feature · L · signals: webhook, payment, new table, roles → idempotency-and-side-effects, data-modeling-discipline, migration-safety, auth-and-authorization
+```
+
+---
+
+## Design summary (phase 2)
+
+M — in chat, L — at the top of the plan file. 10–20 lines. Do not fill empty items for the sake of form. For example, "Authorization: like the other endpoints of the module, role USER" is a fine answer.
 
 ```markdown
-## Дизайн: <название>
+## Design: <name>
 
-**Контекст:** <тип компонента, где живёт, ожидаемая нагрузка, бюджет задержки>
-**Данные:** <сущности и связи; инварианты → constraint'ы; changeset: да/нет, что меняется>
-**Ошибки:** <ошибка → HTTP-статус / code / поведение; что при отказе внешней системы>
-**Авторизация:** <кто вызывает, какое право, как ограничен доступ к строкам>
-**Повторы и конкуренция:** <ключ идемпотентности / дедупликация / @Version / блокировка / outbox>
-**Наблюдаемость:** <логи на границе, метрики, health>
-**Расширяемость:** <только если задача добавляет вариант к существующему набору: вердикт java-extensibility-review и нужен ли подготовительный рефакторинг>
-**Допущения:** <что не подтверждено пользователем и на что повлияет, если неверно>
+**Context:** <component type, where it lives, expected load, latency budget>
+**Data:** <entities and relations; invariants → constraints; changeset: yes/no, what changes>
+**Errors:** <error → HTTP status / code / behavior; what happens when an external system fails>
+**Authorization:** <who calls, which permission, how row access is limited>
+**Retries and concurrency:** <idempotency key / dedup / @Version / lock / outbox>
+**Observability:** <logs at the boundary, metrics, health>
+**Extensibility:** <only if the task adds a variant to an existing set: the java-extensibility-review verdict and whether a preparatory refactoring is needed>
+**Assumptions:** <what the user has not confirmed and what it affects if wrong>
 ```
 
-Перед показом перечитай резюме и проверь:
-- нет «TBD», «уточнить позже» и пунктов без решения;
-- пункты не противоречат друг другу: например, ошибки и повторы согласованы с данными и авторизацией;
-- каждое требование можно понять только одним способом. Если можно двумя, выбери одно толкование, запиши его в «Допущения» и покажи пользователю.
+Before showing it, reread the summary and check:
+- no "TBD", "clarify later" or items without a decision;
+- the items do not contradict each other: e.g. errors and retries agree with data and authorization;
+- every requirement can be read only one way. If two readings are possible, pick one, record it under "Assumptions" and show the user.
 
 ---
 
-## План L-задачи (фаза 3)
+## L-task plan (phase 3)
 
-В проекте с OpenSpec этот шаблон не используется: план — это change, а формат `tasks.md` описан в `references/openspec.md`.
+In an OpenSpec project this template is not used: the plan is the change, and the `tasks.md` format is in `references/openspec.md`.
 
-Файл: `docs/plans/YYYY-MM-DD-<slug>.md`, если у проекта нет своего места (ADR, `docs/design`, указание в `CLAUDE.md`).
+File: `docs/plans/YYYY-MM-DD-<slug>.md`, unless the project has its own place (ADR, `docs/design`, a note in `CLAUDE.md`).
 
-План фиксирует решения, которые исполнитель не может принять сам: файлы, имена и сигнатуры на стыках срезов, поведения и уровни тестов. Тела методов в план не пишутся. План длиннее будущего кода — это уже код, а не план.
+The plan pins the decisions the implementer cannot make alone: files, names and signatures at slice seams, behaviors and test levels. Method bodies do not go into the plan. A plan longer than the future code is already code, not a plan.
 
 ````markdown
-# <Фича> — план реализации
+# <Feature> — implementation plan
 
-**Цель:** <одно предложение>
-**Дизайн:** <дизайн-резюме целиком или ссылка>
-**Ограничения:** <версии Java/Boot, обратная совместимость API, запреты из CLAUDE.md, ограничения по зависимостям>
-**Инфраструктура интеграционных тестов:** <по сборке: Testcontainers (Postgres, Kafka) | нет Testcontainers: Kafka — `@EmbeddedKafka`, БД — <как проект поднимает её в тестах>>; добавляемые тестовые зависимости: <нет | `org.testcontainers:kafka` | `spring-kafka-test`>
+**Goal:** <one sentence>
+**Design:** <the full design summary or a link>
+**Constraints:** <Java/Boot versions, API backward compatibility, prohibitions from CLAUDE.md, dependency limits>
+**Integration test infrastructure:** <from the build: Testcontainers (Postgres, Kafka) | no Testcontainers: Kafka — `@EmbeddedKafka`, DB — <how the project starts it in tests>>; added test dependencies: <none | `org.testcontainers:kafka` | `spring-kafka-test`>
 
-## Разбиение на PR
-- PR 1: срезы 1–2 (схема и репозиторий) — можно влить отдельно
-- PR 2: срезы 3–5
+## PR split
+- PR 1: slices 1–2 (schema and repository) — can be merged separately
+- PR 2: slices 3–5
 
-## Срез 1: <название, например «Схема и репозиторий платежей»>
+## Slice 1: <name, e.g. "Payments schema and repository">
 
-**Файлы:**
-- создать: `src/main/resources/db/changelog/2026/10/001-payments.sql`
-- создать: `src/main/java/com/acme/payment/Payment.java`, `PaymentRepository.java`
-- тесты: `src/test/java/com/acme/payment/PaymentRepositoryTest.java`
+**Files:**
+- create: `src/main/resources/db/changelog/2026/10/001-payments.sql`
+- create: `src/main/java/com/acme/payment/Payment.java`, `PaymentRepository.java`
+- tests: `src/test/java/com/acme/payment/PaymentRepositoryTest.java`
 
-**Стыки:** <что срез отдаёт следующим: сигнатуры методов, типы>
+**Seams:** <what the slice gives to the next ones: method signatures, types>
 
-**Границы тестов:** `PaymentRepository` (запросы и constraint'ы). Только существующие границы; новая — с причиной, почему поведение иначе не наблюдаемо
+**Test boundaries:** `PaymentRepository` (queries and constraints). Existing boundaries only; a new one — with the reason the behavior is otherwise unobservable
 
-**Поведения:**
-- [ ] повторный платёж с тем же `provider_payment_id` отклоняется — `@DataJpaTest` + Testcontainers — ловит: нет unique constraint
-- [ ] `findPendingOlderThan` возвращает только PENDING старше порога — `@DataJpaTest` — ловит: неверный фильтр или граница
+**Behaviors:**
+- [ ] a repeated payment with the same `provider_payment_id` is rejected — `@DataJpaTest` + Testcontainers — catches: no unique constraint
+- [ ] `findPendingOlderThan` returns only PENDING older than the threshold — `@DataJpaTest` — catches: wrong filter or boundary
 
-**Скиллы среза:** data-modeling-discipline, migration-safety, jpa-and-transactions
+**Slice skills:** data-modeling-discipline, migration-safety, jpa-and-transactions
 
-**Проверка:** `./mvnw -q test -Dtest=PaymentRepositoryTest -Dsurefire.failIfNoSpecifiedTests=false`
+**Verification:** `./mvnw -q test -Dtest=PaymentRepositoryTest -Dsurefire.failIfNoSpecifiedTests=false`
 
-## Срез 2: ...
+## Slice 2: ...
 
-## Риски, не покрытые тестами срезов
-<Входы и отказы, которые подразумевает задача, но ни один срез пока не проверяет. Например: дубль webhook'а, пока первый ещё обрабатывается; таймаут провайдера после списания. Для каждого — в какой срез добавить тест.>
+## Risks not covered by slice tests
+<Inputs and failures the task implies but no slice checks yet. For example: a duplicate webhook while the first is still processing; a provider timeout after the charge. For each — which slice gets the test.>
 ````
 
-Перед показом пользователю проверь план сам:
-- у каждого требования есть срез;
-- имена и сигнатуры на стыках совпадают между срезами;
-- в плане нет строк, которые ничего не решают («обработать ошибки», «добавить тесты»).
+Before showing it to the user, check the plan yourself:
+- every requirement has a slice;
+- names and signatures at seams match between slices;
+- the plan has no lines that decide nothing ("handle errors", "add tests").
 
 ---
 
-## Итоговый отчёт (фаза 6)
+## Final report (phase 6)
 
 ````markdown
-## Итог: <одно предложение: готово ли и что мешает>
+## Summary: <one sentence: is it done and what blocks it>
 
-Маршрут: <строка классификации; если размер менялся — с какого на какой и почему>
+Route: <classification line; if the size changed — from what to what and why>
 
-### Сделано
-- <поведение> — `<файлы>` — тест `<Class#method>` (<уровень>), красный: «<сообщение падения>»
+### Done
+- <behavior> — `<files>` — test `<Class#method>` (<level>), red: «<failure message>»
 - ...
 
-### Причина (только для багфикса)
-<подтвердившаяся гипотеза и чем подтверждена; если правильной границы для регрессионного теста нет — почему>
+### Cause (bugfix only)
+<the confirmed hypothesis and what confirmed it; if there is no right boundary for a regression test — why>
 
-### Проверки
-- `./mvnw verify` — <N тестов, 0 упавших> (или список упавших по именам)
-- java-code-reviewer — <статус; n находок ≥ 80: исправлено m, оставлено k — почему> (без агента: «java-code-review, самопроверка»)
-- critic — <статус; блокеры: исправлено m из n; риски: исправлено k, оставлено l — почему> (без агента: «вопросы критика, самопроверка»)
-- <агент / команда> — <результат>
+### Checks
+- `./mvnw verify` — <N tests, 0 failed> (or the failed ones by name)
+- java-code-reviewer — <status; n findings ≥ 80: fixed m, left k — why> (no agent: "java-code-review, self-review")
+- critic — <status; blockers: fixed m of n; risks: fixed k, left l — why> (no agent: "critic questions, self-review")
+- <agent / command> — <result>
 
-### Вопросы перед релизом (от critic)
-- <вопрос — рекомендуемый ответ — что сломается, если ответ другой>
+### Questions before release (from critic)
+- <question — recommended answer — what breaks if the answer differs>
 
-### Не запускалось и не проверено
-- <например: *IT не запускались — нет Docker>
-- <скилл X не установлен — шаг выполнен по краткому чеклисту>
+### Not run and not checked
+- <e.g.: *IT did not run — no Docker>
+- <skill X is not installed — the step used the short checklist>
 
-### Решения и допущения
-- <решение — почему — чем грозит, если неверно>
+### Decisions and assumptions
+- <decision — why — the risk if it is wrong>
 
-### Предупреждения хуков, оставленные осознанно
-- <файл:строка — предупреждение — почему оставлено>
+### Hook warnings left on purpose
+- <file:line — warning — why it was left>
 
 ### Follow-ups
-- <что сознательно не сделано в этой задаче>
+- <what was deliberately not done in this task>
 ````
 
-Пустые разделы удаляй. Если всё зелёное и проверено, отчёт может уложиться в пять строк, и это нормально.
+Delete empty sections. If everything is green and checked, the report may fit in five lines, and that is fine.

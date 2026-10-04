@@ -1,44 +1,45 @@
-# Разбор change субагентом со свежим контекстом
+# Change review by a fresh-context subagent
 
-**Открывай, когда:** change писал ты в этой же сессии (через `/opsx:propose` или руками), и пользователь согласился отдать разбор субагенту.
+**Open when:** you start the review — steps 1–3 are done by a subagent by default. Especially if you wrote the change in this same session (via `/opsx:propose` or by hand).
 
-Автор пропускает то, что ему «и так понятно». Субагент не видел разговора и проверяет только написанное. Он делает шаги 1–3 скилла и возвращает находки и кандидатов в вопросы. Раунды с пользователем и правки остаются за тобой.
+The author misses what is "obvious" to them. A subagent has not seen the conversation and checks only what is written. It does steps 1–3 of the skill and returns findings and candidate questions. The rounds with the user and the edits stay with you.
 
-Субагент не наследует твои скиллы и не видит этот разговор, поэтому всё нужное передай в промпте. Запускай `general-purpose` с промптом ниже.
+A subagent does not inherit your skills and does not see this conversation, so pass everything it needs in the prompt. Run `general-purpose` with the prompt below.
 
 ```
-Ты разбираешь OpenSpec change до реализации. Ничего не меняй: только чтение
-(Read, Grep, Glob) и Bash для скрипта, `openspec validate`, `git status/diff/log`.
-Не задавай вопросов пользователю — верни их мне.
+You review an OpenSpec change before implementation. Change nothing: read only
+(Read, Grep, Glob) and Bash for the script, `openspec validate`, `git status/diff/log`.
+Do not ask the user questions — return them to me.
 
-Проект: <корень репозитория>
-Вход: <путь к spec.md или change>
-Скилл: <путь к java-spec-review>
+Project: <repository root>
+Input: <path to spec.md or the change>
+Skill: <path to java-spec-review>
 
-1. Запусти `python3 <скилл>/scripts/collect_change.py <вход>`, а если есть CLI
-   openspec — `openspec validate <имя> --strict`.
-2. Прочитай целиком: proposal.md, design.md, tasks.md, все дельты в specs/,
-   главные спеки capability с MODIFIED/REMOVED/RENAMED, openspec/config.yaml,
-   CLAUDE.md проекта.
-3. Через Skill tool подгрузи (имя может быть с префиксом плагина,
-   например backend-design-java:migration-safety):
-   <think-before-coding, если M или L; доменные скиллы по сигналам>.
-   Их Red Flags и чеклисты — вопросы к артефактам; код не пиши.
-4. Пройди банк вопросов <скилл>/references/questions.md (A–G). На каждый вопрос
-   найди ответ в артефактах; утверждения о системе проверь по коду.
-   Нет ответа и его нельзя вывести из кода — это вопрос пользователю.
-5. Каждую находку попробуй опровергнуть: поищи ответ в другом артефакте и в коде.
+1. Run `python3 <skill>/scripts/collect_change.py <input>`, and if the openspec CLI
+   exists — `openspec validate <name> --strict`.
+2. Read in full: proposal.md, design.md, tasks.md, all deltas in specs/,
+   the main specs of capabilities with MODIFIED/REMOVED/RENAMED, openspec/config.yaml,
+   the project's CLAUDE.md.
+3. Load via the Skill tool (a name may carry a plugin prefix,
+   e.g. backend-design-java:migration-safety):
+   <think-before-coding if M or L; domain skills by signals>.
+   Their Red Flags and checklists are questions to the artifacts; do not write code.
+4. Go through the question bank <skill>/references/questions.md (A–G). For every question
+   find the answer in the artifacts; check claims about the system against the code.
+   No answer and it cannot be derived from the code — it is a question for the user.
+5. Try to refute every finding: look for the answer in another artifact and in the code.
 
-Верни:
-- Статус: READY | GAPS | BLOCKERS и одну строку о change;
-- Блокеры и Пробелы: название, `файл:строка`, что не так, чем грозит,
-  готовый текст правки;
-- Замечания — до 5 строк;
-- Проверено по коду: утверждение — чем подтверждено (файл:строка);
-- Вопросы пользователю: вопрос, место в артефакте, варианты, рекомендуемый
-  ответ, от каких других вопросов зависит;
-- Скиллы: подгружены / не нашлись;
-- Не проверено: что и почему.
+Return:
+- Status: READY | GAPS | BLOCKERS and one line about the change;
+- Blockers and Gaps: title, `file:line`, what is wrong, the risk,
+  a ready edit text;
+- Remarks — up to 5 lines;
+- Checked against the code: claim — what confirmed it (file:line);
+- Questions for the user: question, place in the artifact, options, recommended
+  answer, which other questions it depends on;
+- Skills: loaded / not found;
+- Not checked: what and why.
+Keep the answer under 80 lines.
 ```
 
-Ответ субагента — гипотезы. Каждый блокер и пробел проверь по артефактам и коду сам, прежде чем показывать пользователю. Вопросы разложи по раундам по их зависимостям и веди раунды по шагам 4–5 скилла.
+The subagent's answer is hypotheses. Check every blocker and gap against the artifacts and the code yourself before showing it to the user. Sort the questions into rounds by their dependencies and run the rounds per steps 4–5 of the skill.

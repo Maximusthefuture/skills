@@ -1,42 +1,42 @@
-# Memento (Снимок)
+# Memento
 
-Группа: поведенческий
+Group: behavioral
 
-## Суть
-Объект сам делает неизменяемый снимок своего состояния и умеет из него восстановиться. Внешний код хранит снимки, но не видит и не меняет их содержимое. Инкапсуляция сохраняется: для undo не нужно открывать сеттеры всех полей.
+## Essence
+An object makes an immutable snapshot of its state itself and can restore itself from it. External code stores the snapshots but neither sees nor changes their contents. Encapsulation is kept: undo does not require opening setters for every field.
 
-## Структура (участники)
-- **Originator** — объект, состояние которого сохраняют (`PricingDraft`). Сам создаёт снимок (`snapshot()`) и сам из него восстанавливается (`restore()`).
-- **Memento** — неизменяемый снимок состояния. Остальной код не должен читать или менять его содержимое.
-- **Caretaker** — хранит снимки (стек undo, история версий), но не заглядывает внутрь (`DraftHistory`).
+## Structure (participants)
+- **Originator** — the object whose state is saved (`PricingDraft`). It creates the snapshot (`snapshot()`) and restores itself from it (`restore()`).
+- **Memento** — an immutable snapshot of the state. The rest of the code must not read or change its contents.
+- **Caretaker** — stores the snapshots (an undo stack, a version history) but does not look inside (`DraftHistory`).
 
 ```
-Caretaker ──хранит──▶ [Memento, Memento, …]
+Caretaker ──stores──▶ [Memento, Memento, …]
 Originator ──snapshot()──▶ Memento
 Originator ◀──restore(m)── Caretaker
 ```
 
-## Признаки в Java/Spring коде
-- Перед сложной операцией поля копируются во временные переменные, а при ошибке восстанавливаются вручную, и при добавлении нового поля его забывают.
-- Функции «отменить», «вернуть предыдущую версию», «сравнить с черновиком» в редакторах документов, конструкторах тарифов, настройках.
-- У сущности есть публичные сеттеры, нужные только для того, чтобы кто-то снаружи откатил её состояние.
-- Многошаговая операция в памяти (расчёт, симуляция) с откатом к контрольной точке.
+## Signs in Java/Spring code
+- Before a complex operation fields are copied into temporary variables and restored by hand on an error, and a new field gets forgotten.
+- "Undo", "restore the previous version", "compare with the draft" features in document editors, tariff builders, settings.
+- An entity has public setters needed only so that someone outside can roll back its state.
+- A multi-step in-memory operation (a calculation, a simulation) with a rollback to a checkpoint.
 
-## Когда не применять
-- Откат уже даёт транзакция БД — достаточно бросить исключение.
-- История нужна только для аудита — Hibernate Envers (`@Audited`) или журнал событий.
-- Полная история изменений как источник правды — это уже event sourcing, отдельное архитектурное решение.
+## When not to apply
+- A DB transaction already gives the rollback — throwing an exception is enough.
+- History is needed only for audit — Hibernate Envers (`@Audited`) or an event log.
+- The full change history as the source of truth is already event sourcing, a separate architectural decision.
 
-## После
+## After
 ```java
 public class PricingDraft {
     private BigDecimal basePrice;
     private List<Discount> discounts = new ArrayList<>();
     private Currency currency;
 
-    /** Неизменяемый снимок; содержимое видит только PricingDraft. */
+    /** An immutable snapshot; only PricingDraft sees its contents. */
     public record Snapshot(BigDecimal basePrice, List<Discount> discounts, Currency currency) {
-        public Snapshot { discounts = List.copyOf(discounts); }  // защитная копия
+        public Snapshot { discounts = List.copyOf(discounts); }  // a defensive copy
     }
 
     public Snapshot snapshot() {
@@ -50,39 +50,39 @@ public class PricingDraft {
     }
 }
 
-// хранитель истории (caretaker)
+// the history keeper (caretaker)
 public class DraftHistory {
     private final Deque<PricingDraft.Snapshot> undo = new ArrayDeque<>();
     public void save(PricingDraft d) { undo.push(d.snapshot()); }
     public void undo(PricingDraft d) { if (!undo.isEmpty()) d.restore(undo.pop()); }
 }
 ```
-Строгий вариант: поля `record` не публичны для внешних пакетов (вложенный приватный класс + непрозрачный маркерный интерфейс). На практике обычно хватает неизменяемого `record`.
+The strict variant: the `record`'s fields are not public to other packages (a private nested class + an opaque marker interface). In practice an immutable `record` is usually enough.
 
-## Сохранение снимков в БД
-Снимок можно сериализовать в JSON (`jsonb`) для версий документа. Тогда у снимка появляется схема: добавь поле `version` и продумай чтение старых снимков после изменения класса.
+## Storing snapshots in the DB
+A snapshot can be serialized to JSON (`jsonb`) for document versions. Then the snapshot has a schema: add a `version` field and plan how old snapshots are read after the class changes.
 
-## Шаги рефакторинга
-1. Тест: изменить → откатить → состояние равно исходному (`usingRecursiveComparison()` в AssertJ).
-2. Ввести `snapshot()`/`restore()` в сам объект и заменить ручное копирование.
-3. Убрать сеттеры, которые были нужны только для отката.
+## Refactoring steps
+1. A test: change → roll back → the state equals the original (`usingRecursiveComparison()` in AssertJ).
+2. Introduce `snapshot()`/`restore()` in the object itself and replace the manual copying.
+3. Remove the setters that were needed only for the rollback.
 
-## Подводные камни
-- Поверхностная копия изменяемых полей (списков, дат `java.util.Date`): снимок меняется вместе с объектом.
-- Память: снимок большого объекта на каждое действие. Ограничь глубину истории или храни diff.
-- JPA-сущность: `restore` на managed-сущности сразу запишется в БД при flush. Это может быть нужно, а может быть сюрпризом.
+## Pitfalls
+- A shallow copy of mutable fields (lists, `java.util.Date`): the snapshot changes together with the object.
+- Memory: a snapshot of a big object per action. Limit the history depth or store a diff.
+- A JPA entity: `restore` on a managed entity is written to the DB at the next flush. That may be wanted or may be a surprise.
 
-## Плюсы и минусы
-**Плюсы**
-- Сохранение и откат состояния без нарушения инкапсуляции: не нужны публичные сеттеры ради отката.
-- Originator проще: историей управляет caretaker.
-- Undo/redo, версии и контрольные точки получаются естественно.
+## Pros and cons
+**Pros**
+- Saving and rolling back state without breaking encapsulation: no public setters for the rollback.
+- A simpler Originator: the caretaker manages the history.
+- Undo/redo, versions and checkpoints come naturally.
 
-**Минусы**
-- Память: снимки больших объектов на каждое действие.
-- Caretaker должен управлять жизненным циклом снимков (сколько хранить, когда удалять).
-- В Java трудно жёстко запретить чтение содержимого снимка; обычно полагаются на неизменяемый `record`.
-- Снимки, сохранённые в БД, получают схему, и её нужно версионировать.
+**Cons**
+- Memory: snapshots of big objects per action.
+- The caretaker must manage the snapshots' lifecycle (how many to keep, when to delete).
+- In Java it is hard to strictly forbid reading a snapshot's contents; usually you rely on an immutable `record`.
+- Snapshots stored in the DB get a schema that must be versioned.
 
-## Связанные паттерны
-Command (undo через обратную операцию вместо снимка) · Prototype (копирование объекта целиком) · State (откат статуса).
+## Related patterns
+Command (undo via a reverse operation instead of a snapshot) · Prototype (copying the whole object) · State (rolling back a status).

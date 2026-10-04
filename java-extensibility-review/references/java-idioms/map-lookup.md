@@ -1,21 +1,21 @@
-# Map-lookup вместо if/else на значения
+# Map-lookup instead of if/else over values
 
-Тип: Java-идиома (table-driven code), родственник Strategy
+Type: a Java idiom (table-driven code), a relative of Strategy
 
-## Суть
-Если ветки `if/switch` только сопоставляют ключ значению или простому действию, логика — это таблица. Таблицу лучше записать как `Map` и читать по ключу: новый вариант — новая строка, а не новая ветка.
+## Essence
+If the branches of an `if/switch` only map a key to a value or a simple action, the logic is a table. A table is better written as a `Map` and read by key: a new variant is a new row, not a new branch.
 
-## Признаки в Java/Spring коде
+## Signs in Java/Spring code
 - `if (type.equals("CARD")) code = "01"; else if (type.equals("SBP")) code = "02"; …`
-- `switch`, где каждая ветка — `return CONSTANT` или вызов однострочника.
-- Одинаковые по форме ветки, которые отличаются только значениями.
+- A `switch` where every branch is `return CONSTANT` or a one-liner call.
+- Branches of the same shape that differ only in values.
 
-## Когда не применять
-- 2–3 ветки, которые не меняются. `switch`-выражение по enum читается не хуже и проверяется компилятором на полноту.
-- В ветках условия сложнее равенства (`amount > 1000 && vip`) → `../behavioral/chain-of-responsibility.md`.
-- Ветки — разная логика с зависимостями → `../behavioral/strategy.md`.
+## When not to apply
+- 2–3 branches that do not change. A `switch` expression over an enum reads just as well and the compiler checks its completeness.
+- The branches have conditions more complex than equality (`amount > 1000 && vip`) → `../behavioral/chain-of-responsibility.md`.
+- The branches are different logic with dependencies → `../behavioral/strategy.md`.
 
-## До
+## Before
 ```java
 String code;
 if (type.equals("CARD")) code = "01";
@@ -24,7 +24,7 @@ else if (type.equals("CASH")) code = "03";
 else throw new IllegalArgumentException(type);
 ```
 
-## После — строковый ключ снаружи
+## After — a string key from outside
 ```java
 private static final Map<String, String> CODES = Map.of(
         "CARD", "01",
@@ -35,16 +35,16 @@ String code = Optional.ofNullable(CODES.get(type))
         .orElseThrow(() -> new IllegalArgumentException("Unknown type: " + type));
 ```
 
-## После — enum-ключ (лучше, если варианты известны при компиляции)
+## After — an enum key (better if the variants are known at compile time)
 ```java
 private static final Map<PaymentType, String> CODES = new EnumMap<>(Map.of(
         PaymentType.CARD, "01",
         PaymentType.SBP, "02",
         PaymentType.CASH, "03"));
 ```
-Если значение — свойство самого варианта, ещё лучше хранить его полем enum (`enum-with-behavior.md`): тогда забыть его невозможно.
+If the value is a property of the variant itself, it is even better to keep it as an enum field (`enum-with-behavior.md`): then it cannot be forgotten.
 
-## После — ветки с действием
+## After — branches with an action
 ```java
 private final Map<ReportFormat, Function<Report, byte[]>> renderers = new EnumMap<>(Map.of(
         ReportFormat.PDF,  this::renderPdf,
@@ -55,13 +55,13 @@ byte[] render(Report r, ReportFormat f) {
     return Objects.requireNonNull(renderers.get(f), () -> "No renderer for " + f).apply(r);
 }
 ```
-Значения, которые меняет бизнес (коды, ставки), лучше вынести из кода в конфиг (`configuration-over-code.md`).
+Values the business changes (codes, rates) are better moved from code into config (`configuration-over-code.md`).
 
-## Подводные камни
-- `Map.of` запрещает `null` и дубликаты и принимает максимум 10 пар; дальше нужен `Map.ofEntries(entry(…), …)`.
-- Обязательно явное поведение на отсутствующий ключ. Молчаливый `null` хуже исходного `else throw`.
-- Инициализация поля через `this::method` в инициализаторе поля работает, но в Spring-бине со сложными зависимостями заполняй map в конструкторе.
-- Регистр и пробелы во внешних строковых ключах: нормализуй ключ (`toUpperCase(Locale.ROOT)`, `strip()`) один раз на входе.
+## Pitfalls
+- `Map.of` forbids `null` and duplicates and takes at most 10 pairs; beyond that you need `Map.ofEntries(entry(…), …)`.
+- Explicit behavior for a missing key is mandatory. A silent `null` is worse than the original `else throw`.
+- Initializing a field with `this::method` in a field initializer works, but in a Spring bean with complex dependencies fill the map in the constructor.
+- Case and whitespace in external string keys: normalize the key (`toUpperCase(Locale.ROOT)`, `strip()`) once at the entry point.
 
-## Связанные паттерны
-Enum с поведением · Strategy (ветки с зависимостями) · Конфигурация вместо кода.
+## Related patterns
+Enum with behavior · Strategy (branches with dependencies) · Configuration over code.

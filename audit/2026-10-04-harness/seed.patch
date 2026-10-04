@@ -1,0 +1,105 @@
+diff --git a/src/main/java/com/acme/orders/Order.java b/src/main/java/com/acme/orders/Order.java
+index 082213b..70b9d18 100644
+--- a/src/main/java/com/acme/orders/Order.java
++++ b/src/main/java/com/acme/orders/Order.java
+@@ -41,6 +41,9 @@ public class Order {
+     @Column(name = "created_at", nullable = false, updatable = false)
+     private Instant createdAt;
+ 
++    @Column(name = "archived_at")
++    private Instant archivedAt;
++
+     @LastModifiedDate
+     @Column(name = "updated_at", nullable = false)
+     private Instant updatedAt;
+@@ -57,6 +60,14 @@ public class Order {
+         this.updatedAt = now;
+     }
+ 
++    public Instant getArchivedAt() {
++        return archivedAt;
++    }
++
++    public void archive(Instant now) {
++        this.archivedAt = now;
++    }
++
+     public Long getId() {
+         return id;
+     }
+diff --git a/src/main/java/com/acme/orders/OrderController.java b/src/main/java/com/acme/orders/OrderController.java
+index e0f9b7a..2aa6b60 100644
+--- a/src/main/java/com/acme/orders/OrderController.java
++++ b/src/main/java/com/acme/orders/OrderController.java
+@@ -52,6 +52,20 @@ public class OrderController {
+         return ResponseEntity.ok(OrderResponse.from(order));
+     }
+ 
++    @PostMapping("/{id}/archive")
++    public ResponseEntity<OrderResponse> archiveOrder(
++            @PathVariable Long id,
++            @RequestHeader("X-Customer-Id") Long customerId) {
++        Order order = orderService.archiveOrder(id);
++        return ResponseEntity.ok(OrderResponse.from(order));
++    }
++
++    @GetMapping("/archived")
++    public ResponseEntity<java.util.List<OrderResponse>> listArchived(
++            @RequestHeader("X-Customer-Id") Long customerId) {
++        return ResponseEntity.ok(orderService.listArchived(customerId).stream().map(OrderResponse::from).toList());
++    }
++
+     record CreateOrderRequest(BigDecimal amount) {}
+ 
+     record OrderResponse(
+diff --git a/src/main/java/com/acme/orders/OrderService.java b/src/main/java/com/acme/orders/OrderService.java
+index 223e2fd..e7f8c33 100644
+--- a/src/main/java/com/acme/orders/OrderService.java
++++ b/src/main/java/com/acme/orders/OrderService.java
+@@ -75,6 +75,21 @@ public class OrderService {
+         return orderRepository.save(order);
+     }
+ 
++    public Order archiveOrder(Long orderId) {
++        Order order = orderRepository.findById(orderId)
++                .orElseThrow(() -> new OrderNotFoundException(orderId));
++        order.archive(Instant.now());
++        return orderRepository.save(order);
++    }
++
++    @Transactional(readOnly = true)
++    public java.util.List<Order> listArchived(Long customerId) {
++        return orderRepository.findAll().stream()
++                .filter(o -> o.getArchivedAt() != null)
++                .filter(o -> o.getCustomer().getId().equals(customerId))
++                .toList();
++    }
++
+     private void lockLatestPayment(Long orderId) {
+         paymentRepository.findIdsByOrderIdNewestFirst(orderId, PageRequest.of(0, 1))
+                 .forEach(paymentRepository::findLockedById);
+diff --git a/src/main/resources/db/changelog/2026-10-04-008-orders-archived-at.yml b/src/main/resources/db/changelog/2026-10-04-008-orders-archived-at.yml
+new file mode 100644
+index 0000000..e953b3d
+--- /dev/null
++++ b/src/main/resources/db/changelog/2026-10-04-008-orders-archived-at.yml
+@@ -0,0 +1,19 @@
++databaseChangeLog:
++  - changeSet:
++      id: 2026-10-04-008-orders-archived-at
++      author: claude
++      changes:
++        - addColumn:
++            tableName: orders
++            columns:
++              - column:
++                  name: archived_at
++                  type: timestamptz
++                  constraints:
++                    nullable: false
++        - createIndex:
++            indexName: idx_orders_archived_at
++            tableName: orders
++            columns:
++              - column:
++                  name: archived_at

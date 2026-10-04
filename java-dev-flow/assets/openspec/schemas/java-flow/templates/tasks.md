@@ -1,18 +1,18 @@
 # Tasks
 
-<!-- Если в design.md решено сначала рефакторить, первой идёт группа «Подготовительный рефакторинг»: поведение не меняется, тесты зелёные до и после. -->
+<!-- If design.md decided to refactor first, the first group is "Preparatory refactoring": behavior does not change, tests green before and after. -->
 
-## 1. <!-- Срез, например «Схема и репозиторий» -->
+## 1. <!-- Slice, e.g. "Schema and repository" -->
 
-- [ ] 1.1 <!-- Scenario или поведение --> — <!-- уровень теста --> — проверка: <!-- тест или команда -->
-- [ ] 1.2 <!-- Scenario или поведение --> — <!-- уровень теста --> — проверка: <!-- тест или команда -->
+- [ ] 1.1 <!-- Scenario or behavior --> — <!-- test level --> — verify: <!-- test or command -->
+- [ ] 1.2 <!-- Scenario or behavior --> — <!-- test level --> — verify: <!-- test or command -->
 
-## 2. <!-- Срез, например «API» -->
+## 2. <!-- Slice, e.g. "API" -->
 
-- [ ] 2.1 <!-- Scenario или поведение --> — <!-- уровень теста --> — проверка: <!-- тест или команда -->
+- [ ] 2.1 <!-- Scenario or behavior --> — <!-- test level --> — verify: <!-- test or command -->
 
-## 3. Проверка
+## 3. Verification
 
-- [ ] 3.1 Полный прогон `./mvnw verify` (или `./gradlew check`) — 0 упавших; что не запускалось, названо
-- [ ] 3.2 Агент `java-code-reviewer` по diff — находки с уверенностью ≥ 80 исправлены через тест или вынесены в отчёт
-<!-- По сигналам: java-extensibility-review (выросло ветвление по типу или статусу), review-migration (changeset'ы), test-audit (новые тесты), для L — security-reviewer, schema-reviewer, incident-thinker -->
+- [ ] 3.1 Full run `./mvnw verify` (or `./gradlew check`) — 0 failed; whatever did not run is named
+- [ ] 3.2 Agents `java-code-reviewer` and `critic` on the diff, in one message — review findings ≥ 80 and confirmed critic blockers fixed test-first or listed in the report; critic questions — to the user
+<!-- By signals: java-extensibility-review (branching on type or status grew), review-migration (changesets), test-audit (new tests), for L — security-reviewer, schema-reviewer, incident-thinker -->

@@ -1,9 +1,9 @@
-# java-flow — форк встроенной схемы spec-driven из OpenSpec 1.14.0 (MIT, Fission-AI).
-# Добавления для скилла java-dev-flow помечены словом «java-flow»; остальной текст — upstream.
-# После обновления OpenSpec сравни с `openspec schema fork spec-driven tmp` и перенеси новые правки upstream.
+# java-flow — a fork of the built-in spec-driven schema from OpenSpec 1.14.0 (MIT, Fission-AI).
+# Additions for the java-dev-flow skill are marked with the word "java-flow"; the rest is upstream text.
+# After updating OpenSpec, compare with `openspec schema fork spec-driven tmp` and carry over new upstream changes.
 name: java-flow
 version: 1
-description: spec-driven для java-dev-flow — дизайн по think-before-coding, задачи-срезы, реализация через java-tdd
+description: spec-driven for java-dev-flow — design per think-before-coding, slice tasks, implementation via java-tdd
 artifacts:
   - id: proposal
     generates: proposal.md
@@ -49,10 +49,10 @@ artifacts:
 
       This is the foundation - specs, design, and tasks all build on this.
 
-      java-flow: первая строка раздела Impact — классификация скилла java-dev-flow:
-      «Маршрут: <тип> · <M|L> · сигналы: <признаки> → <скиллы>». Изменения публичного
-      API, событий и схемы БД перечисли в Impact явно. Для размера L предложи в What
-      Changes разбиение на независимые PR.
+      java-flow: the first line of the Impact section is the java-dev-flow skill's
+      classification: "Route: <type> · <M|L> · signals: <evidence> → <skills>". List
+      changes to the public API, events and DB schema in Impact explicitly. For size L
+      propose a split into independent PRs in What Changes.
     requires: []
 
   - id: specs
@@ -155,12 +155,12 @@ artifacts:
 
       Specs should be testable - each scenario is a potential test case.
 
-      java-flow: каждый Scenario — одно наблюдаемое поведение и один будущий тест
-      (цикл java-tdd). В WHEN/THEN — конкретные значения: HTTP-статус, код ошибки,
-      поле ответа, состояние в БД, опубликованное событие. Ошибочные пути (400, 403,
-      404, 409, недоступность внешней системы) — отдельными сценариями. Для операций
-      с побочными эффектами добавь сценарий повтора: тот же запрос или событие
-      дважды дают один эффект.
+      java-flow: every Scenario is one observable behavior and one future test
+      (a java-tdd cycle). WHEN/THEN carry concrete values: HTTP status, error code,
+      response field, DB state, published event. Error paths (400, 403, 404, 409,
+      an external system being unavailable) are separate scenarios. For operations
+      with side effects add a retry scenario: the same request or event twice
+      produces one effect.
     requires:
       - proposal
 
@@ -171,13 +171,13 @@ artifacts:
     instruction: |
       Create the design document that explains HOW to implement the change.
 
-      java-flow: в этой схеме design.md создаётся всегда — это фаза дизайна скилла
-      java-dev-flow. Перед написанием вызови через Skill tool скилл
-      think-before-coding (если он есть) и доменные скиллы backend-design-java по
-      сигналам из Impact в proposal.md, затем заполни шаблон ниже. Если
-      think-before-coding недоступен, ответь на его шесть вопросов сам: контекст и
-      нагрузка, данные и инварианты, ошибки, авторизация, повторы и конкуренция,
-      наблюдаемость.
+      java-flow: in this schema design.md is always created — it is the design phase
+      of the java-dev-flow skill. Before writing, call via the Skill tool the
+      think-before-coding skill (if it exists) and the backend-design-java domain skills
+      by the signals from Impact in proposal.md, then fill in the template below. If
+      think-before-coding is unavailable, answer its six questions yourself: context and
+      load, data and invariants, errors, authorization, retries and concurrency,
+      observability.
 
       Sections:
       - **Context**: Only the current state and constraints needed to explain the approach. Reference the proposal for motivation instead of restating it (e.g., "See proposal.md - Why").
@@ -199,18 +199,18 @@ artifacts:
 
       Good design docs explain the "why" behind technical decisions.
 
-      java-flow: раздел Decisions разбит по шагам think-before-coding (см. шаблон).
-      В подразделе «Граница транзакции и порядок сборки» зафиксируй порядок срезов:
-      changeset → entity и репозиторий → сервис с границей транзакции → controller
-      или listener → маппинг ошибок → метрики. По этому порядку строятся группы в
-      tasks.md. Migration Plan — changeset'ы по правилам migration-safety
-      (CONCURRENTLY, NOT VALID, expand/contract) и откат.
+      java-flow: the Decisions section is split by the think-before-coding steps (see the
+      template). In the "Transaction boundary and build order" subsection pin the slice
+      order: changeset → entity and repository → service with a transaction boundary →
+      controller or listener → error mapping → metrics. The groups in tasks.md follow
+      this order. Migration Plan — changesets per migration-safety (CONCURRENTLY,
+      NOT VALID, expand/contract) and rollback.
 
-      java-flow: если change добавляет вариант к набору, по которому код уже
-      ветвится (способ оплаты, провайдер, канал, тип документа, статус), вызови
-      через Skill tool скилл java-extensibility-review по затрагиваемым классам и
-      запиши его вердикт в подраздел «Расширяемость»: расширяем как есть или
-      сначала подготовительный рефакторинг.
+      java-flow: if the change adds a variant to a set the code already branches on
+      (payment method, provider, channel, document type, status), call via the Skill
+      tool the java-extensibility-review skill on the affected classes and record its
+      verdict in the "Extensibility" subsection: extend as is, or a preparatory
+      refactoring first.
     requires:
       - proposal
 
@@ -268,23 +268,24 @@ artifacts:
       Reference specs for what needs to be built, design for how to build it.
 
       java-flow:
-      - Группы — срезы в порядке сборки из design.md. Внутри группы — по задаче на
-        поведение, обычно на один Scenario из specs.
-      - Формат задачи: «- [ ] X.Y <Scenario или поведение> — <уровень теста> —
-        проверка: <тест или команда>». Уровень: unit | @DataJpaTest + Testcontainers |
+      - Groups are slices in the build order from design.md. Inside a group — one task
+        per behavior, usually per Scenario from specs.
+      - Task format: "- [ ] X.Y <Scenario or behavior> — <test level> —
+        verify: <test or command>". Level: unit | @DataJpaTest + Testcontainers |
         @WebMvcTest | @SpringBootTest + Testcontainers | @SpringBootTest + @EmbeddedKafka |
-        WireMock. @EmbeddedKafka — только если в проекте нет Testcontainers. Тест пишется
-        первым и должен упасть до реализации.
-      - Если в design.md решено сначала рефакторить, первая группа — «Подготовительный
-        рефакторинг»: поведение не меняется, тесты зелёные до и после; новый вариант
-        добавляется в следующих группах.
-      - Последняя группа называется «Проверка» и содержит только интеграционные
-        проверки: полный прогон (./mvnw verify или ./gradlew check); агент
-        java-code-reviewer по diff (если агента нет — скилл java-code-review);
-        java-extensibility-review по изменённым классам, если в diff выросло
-        ветвление по типу или статусу; review-migration, если есть changeset'ы;
-        test-audit по новым тестам; для размера L — агенты security-reviewer,
-        schema-reviewer, incident-thinker по сигналам.
+        WireMock. @EmbeddedKafka only if the project has no Testcontainers. The test is
+        written first and must fail before the implementation.
+      - If design.md decided to refactor first, the first group is "Preparatory
+        refactoring": behavior does not change, tests green before and after; the new
+        variant is added in the following groups.
+      - The last group is called "Verification" and holds only integration
+        checks: the full run (./mvnw verify or ./gradlew check); the java-code-reviewer
+        and critic agents on the diff, in one message, in parallel (no agents — the
+        java-code-review skill and the critic questions from the java-dev-flow checklist);
+        java-extensibility-review on the changed classes if branching on type or status
+        grew in the diff; review-migration if there are changesets; test-audit on new
+        tests; for size L — the security-reviewer, schema-reviewer, incident-thinker
+        agents by signals.
     requires:
       - specs
       - design
@@ -296,23 +297,26 @@ apply:
     Read context files, work through pending tasks, mark complete as you go.
     Pause if you hit blockers or need clarification.
 
-    java-flow — как выполнять каждую задачу:
-    1. Перед первой задачей вызови через Skill tool скилл java-dev-flow и работай в
-       его режиме OpenSpec (references/openspec.md): артефакты change — это дизайн и
-       план, фазы 0–3 уже пройдены. Если java-dev-flow недоступен, скажи об этом и
-       продолжай по пунктам ниже.
-    2. Каждую задачу реализуй через скилл java-tdd: тест по сценарию из specs →
-       запуск и падение на assertion по ожидаемой причине → минимальный код →
-       рефакторинг. Ошибка компиляции или упавший Spring-контекст — не красный тест.
-    3. Подключай доменные скиллы backend-design-java по сигналам текущей задачи, а не
-       все сразу. Предупреждения хуков после записи файлов исправляй в этой же задаче
-       или фиксируй с обоснованием для итогового отчёта.
-    4. Отмечай задачу [x] только после того, как видел её тест красным, а затем
-       зелёным вместе с тестами модуля.
-    5. Реализация расходится с design.md или specs — остановись и предложи
-       /opsx:update. Работа за пределами change — назови её и спроси.
-    6. Группу «Проверка» выполняй реальным запуском команд. «Тесты зелёные» — только
-       по выводу команды, запущенной после последней правки. Ревью поручай агенту
-       java-code-reviewer со свежим контекстом: передай область diff и путь к этому
-       change; его находки проверь по коду сам, баги исправляй через тест. В конце
-       дай отчёт по шаблону java-dev-flow (references/templates.md).
+    java-flow — how to do every task:
+    1. Before the first task call via the Skill tool the java-dev-flow skill and work
+       in its OpenSpec mode (references/openspec.md): the change artifacts are the design
+       and the plan, phases 0–3 are done. If java-dev-flow is unavailable, say so and
+       continue with the steps below.
+    2. Implement every task via the java-tdd skill: a test for a scenario from specs →
+       run it and see it fail on an assertion for the expected reason → minimal code →
+       refactoring. A compilation error or a failed Spring context is not a red test.
+    3. Load backend-design-java domain skills by the signals of the current task, not
+       all at once. Fix hook warnings after file writes in the same task or record them
+       with a justification for the final report.
+    4. Tick a task [x] only after you saw its test red and then green together with the
+       module tests.
+    5. The implementation diverges from design.md or specs — stop and suggest
+       /opsx:update. Work outside the change — name it and ask.
+    6. Run the "Verification" group by actually running commands. "Tests are green" — only
+       from the output of a command run after the last edit. Hand the review to the
+       java-code-reviewer and critic agents with a fresh context, in one message, in
+       parallel: pass the diff scope and the path to this change, and the critic also the
+       size and what is known about production. Check their findings against the code
+       yourself, fix bugs and confirmed blockers test-first, bring the critic's questions
+       to the user. At the end give the report per the java-dev-flow template
+       (references/templates.md).

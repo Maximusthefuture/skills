@@ -148,7 +148,7 @@ def codes(result, level=None):
 
 def issue(result, code):
     found = [i for i in result["issues"] if i["code"] == code]
-    assert found, f"нет находки {code}: {codes(result)}"
+    assert found, f"no finding {code}: {codes(result)}"
     return found[0]
 
 
@@ -334,6 +334,14 @@ class ProposalAndTasksTest(unittest.TestCase):
         self.assertEqual(result["proposal"]["capabilities"]["new"], ["order-refunds"])
         self.assertEqual(result["proposal"]["capabilities"]["modified"], ["order-lifecycle"])
 
+    def test_english_route_line_is_parsed(self):
+        proposal = PROPOSAL.replace("Маршрут: фича · M · сигналы: платёж, вебхук",
+                                    "Route: feature · M · signals: payment, webhook")
+        result = cc.collect(str(make_project(self.root, proposal=proposal)))
+        self.assertEqual(result["proposal"]["size"], "M")
+        self.assertTrue(result["proposal"]["route"].startswith("Route: feature"))
+        self.assertNotIn("route-missing", codes(result, "warn"))
+
     def test_missing_route_is_warned_in_java_flow_project(self):
         change = make_project(self.root, proposal=PROPOSAL.replace("Маршрут:", "Затронуто:"))
         result = cc.collect(str(change))
@@ -367,7 +375,7 @@ class ProposalAndTasksTest(unittest.TestCase):
         result = cc.collect(str(make_project(self.root, tasks=tasks)))
         orphan_scenarios = [s["scenario"] for s in result["trace"]["scenarios_without_tasks"]]
         self.assertIn("Cancel PAID order", orphan_scenarios)
-        # сценарий скопирован в MODIFIED без изменений — это старое поведение, задача не нужна
+        # the scenario was copied into MODIFIED unchanged — it is old behavior, no task is needed
         self.assertNotIn("Cancel NEW order", orphan_scenarios)
         self.assertNotIn("Full refund", orphan_scenarios)
         self.assertEqual([t["id"] for t in result["trace"]["tasks_without_scenario"]], ["1.2"])

@@ -1,33 +1,33 @@
-# Как писать честные тесты (Java / Spring)
+# How to write honest tests (Java / Spring)
 
-**Открывай, когда:** пишешь или меняешь тест, добавляешь мок, test double, фикстуру или helper для тестов.
+**Open when:** you write or change a test, add a mock, a test double, a fixture or a test helper.
 
-Адаптация `writing-good-tests.md` из [obra/superpowers](https://github.com/obra/superpowers) (MIT) под JUnit 5 / AssertJ / Mockito / Spring. Каталог мусорных паттернов и аудит существующих тестов — в скилле `test-audit`; здесь — правила, которые держат в голове при написании.
+An adaptation of `writing-good-tests.md` from [obra/superpowers](https://github.com/obra/superpowers) (MIT) for JUnit 5 / AssertJ / Mockito / Spring. The catalog of junk patterns and auditing existing tests is in the `test-audit` skill; here are the rules to keep in mind while writing.
 
-Тест существует, чтобы поймать конкретную поломку. Два принципа:
+A test exists to catch a specific breakage. Two principles:
 
 ```
-1. Каждый тест знает, какую поломку он ловит
-2. Каждый тест работает с настоящим кодом
+1. Every test knows which breakage it catches
+2. Every test works with real code
 ```
 
-TDD даёт оба почти бесплатно: тест, написанный первым и увиденный красным на настоящем коде, уже доказал, что умеет падать, а мок в нём появляется, только когда настоящая зависимость оказалась медленной или внешней.
+TDD gives both almost for free: a test written first and seen red on real code has already proven it can fail, and a mock appears in it only when the real dependency turned out to be slow or external.
 
-## Принцип 1. Назови поломку
+## Principle 1. Name the breakage
 
-До тела теста ответь: **какое изменение в production-коде должно уронить этот тест — и это баг или намеренное решение?** Тест оправдан, если ловит неверную ветку, пропущенный побочный эффект, неверный аргумент, граничный случай или нарушенный контракт.
+Before the test body, answer: **which change in production code should make this test fail — and is that a bug or a deliberate decision?** A test is justified if it catches a wrong branch, a missing side effect, a wrong argument, an edge case or a broken contract.
 
-### Ожидаемое значение выводится независимо
+### The expected value is derived independently
 
-Литералы и вручную проверенные фикстуры. Для вариантов одного правила — `@ParameterizedTest` с литеральными ожидаемыми значениями. Ожидание, вычисленное тестируемым кодом или его helper'ами, проходит при любом поведении кода.
+Literals and hand-checked fixtures. For variants of one rule — `@ParameterizedTest` with literal expected values. An expectation computed by the code under test or its helpers passes whatever the code does.
 
 ```java
-// ❌ Зеркало: ожидаемый JSON сериализован тем же ObjectMapper из того же DTO
+// ❌ Mirror: the expected JSON is serialized by the same ObjectMapper from the same DTO
 String expected = objectMapper.writeValueAsString(new OrderResponse(id, "PAID", amount));
 mvc.perform(get("/orders/{id}", id))
    .andExpect(content().json(expected));
 
-// ✅ Литерал: ловит переименование поля, смену формата суммы, потерю статуса
+// ✅ Literal: catches a renamed field, a changed amount format, a lost status
 mvc.perform(get("/orders/{id}", id))
    .andExpect(content().json("""
        {"id": "%s", "status": "PAID", "amount": "125.50"}
@@ -35,17 +35,17 @@ mvc.perform(get("/orders/{id}", id))
 ```
 
 ```java
-// ❌ Ожидание посчитано тем же маппером
+// ❌ The expectation is computed by the same mapper
 assertThat(mapper.toDto(order)).isEqualTo(mapper.toDto(order));
 
-// ✅ Ожидание выписано руками
+// ✅ The expectation is written out by hand
 assertThat(mapper.toDto(order))
     .returns("PAID", OrderDto::status)
     .returns(new BigDecimal("125.50"), OrderDto::amount);
 ```
 
 ```java
-// ✅ Варианты правила — таблица с литералами
+// ✅ Rule variants — a table of literals
 @ParameterizedTest
 @CsvSource({
     "0,      0.00",
@@ -58,66 +58,66 @@ void discountIsFivePercentFromThreshold(BigDecimal total, BigDecimal expectedDis
 }
 ```
 
-### Не пиши детекторы изменений
+### Do not write change detectors
 
-Если тест может уронить только намеренное решение — значение константы, точная формулировка сообщения, приватная структура, — он срабатывает при редизайне и спит при багах. Проверяй поведение, которое зависит от решения.
+If only a deliberate decision can break a test — a constant's value, the exact wording of a message, a private structure — it fires on redesign and sleeps through bugs. Check the behavior that depends on the decision.
 
 ```java
-// ❌ Детектор изменений
+// ❌ Change detector
 assertThat(RetryPolicy.MAX_ATTEMPTS).isEqualTo(5);
 
-// ✅ Поведение: 5 попыток, шестой нет
+// ✅ Behavior: 5 attempts, no sixth
 wireMock.stubFor(post("/payments").willReturn(serverError()));
 assertThatThrownBy(() -> client.charge(request)).isInstanceOf(PaymentUnavailableException.class);
 wireMock.verify(5, postRequestedFor(urlEqualTo("/payments")));
 ```
 
-Точный текст сообщения проверяй, только если он часть контракта (например, `code` в ProblemDetail, на который завязан фронтенд). Человекочитаемый `detail` — обычно нет.
+Check the exact message text only if it is part of the contract (e.g. the `code` in a ProblemDetail the frontend relies on). The human-readable `detail` usually is not.
 
-### Поведение, а не текст
+### Behavior, not text
 
-Тест, который проверяет, что файл, SQL-строка, `application.yml` или лог содержит нужную строку, доказывает только, что исходник — это исходник. Запусти код на контролируемом входе и проверь результат, побочный эффект или код возврата. Исключение — ArchUnit-правила и проверки ключей контракта, когда это самый дешёвый независимый страж (см. retention bar в `test-audit`).
+A test that checks that a file, an SQL string, `application.yml` or a log contains a string proves only that the source is the source. Run the code on a controlled input and check the result, the side effect or the exit code. The exception is ArchUnit rules and contract key checks when they are the cheapest independent guard (see the retention bar in `test-audit`).
 
-### Твой код, а не фреймворк
+### Your code, not the framework
 
-Проверяй контракт своего кода на его границах: зарегистрированный маршрут, сгенерированный запрос, отданный payload. Поведение Spring, Hibernate и Jackson — забота их мейнтейнеров:
+Check your code's contract at its boundaries: the registered route, the generated query, the returned payload. The behavior of Spring, Hibernate and Jackson is their maintainers' concern:
 
-- derived query `findByEmail` без `@Query` — не тестируй сам по себе; тестируй бизнес-сценарий, который на него опирается, или constraint, который он должен уважать;
-- `@Value`-инъекцию, наличие аннотаций Bean Validation, дефолты Jackson — не тестируй; тестируй, что невалидный запрос даёт 400 с нужным кодом поля;
-- конструкторы, геттеры, константы и тривиальный проброс получают тесты, только если они валидируют, нормализуют, подставляют значение по умолчанию, вычисляют или вызывают побочный эффект. Иначе проверяй первый видимый потребителю результат, который от них зависит.
+- a derived query `findByEmail` without `@Query` — do not test it by itself; test the business scenario that relies on it, or the constraint it must respect;
+- `@Value` injection, the presence of Bean Validation annotations, Jackson defaults — do not test them; test that an invalid request gets a 400 with the right field code;
+- constructors, getters, constants and trivial pass-throughs get tests only if they validate, normalize, default, compute or cause a side effect. Otherwise check the first consumer-visible result that depends on them.
 
-Если поведение фреймворка тебя реально удивило — один узкий characterization-тест с именем, которое называет предположение (`hibernateFlushesBeforeNativeQuery`).
+If framework behavior really surprised you — one narrow characterization test whose name states the assumption (`hibernateFlushesBeforeNativeQuery`).
 
 ### Gate
 
 ```
-ДО тела теста:
-  Назови изменение в коде, которое уронит тест.
+BEFORE the test body:
+  Name the code change that makes the test fail.
 
-  Не можешь назвать              → перестрой тест вокруг наблюдаемого поведения
-  «Изменится текст исходника»    → запусти код и проверь эффект
-  Только намеренные решения      → детектор изменений; проверяй поведение,
-                                   которое зависит от решения
+  Cannot name it                 → rebuild the test around observable behavior
+  "The source text changes"      → run the code and check the effect
+  Only deliberate decisions      → a change detector; check the behavior
+                                   that depends on the decision
 
-  Убедись, что ожидаемое значение получено без тестируемого кода.
-  Если оно использует логику или helper'ы тестируемого кода:
-    замени на литерал или вручную проверенную фикстуру
+  Make sure the expected value was obtained without the code under test.
+  If it uses the logic or helpers of the code under test:
+    replace it with a literal or a hand-checked fixture
 ```
 
-## Принцип 2. Работай с настоящим кодом
+## Principle 2. Work with real code
 
-### Мок не заслуживает assertion'ов
+### A mock does not deserve assertions
 
-Assertion на мок проходит, когда мок есть, и падает, когда его нет, — о компоненте он ничего не говорит.
+An assertion on a mock passes when the mock is there and fails when it is not — it says nothing about the component.
 
 ```java
-// ❌ Мок реализует проверяемое поведение, тест проверяет мок
+// ❌ The mock implements the behavior under test, the test checks the mock
 when(orderRepository.save(any())).thenReturn(order);
 Order saved = service.place(command);
 assertThat(saved).isEqualTo(order);
 verify(orderRepository).save(any());
 
-// ✅ Настоящий репозиторий на Testcontainers Postgres, проверяем результат в БД
+// ✅ A real repository on Testcontainers Postgres, we check the result in the DB
 Order saved = service.place(command);
 assertThat(orderRepository.findById(saved.getId()))
     .get()
@@ -125,20 +125,20 @@ assertThat(orderRepository.findById(saved.getId()))
     .returns(command.customerId(), Order::getCustomerId);
 ```
 
-`verify` уместен, только когда **сам вызов и есть наблюдаемое поведение** и более дешёвого наблюдаемого доказательства нет: отправлено письмо, опубликовано событие в Kafka, внешний API вызван ровно один раз.
+`verify` fits only when **the call itself is the observable behavior** and there is no cheaper observable proof: an email was sent, an event was published to Kafka, an external API was called exactly once.
 
-### Мокай на правильном уровне
+### Mock at the right level
 
-До того как заменить метод, узнай все его побочные эффекты. Мокай медленный или внешний уровень *под* ними, а то, от чего зависит тест, оставь настоящим. Не уверен — сначала запусти тест на настоящей реализации и посмотри, что реально должно произойти.
+Before replacing a method, learn all its side effects. Mock the slow or external level *below* them, and keep what the test depends on real. Not sure — first run the test on the real implementation and see what actually has to happen.
 
 ```java
-// ❌ Мок fluent-цепочки RestClient: проверяет, что ты вызвал методы в нужном порядке,
-//    а не что запрос ушёл с правильным телом и ответ правильно распарсен
+// ❌ Mocking the RestClient fluent chain: checks that you called methods in the right order,
+//    not that the request went out with the right body and the response was parsed right
 when(restClient.post()).thenReturn(requestSpec);
 when(requestSpec.uri(anyString())).thenReturn(requestSpec);
 // ...
 
-// ✅ WireMock на HTTP-границе: настоящий клиент, настоящая сериализация, настоящие ретраи
+// ✅ WireMock at the HTTP boundary: a real client, real serialization, real retries
 wireMock.stubFor(post("/v1/charges")
     .withRequestBody(matchingJsonPath("$.amount", equalTo("125.50")))
     .willReturn(okJson("""
@@ -147,100 +147,100 @@ wireMock.stubFor(post("/v1/charges")
 ```
 
 ```java
-// ❌ @MockitoBean заменяет тот самый бин, чьё поведение проверяется
-@MockitoBean DiscountPolicy discountPolicy;   // а тест называется discountIsApplied...
+// ❌ @MockitoBean replaces the very bean whose behavior is under test
+@MockitoBean DiscountPolicy discountPolicy;   // and the test is called discountIsApplied...
 
-// ✅ Мокаем только внешнее; проверяемый бин — настоящий
+// ✅ Mock only the external part; the bean under test is real
 @MockitoBean PaymentGateway paymentGateway;
 ```
 
-### Делай двойники конкретными
+### Make doubles specific
 
-Если аргументы, количество вызовов или порядок — часть контракта, проверяй их. Двойник, который принимает что угодно (`any()` везде), ничего не проверяет. Каждой ветке (успех, ошибка, некорректный ответ) — своя фикстура или stub, чтобы неверная ветка не могла удовлетворить ожидание.
+If the arguments, the number of calls or the order are part of the contract, check them. A double that accepts anything (`any()` everywhere) checks nothing. Every branch (success, error, malformed response) gets its own fixture or stub, so the wrong branch cannot satisfy the expectation.
 
 ```java
-// ✅ Идемпотентность — часть контракта: ретрай идёт с тем же ключом
+// ✅ Idempotency is part of the contract: the retry goes with the same key
 wireMock.verify(2, postRequestedFor(urlEqualTo("/v1/charges"))
     .withHeader("Idempotency-Key", equalTo(command.idempotencyKey())));
 ```
 
-### Отражай реальные данные целиком
+### Mirror real data in full
 
-Stub ответа повторяет полную реальную структуру — все документированные поля, а не только те, что читает тест. Частичный stub молча проходит, когда нижележащий код читает пропущенное поле: тест зелёный, интеграция сломана. Лучший источник — реальный пример ответа из документации API или записанный WireMock'ом.
+A response stub repeats the full real structure — all documented fields, not only those the test reads. A partial stub silently passes when the code underneath reads a missing field: the test is green, the integration is broken. The best source is a real response example from the API docs or one recorded by WireMock.
 
-### Production-классы содержат только production-методы
+### Production classes contain only production methods
 
-Очистка, сброс и доступ к внутренностям, которые нужны только тестам, живут в тестовых утилитах, а не в `src/main`:
+Cleanup, reset and access to internals needed only by tests live in test utilities, not in `src/main`:
 
-- нет `reset()`/`clear()`/`destroy()` на production-бине «для тестов» — используй truncate таблиц между тестами, свежий экземпляр, `@DirtiesContext` в крайнем случае;
-- нет `@VisibleForTesting`, расширения видимости и setter'ов ради теста — проверяй через публичное поведение;
-- нет `@Profile("test")`-бинов в `src/main` — `@TestConfiguration` в `src/test`;
-- нет `ReflectionTestUtils.setField` — инжектируй зависимость через конструктор.
+- no `reset()`/`clear()`/`destroy()` on a production bean "for tests" — truncate tables between tests, use a fresh instance, `@DirtiesContext` as a last resort;
+- no `@VisibleForTesting`, widened visibility or setters for a test — check through public behavior;
+- no `@Profile("test")` beans in `src/main` — a `@TestConfiguration` in `src/test`;
+- no `ReflectionTestUtils.setField` — inject the dependency through the constructor.
 
-Спроси себя: этот метод вызывается только из тестов? Этот класс владеет жизненным циклом ресурса? Неверный ответ → тестовая утилита.
+Ask yourself: is this method called only from tests? Does this class own the resource's lifecycle? A wrong answer → a test utility.
 
-### Предпочитай настоящие компоненты сложным мокам
+### Prefer real components to complex mocks
 
-Когда setup моков больше логики теста, моки не знают методов, которые есть у настоящих компонентов, или тесты ломаются от изменения мока — переходи на slice- или интеграционный тест с настоящими компонентами. Вопрос, который стоит задать себе: «А нужен ли тут мок?»
+When the mock setup is bigger than the test logic, mocks do not know methods the real components have, or tests break when a mock changes — move to a slice or integration test with real components. The question to ask yourself: "Do I need a mock here at all?"
 
 ### Gate
 
 ```
-ДО добавления мока или helper'а:
-  Перечисли побочные эффекты настоящего метода; те, от которых
-  зависит тест, оставь настоящими — мокай медленный/внешний уровень под ними.
+BEFORE adding a mock or a helper:
+  List the real method's side effects; keep those the test depends on
+  real — mock the slow/external level below them.
 
-  Stub-ответы повторяют полную реальную структуру.
+  Stub responses repeat the full real structure.
 
-  Метод, который вызывают только тесты, живёт в src/test.
+  A method called only by tests lives in src/test.
 
-  Собираешься сделать assertion на сам мок?
-    Убери мок или удали assertion.
+  About to assert on the mock itself?
+    Remove the mock or delete the assertion.
 ```
 
-## Тесты идут вместе с реализацией
+## Tests come with the implementation
 
-Цикл — падающий тест, минимальная реализация, рефакторинг — это и есть определение «готово». Пиши тесты, которые нужны поведению, и только их: тривиальный код получает ноль тестов, а тест, написанный ради процесса или покрытия, стоит сопровождения навсегда.
+The cycle — a failing test, a minimal implementation, refactoring — is the definition of "done". Write the tests the behavior needs, and only those: trivial code gets zero tests, and a test written for the process or for coverage costs maintenance forever.
 
 ## Mutation check
 
-Перед завершением мысленно мутируй production-код. Для каждой реалистичной мутации хотя бы один тест должен упасть:
+Before finishing, mutate the production code in your head. For every realistic mutation at least one test must fail:
 
-- неверная константа или аргумент (`>` вместо `>=`, `5` вместо `3`);
-- вызов не того обработчика ветки;
-- пропущенное изменение состояния или побочный эффект (не сохранили, не опубликовали событие);
-- пустой результат или значение по умолчанию (`return null`, `List.of()`, `Optional.empty()`);
-- пропущенная проверка на `null`, пустое, ноль, чужой id, нет прав, некорректный ввод.
+- a wrong constant or argument (`>` instead of `>=`, `5` instead of `3`);
+- calling the wrong branch handler;
+- a missing state change or side effect (not saved, event not published);
+- an empty result or a default value (`return null`, `List.of()`, `Optional.empty()`);
+- a missing check for `null`, empty, zero, someone else's id, no permission, invalid input.
 
-Мутация, которую ничто не ловит, — поведение без защиты или тавтологичный тест. Для критичного класса можно прогнать PIT (`pitest-maven` / `info.solidsoft.pitest`) и посмотреть на выжившие мутанты.
+A mutation nothing catches is unprotected behavior or a tautological test. For a critical class you can run PIT (`pitest-maven` / `info.solidsoft.pitest`) and look at the surviving mutants.
 
-## Быстрая справка
+## Quick reference
 
-| Когда ты... | Делай |
+| When you... | Do |
 |---|---|
-| Пишешь любой тест | Назови поломку, которую он ловит, — баг, а не решение |
-| Строишь ожидаемое значение | Литерал или ручная фикстура; не через тестируемый код |
-| Проверяешь JSON-ответ | Литеральный JSON в text block, не сериализация того же DTO |
-| Хочешь протестировать derived query / аннотацию | Тестируй свой сценарий, а не механику Spring |
-| Хочешь сделать `verify` | Сначала поищи наблюдаемый эффект: БД, ответ, событие |
-| Собираешься замокать метод | Узнай его побочные эффекты; мокай внешний уровень |
-| Мокаешь HTTP-клиент | WireMock на границе, не fluent-цепочку |
-| Пишешь stub ответа | Полная реальная структура |
-| Нужна очистка только для тестов | `src/test`: truncate, фикстура, `@TestConfiguration` |
-| Setup моков разрастается | Slice- или интеграционный тест с настоящими компонентами |
-| Заканчиваешь тестовый класс | Mutation check |
+| Write any test | Name the breakage it catches — a bug, not a decision |
+| Build an expected value | A literal or a hand-made fixture; not through the code under test |
+| Check a JSON response | Literal JSON in a text block, not a serialization of the same DTO |
+| Want to test a derived query / an annotation | Test your scenario, not Spring's mechanics |
+| Want to `verify` | First look for an observable effect: DB, response, event |
+| Are about to mock a method | Learn its side effects; mock the external level |
+| Mock an HTTP client | WireMock at the boundary, not the fluent chain |
+| Write a response stub | The full real structure |
+| Need cleanup only for tests | `src/test`: truncate, a fixture, `@TestConfiguration` |
+| The mock setup keeps growing | A slice or integration test with real components |
+| Finish a test class | Mutation check |
 
-## Тревожные признаки
+## Warning signs
 
-- setup и assertion используют один и тот же объект — равенство гарантировано;
-- тест может упасть только от NPE, упавшего контекста или ненайденного селектора;
-- тест падает от каждого намеренного изменения и ни разу — от случайной поломки;
-- ожидаемые значения спрятаны в циклах, builder'ах или helper'ах тестируемого кода;
-- тест grep'ает исходник, SQL-строку или лог;
-- тест остался бы осмысленным, даже если бы от твоего кода остался только фреймворк;
-- тест существует ради покрытия и не проверяет ни результата, ни побочного эффекта;
-- единственный assertion — `isNotNull()` / `assertDoesNotThrow` на то, что не может быть null или бросить;
-- метод в `src/main` вызывается только из тестов;
-- setup моков — больше половины теста, или ты не можешь объяснить, зачем мок;
-- мок «на всякий случай»;
-- `@Transactional` на тестовом классе в сценарии, где важен commit (AFTER_COMMIT-listener'ы, outbox, deferred constraint'ы).
+- setup and assertion use the same object — equality is guaranteed;
+- the test can fail only from an NPE, a failed context or a missing selector;
+- the test fails on every deliberate change and never on an accidental breakage;
+- expected values are hidden in loops, builders or helpers of the code under test;
+- the test greps the source, an SQL string or a log;
+- the test would stay meaningful even if only the framework were left of your code;
+- the test exists for coverage and checks neither a result nor a side effect;
+- the only assertion is `isNotNull()` / `assertDoesNotThrow` on something that cannot be null or throw;
+- a method in `src/main` is called only from tests;
+- the mock setup is more than half the test, or you cannot explain why the mock is there;
+- a mock "just in case";
+- `@Transactional` on a test class in a scenario where the commit matters (AFTER_COMMIT listeners, outbox, deferred constraints).

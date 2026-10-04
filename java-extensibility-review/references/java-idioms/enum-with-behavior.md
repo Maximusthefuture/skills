@@ -1,29 +1,29 @@
-# Enum с поведением
+# Enum with behavior
 
-Тип: Java-идиома (constant-specific methods), лёгкая форма Strategy / State
+Type: a Java idiom (constant-specific methods), a light form of Strategy / State
 
-## Суть
-Знание о варианте живёт в самой константе enum: поля (коды, коэффициенты, символы) и поведение (абстрактный метод, переопределённый каждой константой, или лямбда в конструкторе). Повторяющиеся `switch (type)` по коду исчезают. При добавлении новой константы компилятор требует реализовать абстрактный метод, и ни одно место нельзя забыть.
+## Essence
+Knowledge of a variant lives in the enum constant itself: fields (codes, coefficients, symbols) and behavior (an abstract method overridden by every constant, or a lambda in the constructor). Repeated `switch (type)` blocks disappear from the code. When a new constant is added, the compiler demands the abstract method be implemented, and no place can be forgotten.
 
-## Признаки в Java/Spring коде
-- Один и тот же `switch` по enum в 2+ местах, ветки — вычисления без внешних зависимостей (коэффициенты, форматы, правила округления, маппинг кодов).
-- Параллельные `Map<MyEnum, X>` в разных классах.
-- Утилитный класс `MyEnumUtils` со статическими методами `switch` по константам.
+## Signs in Java/Spring code
+- The same `switch` over an enum in 2+ places, branches are calculations without external dependencies (coefficients, formats, rounding rules, code mapping).
+- Parallel `Map<MyEnum, X>` in different classes.
+- A `MyEnumUtils` utility class with static methods that `switch` over the constants.
 
-## Когда не применять
-- Поведению нужны бины (репозитории, клиенты). Enum — не Spring-компонент. Тащить в него зависимости через статические сеттеры или `ApplicationContext` — антипаттерн. Нужна Strategy (`../behavioral/strategy.md`) с enum в роли ключа.
-- Поведение специфично для одного места использования — тогда это знание того места, а не варианта.
+## When not to apply
+- The behavior needs beans (repositories, clients). An enum is not a Spring component. Dragging dependencies into it through static setters or `ApplicationContext` is an anti-pattern. You need a Strategy (`../behavioral/strategy.md`) with the enum as the key.
+- The behavior is specific to one place of use — then it is knowledge of that place, not of the variant.
 
-## До
+## Before
 ```java
-// в PriceService, CartService, InvoiceService:
+// in PriceService, CartService, InvoiceService:
 switch (discount.type()) {
     case PERCENT -> price.multiply(ONE.subtract(discount.value().movePointLeft(2)));
     case FIXED   -> price.subtract(discount.value()).max(ZERO);
 }
 ```
 
-## После — абстрактный метод
+## After — an abstract method
 ```java
 public enum DiscountType {
     PERCENT("%") {
@@ -44,11 +44,11 @@ public enum DiscountType {
     public abstract BigDecimal apply(BigDecimal price, BigDecimal value);
 }
 
-// использование
+// usage
 var discounted = discount.type().apply(price, discount.value());
 ```
 
-## После — короче, через лямбду
+## After — shorter, with a lambda
 ```java
 public enum DiscountType {
     PERCENT("%", (p, v) -> p.multiply(BigDecimal.ONE.subtract(v.movePointLeft(2)))),
@@ -62,14 +62,14 @@ public enum DiscountType {
 }
 ```
 
-## Шаги рефакторинга
-1. Найти все `switch` по enum: `grep -rn "switch (.*getType())\|case PERCENT" src/main/java`.
-2. Параметризованный тест по всем константам (`@EnumSource`).
-3. Перенести поведение в enum, заменить `switch` вызовом метода.
+## Refactoring steps
+1. Find all `switch` blocks over the enum: `grep -rn "switch (.*getType())\|case PERCENT" src/main/java`.
+2. A parameterized test over all constants (`@EnumSource`).
+3. Move the behavior into the enum, replace the `switch` with a method call.
 
-## Подводные камни
-- Enum хранится в БД (`@Enumerated(STRING)`) или уходит в API: добавлять поведение безопасно, переименовывать константы — нет. `@Enumerated(ORDINAL)` ломается даже от перестановки.
-- Не перегружай enum: если у константы 6 методов и 4 поля, ей нужен отдельный класс.
+## Pitfalls
+- The enum is stored in the DB (`@Enumerated(STRING)`) or goes out through an API: adding behavior is safe, renaming constants is not. `@Enumerated(ORDINAL)` breaks even from reordering.
+- Do not overload the enum: if a constant has 6 methods and 4 fields, it needs a separate class.
 
-## Связанные паттерны
-Map-lookup · Strategy (поведение с зависимостями) · State (enum-состояния с переходами) · sealed-switch (если «варианты» — разные типы данных).
+## Related patterns
+Map-lookup · Strategy (behavior with dependencies) · State (enum states with transitions) · sealed-switch (if the "variants" are different data types).

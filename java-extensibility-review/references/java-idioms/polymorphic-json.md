@@ -1,20 +1,20 @@
-# Полиморфная (де)сериализация Jackson
+# Polymorphic Jackson (de)serialization
 
-Тип: Jackson-идиома, часто вход в sealed-switch / Strategy / Command
+Type: a Jackson idiom, often the entry to sealed-switch / Strategy / Command
 
-## Суть
-Вместо ручного разбора поля-дискриминатора (`type`) и `switch` с `treeToValue` Jackson сам выбирает подтип по имени. Новый тип сообщения — новый `record` и строка в `@JsonSubTypes`, а не новая ветка парсера.
+## Essence
+Instead of manually parsing a discriminator field (`type`) and a `switch` with `treeToValue`, Jackson picks the subtype by name itself. A new message type is a new `record` and a line in `@JsonSubTypes`, not a new parser branch.
 
-## Признаки в Java/Spring коде
+## Signs in Java/Spring code
 - `JsonNode node = mapper.readTree(json); switch (node.get("type").asText()) { case "CARD" -> mapper.treeToValue(node, CardPaymentDto.class); … }`.
-- DTO-«мешок» со всеми полями всех вариантов, часть из которых `null` в зависимости от `type`.
-- Вебхуки и события разных типов в одном эндпоинте или топике.
+- A "bag" DTO with all fields of all variants, some of which are `null` depending on `type`.
+- Webhooks and events of different types in one endpoint or topic.
 
-## Когда не применять
-- Тип один или различие в одном поле.
-- Формат задаёт внешняя система, и дискриминатор у неё сложный (вложенный, зависит от нескольких полей). Тогда нужен кастомный `JsonDeserializer` или `@JsonTypeIdResolver`.
+## When not to apply
+- There is one type, or the difference is in one field.
+- An external system defines the format, and its discriminator is complex (nested, depends on several fields). Then you need a custom `JsonDeserializer` or `@JsonTypeIdResolver`.
 
-## После
+## After
 ```java
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes({
@@ -28,19 +28,19 @@ public record SbpPaymentDto(String phone, BigDecimal amount) implements PaymentD
 
 @PostMapping("/payments")
 ResponseEntity<?> pay(@RequestBody @Valid PaymentDto dto) {
-    return switch (dto) {                      // sealed-switch, см. sealed-switch.md
+    return switch (dto) {                      // sealed-switch, see sealed-switch.md
         case CardPaymentDto c -> ok(cardFlow.pay(c));
         case SbpPaymentDto s  -> ok(sbpFlow.pay(s));
     };
 }
 ```
-Явный список подтипов в `@JsonSubTypes` — это ещё и документация контракта: его видно в ревью, и случайный класс не станет допустимым типом.
+An explicit list of subtypes in `@JsonSubTypes` is also contract documentation: it is visible in review, and a random class cannot become an allowed type.
 
-## Подводные камни
-- **Безопасность (критично):** никогда не используй `JsonTypeInfo.Id.CLASS` / `Id.MINIMAL_CLASS` и `activateDefaultTyping` / `enableDefaultTyping` на входящих данных: это RCE через gadget-цепочки. Нужен только `Id.NAME` с явным списком подтипов.
-- Неизвестный `type` даёт `InvalidTypeIdException`. Замапь его в 400 в `@ControllerAdvice` или задай `defaultImpl` осознанно.
-- Имена типов — публичный контракт API: переименование класса не должно менять `name`.
-- Для Kafka/RabbitMQ проверь, что те же аннотации использует конвертер сообщений (тот же `ObjectMapper`).
+## Pitfalls
+- **Security (critical):** never use `JsonTypeInfo.Id.CLASS` / `Id.MINIMAL_CLASS` and `activateDefaultTyping` / `enableDefaultTyping` on incoming data: that is RCE through gadget chains. Only `Id.NAME` with an explicit subtype list.
+- An unknown `type` gives `InvalidTypeIdException`. Map it to 400 in a `@ControllerAdvice` or set `defaultImpl` deliberately.
+- Type names are a public API contract: renaming a class must not change the `name`.
+- For Kafka/RabbitMQ check that the message converter uses the same annotations (the same `ObjectMapper`).
 
-## Связанные паттерны
-sealed-switch · Command (команды из JSON) · Strategy (обработчик по типу) · Composite (дерево правил в JSON).
+## Related patterns
+sealed-switch · Command (commands from JSON) · Strategy (a handler per type) · Composite (a rule tree in JSON).

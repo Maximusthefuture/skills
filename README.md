@@ -2,6 +2,12 @@
 
 Набор для Claude Code: оркестратор разработки `java-dev-flow`, доменные скиллы `backend-design-java`, TDD, ревью, диагностика багов, агенты-ревьюеры и критик. Тестовый проект для проверки — [`orders-service/`](orders-service/).
 
+**Язык.** С 2026-10-04 скиллы, агенты, хуки и OpenSpec-ассеты написаны по-английски: тот же текст занимает на 26–35% меньше токенов (замеры — [audit/2026-10-04-report.md](audit/2026-10-04-report.md)). Отвечает Claude на языке пользователя; триггер-фразы в описаниях скиллов — на русском и английском; шаблоны задач Jira остались русскими. README и отчёты — по-русски. Русская версия скиллов (с теми же исправлениями) — в архиве `audit/2026-10-04-ru-skills-snapshot.tar.gz`:
+
+```bash
+mkdir -p /tmp/ru-skills && tar -xzf audit/2026-10-04-ru-skills-snapshot.tar.gz -C /tmp/ru-skills
+```
+
 ## Что здесь
 
 | Каталог | Имя скилла | Что делает | Нужен для |
@@ -10,7 +16,7 @@
 | [`backend-design-java/`](backend-design-java/) | плагин: 14 скиллов, 6 агентов, 5 команд, 3 хука | Дисциплины Spring/JPA/PostgreSQL/Liquibase: миграции, транзакции, идемпотентность, безопасность | `java-dev-flow`, `critic`, `java-spec-review` |
 | [`java-tdd/`](java-tdd/) | `java-tdd` | red → green → refactor, режимы A–D | фаза 4 `java-dev-flow` |
 | [`java-diagnosing-bugs/`](java-diagnosing-bugs/) | `java-diagnosing-bugs` | Причина локального бага: воспроизведение, гипотезы, замеры | маршрут B `java-dev-flow` |
-| [`review/`](review/) | `java-code-review` | Ревью diff: корректность, Spring/JPA, безопасность | агент `java-code-reviewer` |
+| [`java-code-review/`](java-code-review/) | `java-code-review` | Ревью diff: корректность, Spring/JPA, безопасность | агент `java-code-reviewer` |
 | [`java-extensibility-review/`](java-extensibility-review/) | `java-extensibility-review` | Ветвления по типу и статусу, окупится ли паттерн | фазы 2 и 5 `java-dev-flow` |
 | [`java-spec-review/`](java-spec-review/) | `java-spec-review` | Разбор OpenSpec change до кода | проекты с OpenSpec |
 | [`jira-tasks/`](jira-tasks/) | `jira-tasks` | Задачи в Jira с подтверждением | нужен Atlassian MCP |
@@ -23,6 +29,9 @@
 |---|---|---|
 | [`java-dev-flow/assets/agents/java-code-reviewer.md`](java-dev-flow/assets/agents/java-code-reviewer.md) | `java-code-reviewer` | Независимое ревью diff и соответствие спеке, без правок |
 | [`java-dev-flow/assets/agents/critic.md`](java-dev-flow/assets/agents/critic.md) | `critic` | Пре-мортем после задач M и L: что сломается в проде |
+| [`java-dev-flow/assets/agents/test-runner.md`](java-dev-flow/assets/agents/test-runner.md) | `test-runner` | Прогон тестов со сводкой вместо логов (Haiku) |
+
+У `java-code-reviewer` и `critic` стоит `model: sonnet`: на Haiku они пропускают связки между файлами и ошибаются в механике PostgreSQL (аудит 2026-10-03). Основную сессию с `java-dev-flow` тоже лучше вести на Sonnet или Opus.
 
 Скилл `test-audit` в этой папке не лежит. Его копия есть в `orders-service/.claude/skills/test-audit`, а ещё он приходит из claude.ai как `anthropic-skills:test-audit`.
 
@@ -38,7 +47,7 @@
 
 Правила:
 - Копируй каталог скилла целиком: `SKILL.md` ссылается на `references/`, `scripts/`, `assets/` рядом с собой.
-- Каталог называй так же, как поле `name` в `SKILL.md`. Исключение здесь одно: `review/` ставится как `java-code-review/`.
+- Каталог называй так же, как поле `name` в `SKILL.md`.
 - Проектная копия важнее глобальной с тем же именем. Если в проекте лежит старая копия, работать будет она.
 - Новый скилл или агент виден в уже открытой сессии через пару секунд. Исключение: папку `~/.claude/agents/` или `.claude/agents/` создали впервые — тогда нужна новая сессия.
 
@@ -55,16 +64,10 @@ mkdir -p ~/.claude/skills ~/.claude/agents ~/.claude/hooks
 2. Свои скиллы:
 
 ```bash
-cp -R java-dev-flow java-tdd java-diagnosing-bugs java-extensibility-review java-spec-review jira-tasks ~/.claude/skills/
+cp -R java-dev-flow java-tdd java-diagnosing-bugs java-code-review java-extensibility-review java-spec-review jira-tasks ~/.claude/skills/
 ```
 
-3. `java-code-review`. В каталоге `review/` файлы лежат плоско, а `SKILL.md` ждёт подкаталоги `references/` и `scripts/`. Поэтому ставь из архива, там структура правильная:
-
-```bash
-unzip -o review/java-code-review.skill -d ~/.claude/skills/
-```
-
-4. Сторонние скиллы. `grilling` нужен `java-dev-flow`, `grill-me` — ручной вход в него:
+3. Сторонние скиллы. `grilling` нужен `java-dev-flow`, `grill-me` — ручной вход в него:
 
 ```bash
 cp -R mattpocock-skills/grilling mattpocock-skills/grill-me mattpocock-skills/handoff ~/.claude/skills/
@@ -72,15 +75,21 @@ cp -R mattpocock-skills/grilling mattpocock-skills/grill-me mattpocock-skills/ha
 
 Остальные (`retro` вместе с `writing-for-agents`, `update-claude-md`, `git-guardrails-claude-code`) — по желанию, так же через `cp -R`.
 
-5. Агенты:
+4. Агенты:
 
 ```bash
-cp java-dev-flow/assets/agents/java-code-reviewer.md java-dev-flow/assets/agents/critic.md ~/.claude/agents/
+cp java-dev-flow/assets/agents/java-code-reviewer.md java-dev-flow/assets/agents/critic.md java-dev-flow/assets/agents/test-runner.md ~/.claude/agents/
 ```
 
-6. `backend-design-java` — см. следующий раздел.
+5. `backend-design-java` — см. следующий раздел.
 
-7. Хук `critic-gate` — по желанию, см. ниже.
+6. Хуки `java-dev-flow` (critic-gate, evidence-guard, tdd-guard) — см. ниже.
+
+7. Бюджет листинга скиллов. На Haiku листинг из ~60 скиллов не влезает в бюджет по умолчанию (1% окна), и у всех своих скиллов модель видит только имя. В `~/.claude/settings.json`:
+
+```json
+"skillListingBudgetFraction": 0.05
+```
 
 8. Начни новую сессию и проверь: попроси «перечисли доступные скиллы и агентов» или вызови `/java-dev-flow`.
 
@@ -135,24 +144,46 @@ mkdir -p ~/.claude/hooks/backend-design-java && cp backend-design-java/hooks/*.p
 
 Команды при такой установке вызываются без префикса: `/audit`, `/review-migration`.
 
-**Конфликт с оригиналом.** Если включён плагин `backend-design` (из claude.ai он приходит синхронизированным), отключи его: у скиллов одинаковые имена, и сработают оба набора.
-
-## Хук critic-gate
-
-Напоминает запустить `critic`, если ход закончился задачей M или L, а критик не запускался. Два варианта, ставь один. Подробно — в [skill-map.md](java-dev-flow/references/skill-map.md), раздел «Хук critic-gate».
-
-- **Промпт-хук (рекомендуется).** Лёгкая модель читает итоговое сообщение хода и решает сама. Перенеси объект из `hooks.Stop` файла [`critic-gate.prompt.json`](java-dev-flow/assets/hooks/critic-gate.prompt.json) в `hooks.Stop` своего `settings.json`. Стоит один короткий вызов модели на каждое завершение хода.
-- **Скрипт.** Без модели, по реальным изменениям на диске:
-
-```bash
-cp java-dev-flow/assets/hooks/critic_gate.py ~/.claude/hooks/
-```
-
-и в `hooks.Stop`:
+**Конфликт с оригиналом.** Если включён плагин `backend-design` (из claude.ai он приходит синхронизированным как `backend-design@synced`), отключи его: у скиллов одинаковые имена, модель выбирает оригинал с примерами на Prisma и Python, а его PreToolUse-хуки падают на `python: command not found`. В `~/.claude/settings.json`:
 
 ```json
-{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/critic_gate.py", "timeout": 30 }] }
+"enabledPlugins": { "backend-design@synced": false }
 ```
+
+## Хуки java-dev-flow
+
+Механические ворота для того, что модель забывает по тексту скилла. Все — `python3`, без модели (кроме промпт-варианта critic-gate), с юнит-тестами в `java-dev-flow/assets/hooks/tests/`. Подробно — [skill-map.md](java-dev-flow/references/skill-map.md), раздел «Хуки этого скилла».
+
+| Хук | Событие | Что делает |
+|---|---|---|
+| `critic_gate.py` | Stop | изменение похоже на M или L по файлам на диске (видит и правки через Bash), а `critic` не запускался → просит запустить |
+| `critic-gate.prompt.json` | Stop | то же по смыслу переписки: лёгкая модель решает, было ли это M или L. Один вызов Haiku на каждое завершение хода |
+| `evidence_guard.py` | Stop | последний прогон тестов упал или не запустился (Docker), а отчёт молчит → просит назвать упавшие и незапущенные |
+| `tdd_guard.py` | PostToolUse | правка `src/main/**` без показанного RED → напоминание |
+
+Ставь их в `.claude/settings.json` Java-проекта, а не в пользовательский: иначе промпт-хук тратит вызов модели на каждом ходе во всех проектах.
+
+```bash
+cp java-dev-flow/assets/hooks/critic_gate.py java-dev-flow/assets/hooks/evidence_guard.py java-dev-flow/assets/hooks/tdd_guard.py ~/.claude/hooks/
+```
+
+Готовый `settings.json` проекта со всеми хуками (`backend-design-java` + эти четыре) и `skillOverrides` для лишних скиллов из claude.ai — [`java-dev-flow/assets/hooks/settings.example.json`](java-dev-flow/assets/hooks/settings.example.json). Пример установки — `orders-service/.claude/settings.json`.
+
+Проверить хуки:
+
+```bash
+python3 -m unittest discover -s java-dev-flow/assets/hooks/tests
+```
+
+## Maven и Docker
+
+Тесты `orders-service` идут на Testcontainers, поэтому нужен запущенный Docker Desktop. Maven в PATH не обязателен: в проекте есть wrapper `./mvnw`. Если нужен глобальный `mvn`, он лежит внутри IntelliJ IDEA:
+
+```bash
+"/Applications/IntelliJ IDEA.app/Contents/plugins/maven/lib/maven3/bin/mvn" -v
+```
+
+Wrapper в новый проект добавляется той же командой: `"<путь к mvn>" -N wrapper:wrapper`.
 
 ## Установка в один проект
 
@@ -162,6 +193,7 @@ cp java-dev-flow/assets/hooks/critic_gate.py ~/.claude/hooks/
 
 ```markdown
 Любую задачу по коду начинай со скилла `java-dev-flow`. Ревью для задач M и L — агенты `java-code-reviewer` и `critic`.
+Ревью diff — скилл `java-code-review` или агент `java-code-reviewer`, не встроенный `/code-review`.
 ```
 
 ## claude.ai
@@ -171,7 +203,7 @@ cp java-dev-flow/assets/hooks/critic_gate.py ~/.claude/hooks/
 Пересобрать архив после правок, например для `java-dev-flow`:
 
 ```bash
-zip -r -X java-dev-flow.skill java-dev-flow -x '*.DS_Store' 'java-dev-flow/evals/*'
+rm -f java-dev-flow.skill && zip -r -X java-dev-flow.skill java-dev-flow -x '*.DS_Store' 'java-dev-flow/evals/*' '*/__pycache__/*'
 ```
 
 ## Обновление

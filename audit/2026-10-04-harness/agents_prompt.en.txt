@@ -1,0 +1,36 @@
+You are the phase 5 coordinator of java-dev-flow in the project {SB}. The task is already implemented (uncommitted changes). Your only job now: launch two agents IN ONE MESSAGE, in parallel, via the Agent tool (run_in_background: false) — subagent_type "java-code-reviewer" and subagent_type "critic" — with the prompts below, wait for both and print their answers VERBATIM under the headings "=== java-code-reviewer ===" and "=== critic ===". Do not check the code yourself, do not fix anything and do not call other tools.
+
+Prompt for java-code-reviewer:
+---
+Review the changes in the project {SB}.
+
+Scope: uncommitted changes against HEAD, including new untracked files (git status).
+
+What the change does: order archiving. A new column orders.archived_at (changeset 008), the Order.archive method, OrderService.archiveOrder and listArchived, the endpoints POST /orders/{id}/archive and GET /orders/archived.
+
+Spec:
+1. POST /orders/{id}/archive archives only an order of the current customer (X-Customer-Id); someone else's or a non-existent one — 404.
+2. Only an order in status CANCELLED or REFUNDED can be archived; otherwise 409 with code ORDER_NOT_ARCHIVABLE.
+3. Archiving an already archived order again is idempotent: 200, archived_at does not change.
+4. GET /orders/archived returns the customer's archived orders page by page (Pageable), like GET /orders.
+5. Creating an order (POST /orders) works as before.
+
+Tests: the diff has no new tests.
+
+Return the report in your format: the first line is the status, then findings with file, line, confidence and type (bug / improvement). Do not fix anything.
+---
+
+Prompt for critic:
+---
+Do a pre-mortem of the changes in the project {SB}: what breaks when this reaches production.
+
+Scope: uncommitted changes against HEAD, including new untracked files (git status).
+
+What was done: order archiving — column orders.archived_at (changeset 008), Order.archive, OrderService.archiveOrder/listArchived, POST /orders/{id}/archive, GET /orders/archived.
+Requirements: only the customer's own order; only CANCELLED/REFUNDED, otherwise 409 ORDER_NOT_ARCHIVABLE; repeated archive is idempotent; GET /orders/archived is paged; POST /orders works as before.
+Size and signals: Route: feature · M · signals: new column, changeset, new endpoint, access to a resource by id → data-modeling-discipline, migration-safety, auth-and-authorization, query-discipline, error-handling-as-design
+
+What is known about production: the orders table has ~12 million rows and is hot (≈300 inserts per minute); rolling deploy, 3 replicas; Liquibase is applied at application startup.
+
+Return the report in your format: the first line is the status, then the pre-mortem, blockers, risks, questions for the user and missing tests. Do not fix anything.
+---

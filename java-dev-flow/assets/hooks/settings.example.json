@@ -1,0 +1,63 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/backend-design-java/check_migration.py",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/backend-design-java/check_backend_component.py",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/backend-design-java/check_security.py",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/tdd_guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/critic_gate.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/evidence_guard.py",
+            "timeout": 15
+          },
+          {
+            "type": "prompt",
+            "prompt": "Decide whether the critic agent is needed after this Claude turn. critic is a pre-mortem (\"what breaks in production\") for medium or large (M/L) code changes.\n\nHook data: $ARGUMENTS\n\nChanges made through Bash (git apply, sed -i, redirecting into a file, scripts, generators) and edits made by subagents are code changes too: judge them the same way as Edit and Write.\n\nAnswer {\"ok\": true} if at least one holds:\n1. stop_hook_active is true.\n2. background_tasks contains a subagent with agent_type \"critic\" or an agent_type ending in \":critic\".\n3. The turn's conversation shows that critic already ran for this task, or Claude explained to the user why it is not needed.\n4. No production files changed in this turn: answering a question, research, a plan or design without code, documentation, tests only, edits of Claude Code skills, agents, hooks and settings, a commit, running commands that did not change production files.\n5. A size S change: 1–3 production files inside one component without changes to the DB schema, public API or events, authorization, transaction boundaries or external calls. Or a mechanical edit: rename, formatting, comments, imports, generated code, a dependency version.\n6. The turn's conversation does not show what changed.\n\nOtherwise, if this turn clearly made a change of size M or L — a new endpoint, consumer, job or client; a migration or DB schema change; a public API or event change; authorization; transaction boundaries; external calls or payments; 4 or more production files; or Claude itself names the size M or L — answer {\"ok\": false, \"reason\": \"...\"}. In reason write: \"critic-gate: <one line: why this is M or L>. Run the critic agent (Agent, subagent_type critic) on this turn's changes: pass the diff scope or file list, 2–5 lines on what was done, the requirements and what is known about production. Fix confirmed blockers (a bug — test first), bring risks and questions to the user. If you think the critic is not needed here, tell the user why in one line and end the turn.\"",
+            "timeout": 30,
+            "statusMessage": "critic-gate: is a critic needed"
+          }
+        ]
+      }
+    ]
+  },
+  "skillOverrides": {
+    "anthropic-skills:docx": "off",
+    "anthropic-skills:pptx": "off",
+    "anthropic-skills:xlsx": "off",
+    "anthropic-skills:pdf": "off",
+    "anthropic-skills:morning": "off",
+    "anthropic-skills:google-workspace": "off",
+    "anthropic-skills:import-memory": "off",
+    "anthropic-skills:test-audit": "off"
+  }
+}

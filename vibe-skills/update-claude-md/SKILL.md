@@ -1,79 +1,81 @@
 ---
 name: update-claude-md
-description: Актуализация CLAUDE.md — удаление устаревшей информации, обновление разделов под текущее состояние кода, добавление пропущенного. Используй когда пользователь просит обновить CLAUDE.md, почистить документацию проекта, убрать ненужное из контекста агента, синхронизировать документацию с кодом, или когда CLAUDE.md явно расходится с реальностью.
+description: "Brings CLAUDE.md up to date — removes stale information, updates sections to the current state of the code, adds what is missing. Use when the user asks to update CLAUDE.md, clean up project docs, remove noise from the agent's context, sync the docs with the code («обнови CLAUDE.md», «почисти документацию»), or when CLAUDE.md clearly diverges from reality."
 ---
 
-Ты — технический писатель. Задача: привести CLAUDE.md в соответствие с реальным состоянием кодовой базы. CLAUDE.md — это контекст для AI-агента, не для людей: он должен быть точным, кратким и актуальным.
+You are a technical writer. The task: bring CLAUDE.md in line with the real state of the codebase. CLAUDE.md is context for an AI agent, not for people: it must be accurate, short and current.
 
-## Алгоритм работы
+## Workflow
 
-### Шаг 1: Прочитать текущий CLAUDE.md
+### Step 1: Read the current CLAUDE.md
 
-Прочитай `CLAUDE.md` в корне проекта целиком. Выпиши из него:
-- Какие разделы есть.
-- Какие конкретные утверждения о коде/архитектуре/стеке делаются.
-- Какие пути к директориям, файлам, командам упоминаются.
+Read the `CLAUDE.md` at the project root in full. Write down:
+- which sections it has;
+- which concrete claims about the code/architecture/stack it makes;
+- which directory, file and command paths it mentions.
 
-### Шаг 2: Исследовать текущее состояние кода
+### Step 2: Investigate the current state of the code
 
-Для каждого утверждения из CLAUDE.md найди подтверждение в коде. Универсальные источники истины:
+For every claim in CLAUDE.md find confirmation in the code. Universal sources of truth:
 
-- **Стек и зависимости** — манифест зависимостей проекта (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml` и т.д.).
-- **Точки входа / внешние интерфейсы** — соответствующие директории (контроллеры, роутеры, CLI-команды, обработчики очередей).
-- **Структура проекта** — реальное дерево директорий первого-второго уровня.
-- **Команды разработки** — таск-раннер проекта (`Justfile`, `Makefile`, `package.json:scripts`, и т.д.).
-- **Архитектурные единицы** (агрегаты/модули/сервисы/пакеты) — посмотреть содержимое соответствующих директорий.
+- **Stack and dependencies** — the project's dependency manifest (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`, etc.).
+- **Entry points / external interfaces** — the matching directories (controllers, routers, CLI commands, queue handlers).
+- **Project structure** — the real directory tree, first and second level.
+- **Development commands** — the project's task runner (`Justfile`, `Makefile`, `package.json:scripts`, etc.).
+- **Architectural units** (aggregates/modules/services/packages) — look at the contents of the matching directories.
 
-Не хардкодь конкретные пути или команды — каждый раз определяй их из текущего состояния проекта.
+Do not hardcode specific paths or commands — determine them from the current state of the project every time.
 
-### Шаг 3: Выявить расхождения
+### Step 3: Find the divergences
 
-По каждому разделу CLAUDE.md фиксируй:
-- **Устарело**: есть в CLAUDE.md, нет в коде
-- **Неверно**: описано не так, как реально работает
-- **Пропущено**: есть в коде, отсутствует в CLAUDE.md (важное)
+For every CLAUDE.md section record:
+- **Stale**: in CLAUDE.md, not in the code
+- **Wrong**: described differently from how it really works
+- **Missing**: in the code, absent from CLAUDE.md (important things)
 
-Критерий важности для добавления: информация, которая нужна агенту чтобы не делать ошибок или не переспрашивать. Не добавляй всё подряд — только то, что влияет на решения.
+The criterion for adding: information the agent needs to avoid mistakes or avoid asking again. Do not add everything — only what affects decisions.
 
-### Шаг 4: Подготовить список изменений
+### Step 4: Prepare the list of changes
 
-Перед правкой покажи пользователю список:
+Before editing show the user the list:
 ```
-УДАЛИТЬ:
-- [раздел/строка]: причина
+REMOVE:
+- [section/line]: reason
 
-ОБНОВИТЬ:
-- [раздел]: что устарело → что актуально
+UPDATE:
+- [section]: what is stale → what is current
 
-ДОБАВИТЬ:
-- [раздел]: что и зачем
+ADD:
+- [section]: what and why
 ```
 
-Дождись подтверждения (или пропусти этот шаг если пользователь сказал «просто обнови»).
+Wait for confirmation (or skip this step if the user said "just update it").
 
-### Шаг 5: Применить изменения
+### Step 5: Apply the changes
 
-Правь CLAUDE.md через Edit tool точечно, не переписывая весь файл целиком.
+Edit CLAUDE.md with the Edit tool point by point, without rewriting the whole file.
 
-Принципы:
-- Сохраняй структуру разделов если она логична
-- Сохраняй инструкции для агента (языковые настройки, порядок вызова скиллов и т.д.)
-- Убирай капитан-очевидность — то, что видно из самого кода
-- Убирай дублирование между CLAUDE.md и `.claude/rules/*.md`
-- Структура кода: обновляй только если изменения существенные (новые модули, удалённые модули)
+Principles:
+- Keep the section structure if it is logical
+- Keep instructions for the agent (language settings, the order of calling skills, etc.)
+- Remove the obvious — what is visible from the code itself
+- Remove duplication between CLAUDE.md and `.claude/rules/*.md`
+- Code structure: update only if the changes are substantial (new modules, removed modules)
 
-## Что не трогать
+## Do not touch
 
-- Языковые настройки и инструкции по поведению агента
-- Раздел «Оркестратор скиллов» и аналогичные мета-инструкции
-- Вещи, которые не выводимы из кода: бизнес-контекст, причины архитектурных решений, неочевидные ограничения, подводные камни
+- Language settings and agent behavior instructions
+- The "skill orchestrator" section and similar meta-instructions
+- Things not derivable from the code: business context, reasons for architectural decisions, non-obvious constraints, pitfalls
 
-## Формат итогового ответа
+## Final answer format
 
-После всех правок:
+After all edits:
 ```
-Обновлён CLAUDE.md:
-- Удалено: [краткий список]
-- Обновлено: [краткий список]
-- Добавлено: [краткий список]
+CLAUDE.md updated:
+- Removed: [short list]
+- Updated: [short list]
+- Added: [short list]
 ```
+
+Write the edits and the final answer in the user's language and keep CLAUDE.md in the language it is written in.

@@ -18,6 +18,10 @@ EXCLUDES=(
 
 find_base() {
   local upstream
+  # репозиторий без коммитов: база — пустое дерево, всё в индексе считается новым
+  if ! git rev-parse --verify -q HEAD >/dev/null; then
+    git hash-object -t tree /dev/null; return
+  fi
   if upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null); then
     # если ветка уже запушена и upstream — это она сама, сравниваем с main
     if [[ "$upstream" != *"/$(git branch --show-current)" ]]; then

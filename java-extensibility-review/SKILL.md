@@ -1,20 +1,29 @@
 ---
 name: java-extensibility-review
-description: Ревью Java / Spring Boot кода на расширяемость - оркестратор паттернов проектирования. Находит длинные if/else и switch по типу/статусу/строке, instanceof-цепочки, повторяющиеся ветвления по одному enum, сервисы-комбайны, взрыв подклассов, хардкод таблиц, ручные синглтоны, конструкторы на много параметров - и по каталогу всех 22 паттернов GoF (Strategy, State, Chain of Responsibility, Command, Observer, Template Method, Visitor, Iterator, Mediator, Memento, Decorator, Proxy, Adapter, Facade, Bridge, Composite, Flyweight, Factory Method, Abstract Factory, Builder, Prototype, Singleton) и Java/Spring-идиом (Map-lookup, Map<String, Bean>, enum с поведением, sealed + switch, Specification, Null Object, @ConfigurationProperties) подбирает подходящий паттерн с кодом «до/после» и честной оценкой, стоит ли он того. Use this skill whenever the user asks about extensibility, design patterns, SOLID / Open-Closed or refactoring branching logic in Java or Spring - "много if else", "как убрать switch", "сделай расширяемым", "какой паттерн тут подходит", "вынести в стратегию", "Map<String, Bean>", "паттерны проектирования", "отрефактори сервис", "ревью архитектуры класса", "code smells", "review for design patterns", "replace conditional with polymorphism", "/java-extensibility-review" - even if they just paste a Java class and ask "как сделать лучше". Complements java-code-review (bugs/security), which deliberately skips design.
-compatibility: Claude Code. Рекомендуется Serena MCP (семантическая навигация и правки по символам); без неё — Grep / Glob / Read. git — опционально (ревью diff и история изменений).
+description: "Extensibility review of Java / Spring Boot code: what has to change when one more variant is added. Finds switch and if/else on type, status or string, instanceof chains, repeated branching on an enum, god services, constructors with many parameters — and using a catalog of the 22 GoF patterns and Java/Spring idioms (Map<String, Bean>, enum with behavior, sealed + switch, Specification) picks a pattern with before/after code and an honest estimate of whether it pays off. Runs in a separate context: pass the scope in the arguments — paths to classes or a package, a diff range or the code itself. Use on «много if else», «как убрать switch», «сделай расширяемым», «какой паттерн подходит», «вынести в стратегию», «ревью архитектуры класса», too many if/else, which pattern fits, design patterns, Open-Closed, replace conditional with polymorphism, /java-extensibility-review. Bugs and security — java-code-review."
+context: fork
+agent: general-purpose
+background: false
+compatibility: Claude Code. Serena MCP is recommended (semantic navigation and symbol-level edits); without it — Grep / Glob / Read. git — optional (diff review and change history).
 ---
 
-# Java Extensibility Review — оркестратор паттернов
+# Java Extensibility Review — pattern orchestrator
 
-Ревью Java / Spring Boot кода с одним вопросом: **что придётся менять, когда добавится ещё один вариант** (способ оплаты, тип документа, статус, канал уведомлений, провайдер, правило)? Если ответ «найти и поправить N мест в существующих классах», это кандидат на рефакторинг. Если «добавить один класс, бин или строку конфига», код уже расширяем.
+A review of Java / Spring Boot code with one question: **what has to change when one more variant is added** (a payment method, document type, status, notification channel, provider, rule)? If the answer is "find and edit N places in existing classes", it is a refactoring candidate. If it is "add one class, bean or config line", the code is already extensible.
 
-Задача — найти **несколько мест, где паттерн реально окупится**, и показать, как именно. Расставлять паттерны везде не нужно. Лишний паттерн — тоже дефект: интерфейс и три класса вместо понятного `switch` на 3 ветки делают код хуже.
+The task is to find **a few places where a pattern really pays off**, and to show exactly how. There is no need to put patterns everywhere. An unneeded pattern is a defect too: an interface and three classes instead of a clear 3-branch `switch` make the code worse.
 
-## Как устроен скилл
+## Running in a separate context
 
-Этот файл — оркестратор. Здесь описан порядок работы и **каталог применимости**: по каким признакам в коде узнать каждый паттерн и где лежит его подробное описание. Всё остальное лежит в `references/<группа>/<паттерн>.md`. Для 22 паттернов GoF там есть суть, структура (участники и их роли со схемой), признаки в Java/Spring коде, когда не применять, код «до/после», шаги рефакторинга, подводные камни, плюсы и минусы, связанные паттерны. Файлы самодостаточны, внешние источники не нужны.
+The skill runs in a separate subagent (`context: fork`) and does not see the conversation it was called from. Take the scope from the arguments: paths to files or a package, a diff range, pasted code. If the arguments have no path, no code and no range, return one line `NEEDS_CONTEXT: give the scope — paths to classes or a package, a diff range or code` and stop.
 
-Открывай reference только для паттернов, чьи признаки нашёл в коде. Обычно это 1–4 файла на ревью. Не читай весь каталог: это сжигает контекст и подталкивает «найти применение» каждому паттерну.
+The answer goes to the caller in full, so it is the report of step 6: at most 80 lines, before/after code only for "Recommend" items, and brief. `--fix` mode only if it is in the arguments; then at the end list the changed files and the verification commands you ran.
+
+## How the skill is organized
+
+This file is the orchestrator. It describes the workflow and the **applicability catalog**: by which signs in the code each pattern is recognized and where its detailed description lives. Everything else is in `references/<group>/<pattern>.md`. For the 22 GoF patterns these have the essence, the structure (participants and their roles with a diagram), signs in Java/Spring code, when not to apply, before/after code, refactoring steps, pitfalls, pros and cons, related patterns. The files are self-contained; no external sources are needed.
+
+Open a reference only for patterns whose signs you found in the code. Usually that is 1–4 files per review. Do not read the whole catalog: it burns context and pushes you to "find a use" for every pattern.
 
 ```
 references/
@@ -26,232 +35,232 @@ references/
                 null-object, configuration-over-code, polymorphic-json
 ```
 
-## Порядок работы
+## Workflow
 
-### 1. Определи область
+### 1. Determine the scope
 
-| Запрос | Область |
+| Request | Scope |
 |---|---|
-| вставлен код / путь к файлу | этот файл, а также классы, которые он вызывает и которые вызывают его |
-| путь к пакету/модулю | все `.java` в нём, кроме тестов |
-| «мои изменения», ветка, PR | изменённые `.java`: `git diff --name-only <base>...HEAD -- '*.java'` |
-| без уточнений, большой проект | спроси область; для небольшого бери `src/main/java` целиком |
-| `--fix` | после отчёта применить рекомендации (шаг 7) |
+| pasted code / a file path | that file, plus the classes it calls and that call it |
+| a package/module path | all `.java` in it except tests |
+| "my changes", a branch, a PR | the changed `.java`: `git diff --name-only <base>...HEAD -- '*.java'` |
+| no details, a big project | ask for the scope; for a small one take all of `src/main/java` |
+| `--fix` | apply the recommendations after the report (step 7) |
 
-### 2. Найди кандидатов сам — через Serena
+### 2. Find candidates yourself — with Serena
 
-Кандидатов ищешь ты, а не скрипт. Регулярное выражение находит `switch`, но не скажет, повторяется ли знание о варианте по коду, есть ли у веток зависимости и окупится ли паттерн. Это понимание кода, поэтому работай семантически и читай только нужные символы, а не файлы целиком.
+You find the candidates, not a script. A regex finds a `switch`, but it will not tell whether knowledge of the variant repeats across the code, whether the branches have dependencies and whether a pattern pays off. That takes understanding the code, so work semantically and read only the symbols you need, not whole files.
 
-Если подключена **Serena MCP** (инструменты `mcp__serena__*`), используй её. Если нет — делай то же самое через Grep / Glob / Read. Перед первым вызовом Serena проверь, что проект активирован (`activate_project`, `check_onboarding_performed`).
+If **Serena MCP** is connected (the `mcp__serena__*` tools), use it. If not — do the same with Grep / Glob / Read. Before the first Serena call make sure the project is activated (`activate_project`, `check_onboarding_performed`).
 
-**2.1. Карта области — `get_symbols_overview`** по каждому файлу или пакету из шага 1. На карте символов уже видны структурные запахи, ещё до чтения тел методов:
-- имена классов — декартово произведение двух осей (`EmailOrderNotification`, `SmsInvoiceNotification`) → Bridge;
-- семейство похожих классов (`CsvImporter`, `XlsxImporter`, `XmlImporter`) → Template Method или композиция;
-- классы `*Utils`/`*Helper`/`*Manager` с десятками методов, сервисы на 30+ методов → Command, Facade;
-- `getInstance`, статические поля `INSTANCE` → Singleton;
-- enum-ы в области — запиши их, они понадобятся в 2.3;
-- интерфейс с единственной реализацией — запомни, это кандидат в «оставить как есть» или признак протекающего Adapter.
+**2.1. A map of the scope — `get_symbols_overview`** for every file or package from step 1. Structural smells show on the symbol map before reading method bodies:
+- class names are a Cartesian product of two axes (`EmailOrderNotification`, `SmsInvoiceNotification`) → Bridge;
+- a family of similar classes (`CsvImporter`, `XlsxImporter`, `XmlImporter`) → Template Method or composition;
+- `*Utils`/`*Helper`/`*Manager` classes with dozens of methods, services with 30+ methods → Command, Facade;
+- `getInstance`, static `INSTANCE` fields → Singleton;
+- the enums in the scope — write them down, you need them in 2.3;
+- an interface with a single implementation — note it, it is a "leave as is" candidate or a sign of a leaking Adapter.
 
-**2.2. Точечный поиск — `search_for_pattern`** (ограничь `relative_path` областью ревью, исключи тесты). Это не детектор, а способ быстро найти места, которые стоит открыть:
+**2.2. Targeted search — `search_for_pattern`** (limit `relative_path` to the review scope, exclude tests). This is not a detector but a way to quickly find places worth opening:
 
-| Что ищем | Шаблон (regex) | Куда смотреть дальше |
+| What we look for | Pattern (regex) | Where to look next |
 |---|---|---|
-| цепочки ветвлений | `else\s+if\s*\(` | map-lookup, strategy, chain-of-responsibility |
+| branching chains | `else\s+if\s*\(` | map-lookup, strategy, chain-of-responsibility |
 | switch | `switch\s*\(` | map-lookup, strategy, enum-with-behavior, state |
-| проверки типа | `instanceof\s+[A-Z]` | sealed-switch, visitor |
-| сравнение строк-ключей | `\.equals(IgnoreCase)?\("\|"\w+"\.equals\(` | map-lookup, strategy |
-| статусы | `setStatus\(\|getStatus\(\)\s*[!=]=` | state |
-| создание в ветках | `(->\|return)\s*new\s+[A-Z]` | factory-method |
-| синглтоны и локатор | `getInstance\(\|static\s+\S+\s+INSTANCE\|\.getBean\(` | singleton |
-| самодельные ретраи и кэш | `Thread\.sleep\|retry\|attempt\|ConcurrentHashMap<` | decorator |
-| ручной разбор JSON | `readTree\(\|get\("type"\)` | polymorphic-json |
-| динамический запрос | `createQuery\(\|\+=\s*"\s*(and\|AND\|where)` | specification |
-| null-проверки зависимостей | `required\s*=\s*false\|!=\s*null\)\s*\w+\.` | null-object |
-| ручная пагинация | `nextPageToken\|hasNext\(\)\|nextPageable\(` | iterator |
-| циклы бинов | `@Lazy\|allow-circular-references` | mediator |
+| type checks | `instanceof\s+[A-Z]` | sealed-switch, visitor |
+| comparing string keys | `\.equals(IgnoreCase)?\("\|"\w+"\.equals\(` | map-lookup, strategy |
+| statuses | `setStatus\(\|getStatus\(\)\s*[!=]=` | state |
+| creation in branches | `(->\|return)\s*new\s+[A-Z]` | factory-method |
+| singletons and a locator | `getInstance\(\|static\s+\S+\s+INSTANCE\|\.getBean\(` | singleton |
+| homemade retries and cache | `Thread\.sleep\|retry\|attempt\|ConcurrentHashMap<` | decorator |
+| manual JSON parsing | `readTree\(\|get\("type"\)` | polymorphic-json |
+| a dynamic query | `createQuery\(\|\+=\s*"\s*(and\|AND\|where)` | specification |
+| null checks of dependencies | `required\s*=\s*false\|!=\s*null\)\s*\w+\.` | null-object |
+| manual pagination | `nextPageToken\|hasNext\(\)\|nextPageable\(` | iterator |
+| bean cycles | `@Lazy\|allow-circular-references` | mediator |
 
-`\|` в таблице — экранирование для Markdown. В самом шаблоне пиши `|`.
+`\|` in the table is Markdown escaping. Write `|` in the pattern itself.
 
-**2.3. Главный сигнал — где используется каждый вариант (`find_referencing_symbols`).** Для каждого enum или типа-дискриминатора из 2.1 (`PaymentType`, `OrderStatus`, `Channel`) найди ссылки на него. Если `switch`/`if` по нему встречается в **двух и более классах**, знание о варианте размазано по коду. Это самый сильный аргумент за Strategy, enum с поведением или Abstract Factory, сильнее длины одного `switch`. Так же проверь интерфейсы: сколько у них реализаций и откуда их выбирают.
+**2.3. The main signal — where each variant is used (`find_referencing_symbols`).** For every enum or discriminator type from 2.1 (`PaymentType`, `OrderStatus`, `Channel`) find its references. If a `switch`/`if` on it appears in **two or more classes**, the knowledge of the variant is smeared across the code. That is the strongest argument for Strategy, an enum with behavior or Abstract Factory, stronger than the length of one `switch`. Check interfaces the same way: how many implementations they have and where they are chosen.
 
-**2.4. Чтение кандидатов — `find_symbol` с `include_body=true`** только для методов и конструкторов, попавших в 2.1–2.3. Читая тело, отвечай на вопросы:
-- Ветки возвращают значения → map-lookup или enum. Ветки — логика с разными бинами → strategy. Условия сложнее равенства → chain-of-responsibility.
-- Сколько зависимостей в конструкторе и все ли нужны в каждом вызове? 6+ зависимостей, из которых используется одна по типу → strategy. Хвост побочных вызовов после `save()` → observer.
-- Длинный список параметров или boolean-флаги → builder.
-- Есть ли кэш, ретраи, метрики вперемешку с логикой → decorator.
+**2.4. Reading candidates — `find_symbol` with `include_body=true`** only for the methods and constructors that came up in 2.1–2.3. While reading the body, answer:
+- Branches return values → map-lookup or an enum. Branches are logic with different beans → strategy. Conditions more complex than equality → chain-of-responsibility.
+- How many dependencies does the constructor have, and are all needed in every call? 6+ dependencies of which one is used per type → strategy. A tail of side calls after `save()` → observer.
+- A long parameter list or boolean flags → builder.
+- Cache, retries, metrics mixed with the logic → decorator.
 
-**2.5. Вызывающий код — `find_referencing_symbols`** для метода-кандидата: сколько мест его вызывают и как. Это нужно, чтобы оценить цену рефакторинга и не предложить ломающее изменение сигнатуры.
+**2.5. Calling code — `find_referencing_symbols`** for a candidate method: how many places call it and how. You need this to estimate the cost of the refactoring and not to propose a breaking signature change.
 
-Без Serena: Glob по `**/*.java` в области, Grep с теми же шаблонами, `grep -rn "PaymentType\." src/main/java` вместо поиска ссылок, Read только нужных диапазонов строк.
+Without Serena: Glob for `**/*.java` in the scope, Grep with the same patterns, `grep -rn "PaymentType\." src/main/java` instead of reference search, Read only the needed line ranges.
 
-Чего не делай: не читай каждый файл целиком и не превращай таблицу шаблонов в чек-лист «нашёл совпадение — значит, замечание». Совпадение шаблона — повод открыть код, а не находка.
+What not to do: do not read every file in full and do not turn the pattern table into a checklist "found a match — so it is a remark". A pattern match is a reason to open the code, not a finding.
 
-### 3. Сопоставь признаки с каталогом
+### 3. Match the signs against the catalog
 
-Начни с таблицы быстрого выбора, затем проверь применимость кандидата в каталоге. Если подходят два соседних паттерна, загляни в таблицу «Часто путают». Только после этого открывай reference выбранного паттерна.
+Start with the quick selection table, then check the candidate's applicability in the catalog. If two neighboring patterns fit, look at the "Often confused" table. Only then open the chosen pattern's reference.
 
-### 4. Пойми контекст
+### 4. Understand the context
 
-- **Версии.** Java из `pom.xml`/`build.gradle`: `switch`-выражения — с 14, `record` — с 16, sealed — с 17, pattern matching в `switch` — с 21. Spring Boot 2.x (`javax.*`) или 3.x (`jakarta.*`). Предлагай синтаксис, который проект может скомпилировать.
-- **Как часто добавляются варианты.** `git log --oneline -- <файл> | head -20`, `git log -p -- <файл>`. Ветки, которые добавлялись 5 раз за год, — сильный аргумент. Switch, нетронутый с 2019 года, — аргумент оставить его.
-- **Сколько мест знает о варианте.** Результат шага 2.3 (`find_referencing_symbols` по enum или типу; без Serena — `grep -rn 'PaymentType\.\|"CARD"' src/main/java`). Правки в 1 месте — норма, в 5 местах — проблема.
-- **Зависимости веток.** Если ветки используют разные бины, нужна Strategy через бины. Если ветки — чистые вычисления, хватит Map или enum с поведением.
-- **Конвенции проекта.** Уже есть `*Handler`, `*Strategy`, реестры — предлагай делать так же, не заводи второй механизм. `CLAUDE.md` и соседние классы — источник правды.
+- **Versions.** Java from `pom.xml`/`build.gradle`: `switch` expressions — since 14, `record` — since 16, sealed — since 17, pattern matching in `switch` — since 21. Spring Boot 2.x (`javax.*`) or 3.x (`jakarta.*`). Propose syntax the project can compile.
+- **How often variants are added.** `git log --oneline -- <file> | head -20`, `git log -p -- <file>`. Branches added 5 times in a year are a strong argument. A switch untouched since 2019 is an argument to leave it.
+- **How many places know about the variant.** The result of step 2.3 (`find_referencing_symbols` on the enum or type; without Serena — `grep -rn 'PaymentType\.\|"CARD"' src/main/java`). Edits in 1 place are normal, in 5 places — a problem.
+- **Branch dependencies.** If branches use different beans, you need a Strategy over beans. If branches are pure calculations, a Map or an enum with behavior is enough.
+- **Project conventions.** There already are `*Handler`, `*Strategy`, registries — propose doing the same, do not start a second mechanism. `CLAUDE.md` and neighboring classes are the source of truth.
 
-### 5. Проверь, стоит ли оно того
+### 5. Check whether it is worth it
 
-Для каждого кандидата:
+For every candidate:
 
-1. **Правило трёх.** Абстракция окупается, когда вариантов ≥3 *и* они добавляются, или когда одно ветвление повторяется в ≥2 местах. 2–3 стабильные ветки в одном месте — «оставить как есть».
-2. **Ось изменений.** Чаще добавляются новые *типы* — Strategy или полиморфизм. Чаще новые *операции* над закрытым набором типов — sealed + `switch` или Visitor. Ошибка с осью ухудшает код.
-3. **Выигрыш одной фразой**, например: «новый способ оплаты — один `@Component`, существующие файлы не меняются». Если фраза не складывается, не предлагай.
-4. **Цена.** Навигация по N классам, неявные связи через имена бинов, ошибки в рантайме вместо компиляции. Предлагаемый вариант должен закрывать эти риски: ключ из enum, проверка полноты при старте, понятная ошибка на неизвестный ключ.
-5. **Тесты.** Нет тестов на текущее поведение — первым шагом рекомендации идёт характеризационный тест.
+1. **The rule of three.** An abstraction pays off when there are ≥3 variants *and* they keep being added, or when one branching repeats in ≥2 places. 2–3 stable branches in one place — "leave as is".
+2. **The axis of change.** New *types* are added more often — Strategy or polymorphism. New *operations* over a closed set of types are added more often — sealed + `switch` or Visitor. Getting the axis wrong makes the code worse.
+3. **The gain in one sentence**, e.g.: "a new payment method is one `@Component`, existing files do not change". If the sentence does not come together, do not propose it.
+4. **The cost.** Navigating N classes, implicit links through bean names, runtime errors instead of compile errors. The proposed option must close these risks: a key from an enum, a completeness check at startup, a clear error for an unknown key.
+5. **Tests.** No tests on the current behavior — a characterization test is the first step of the recommendation.
 
-Вердикты: **Рекомендую** (ось изменений подтверждена историей или повторами, выигрыш понятен) · **Можно** (заметно лучше, но не срочно — сделать, когда снова придётся трогать этот код) · **Оставить как есть** (похоже на кандидата, но не окупится; упомяни коротко, чтобы было видно, что место смотрели).
+Verdicts: **Recommend** (the axis of change is confirmed by history or repetition, the gain is clear) · **Could** (noticeably better but not urgent — do it the next time this code has to be touched) · **Leave as is** (looks like a candidate but will not pay off; mention it briefly so it is visible the place was looked at).
 
-### 6. Оформи отчёт
+### 6. Write the report
 
-Пиши на языке пользователя. Код примеров — в стиле проекта: Lombok или без него, constructor injection, те же суффиксы имён.
+Write in the user's language. Example code follows the project's style: Lombok or not, constructor injection, the same name suffixes.
 
 ```markdown
-## Ревью расширяемости: <что смотрели, напр. "модуль payments, 23 файла">
+## Extensibility review: <what was looked at, e.g. "payments module, 23 files">
 
-**Итог:** <1–2 предложения: главная проблема расширяемости и что даст рефакторинг>
+**Summary:** <1–2 sentences: the main extensibility problem and what the refactoring gives>
 
-### 1. <название, напр. "switch по PaymentType в 4 местах"> — **Рекомендую**
-**Где:** `PaymentService.java:58`, `RefundService.java:31`, `FeeCalculator.java:12`
-**Сейчас:** <чего стоит добавление нового варианта: "новый тип = правки в 4 файлах, легко забыть одно">
-**Паттерн:** <название> — <почему он, а не соседний из «Часто путают»>
-**После:**
+### 1. <title, e.g. "switch on PaymentType in 4 places"> — **Recommend**
+**Where:** `PaymentService.java:58`, `RefundService.java:31`, `FeeCalculator.java:12`
+**Now:** <what adding a new variant costs: "a new type = edits in 4 files, easy to forget one">
+**Pattern:** <name> — <why it and not its neighbor from "Often confused">
+**After:**
 ```java
-// минимальный компилируемый скетч: интерфейс, одна реализация, реестр/место вызова
+// a minimal compilable sketch: the interface, one implementation, the registry/call site
 ```
-**Выигрыш:** <что теперь значит "добавить вариант">
-**Цена/риски:** <что усложнится и как это закрыто>
-**Шаги:** <2–4 шага безопасного рефакторинга; первым — тест, если его нет>
+**Gain:** <what "add a variant" means now>
+**Cost/risks:** <what gets more complex and how that is covered>
+**Steps:** <2–4 steps of a safe refactoring; the first is a test if there is none>
 
-### 2. ... — **Можно**
+### 2. ... — **Could**
 
-### Оставить как есть
-- `StatusMapper.java:20` — switch на 3 стабильные ветки, не менялся 2 года.
+### Leave as is
+- `StatusMapper.java:20` — a switch on 3 stable branches, unchanged for 2 years.
 
-### Что уже хорошо
-<1–2 предложения, если есть удачная расширяемая конструкция, на которую стоит равняться>
+### What is already good
+<1–2 sentences if there is a good extensible construct worth following>
 ```
 
-Порядок пунктов — по выигрышу. Обычно 1–5 пунктов. Если хороших кандидатов нет, так и напиши и перечисли, что проверил. Это нормальный результат.
+Order the items by gain. Usually 1–5 items. If there are no good candidates, say so and list what you checked. That is a normal result.
 
-Не включай: стилистику; баги и безопасность (это задача `java-code-review`; критичное, замеченное попутно, упомяни одной строкой в конце); абстракции «на будущее» без признаков этого будущего; паттерн ради названия паттерна.
+Do not include: style; bugs and security (that is `java-code-review`'s job; something critical noticed along the way — one line at the end); abstractions "for the future" without signs of that future; a pattern for the sake of its name.
 
-### 7. Режим `--fix`
+### 7. `--fix` mode
 
-1. Бери только пункты «Рекомендую» (остальные — если пользователь явно назвал).
-2. Нет тестов на текущее поведение — сначала характеризационный тест, зелёный на старом коде.
-3. Рефактори маленькими шагами без изменения поведения. Конкретные шаги — в разделе «Шаги рефакторинга» reference-файла паттерна. Поведение для неизвестного ключа или варианта сохраняй (или явно согласуй с пользователем).
-   С Serena правь по символам, а не построчно: `replace_symbol_body` — заменить тело метода (например, `switch` на вызов реестра), `insert_after_symbol` — добавить новый класс или метод рядом, `rename_symbol` — переименование с обновлением ссылок. Перед изменением сигнатуры проверь все вызовы через `find_referencing_symbols`.
-4. После каждого крупного шага — сборка и тесты модуля (`./mvnw -q test -pl <module>` / `./gradlew :<module>:test`). Для реестров бинов добавь тест, что контекст поднимается и все значения enum покрыты.
-5. Не коммить и не пушь. Покажи `git diff` и перечисли, что сделано и что осталось.
+1. Take only the "Recommend" items (others — if the user named them explicitly).
+2. No tests on the current behavior — first a characterization test, green on the old code.
+3. Refactor in small steps without behavior change. The concrete steps are in the "Refactoring steps" section of the pattern's reference file. Keep the behavior for an unknown key or variant (or agree it explicitly with the user).
+   With Serena edit by symbols, not line by line: `replace_symbol_body` — replace a method body (e.g. a `switch` with a registry call), `insert_after_symbol` — add a new class or method next to it, `rename_symbol` — a rename with references updated. Before changing a signature check all calls via `find_referencing_symbols`.
+4. After every major step — build and module tests (`./mvnw -q test -pl <module>` / `./gradlew :<module>:test`). For bean registries add a test that the context starts and all enum values are covered.
+5. Do not commit or push. Show `git diff` and list what is done and what is left.
 
 ---
 
-## Быстрый выбор по признакам в коде
+## Quick selection by signs in the code
 
-| Признак в коде | Первый кандидат | Альтернативы |
+| Sign in the code | First candidate | Alternatives |
 |---|---|---|
-| `if/switch` по строке/enum, ветки возвращают значение | `java-idioms/map-lookup` | `java-idioms/enum-with-behavior` |
-| `if/switch` по типу, ветки — разная логика с бинами | `behavioral/strategy` | `creational/factory-method` (если ветки делают `new`) |
-| Один `switch` по enum повторяется в 2+ местах | `behavioral/strategy` | `java-idioms/enum-with-behavior` |
-| `instanceof`-цепочки, закрытый набор типов | `java-idioms/sealed-switch` | `behavioral/visitor`, полиморфизм |
-| Поведение многих методов зависит от статуса; проверки переходов размазаны | `behavioral/state` | — |
-| Длинный `validate()` / последовательность обработчиков | `behavioral/chain-of-responsibility` | `structural/composite` (AND/OR правил) |
-| После `save()` хвост вызовов: почта, аудит, аналитика | `behavioral/observer` | `behavioral/mediator` |
-| Сервисы вызывают друг друга по кругу, `@Lazy` против циклов | `behavioral/mediator` | `behavioral/observer` |
-| `switch (action)` в контроллере/consumer; операции нужно ставить в очередь, логировать, повторять | `behavioral/command` | — |
-| Одинаковый «скелет» алгоритма в нескольких классах | `behavioral/template-method` | `behavioral/strategy` (композиция шагов) |
-| Ручные циклы пагинации / обхода дерева в нескольких местах | `behavioral/iterator` | — |
-| Ручной backup полей и откат, undo, «вернуть версию» | `behavioral/memento` | — |
-| Кэш/ретраи/метрики вперемешку с логикой; `CachingRetryingClient` | `structural/decorator` | `structural/proxy` |
-| Повторяющиеся проверки доступа или ленивая инициализация в начале методов | `structural/proxy` | `structural/decorator` |
-| Типы SDK провайдера в доменном коде | `structural/adapter` | `structural/facade` |
-| Одна и та же оркестрация нескольких подсистем в нескольких местах | `structural/facade` | `behavioral/mediator` |
-| Имена классов — декартово произведение (`EmailOrderNotification`, `SmsInvoiceNotification`) | `structural/bridge` | — |
-| Дерево: рекурсия с `instanceof Group / Item`, правила AND/OR, бандлы товаров | `structural/composite` | `java-idioms/specification` |
-| Профайлер показывает миллионы одинаковых неизменяемых объектов | `structural/flyweight` | — |
-| Ветки `switch` создают `new ConcreteX(...)`; ручная передача бинов в `new` | `creational/factory-method` | `creational/abstract-factory` |
-| Несколько `switch (provider/country)`, выбирающих согласованные клиент + маппер + валидатор | `creational/abstract-factory` | `behavioral/strategy` |
-| Конструктор/метод на 5+ параметров, boolean-флаги | `creational/builder` | — |
-| Ручное копирование полей «сделать копию тарифа/шаблона» | `creational/prototype` | — |
-| `getInstance()`, `private static INSTANCE`, статический доступ к контексту | `creational/singleton` | → обычный Spring-бин |
-| `if (filter.x != null) query += …`, взрыв `findByAAndBAndC` | `java-idioms/specification` | — |
-| `if (x != null) x.do()`, пустые `default -> {}` | `java-idioms/null-object` | — |
-| Хардкод таблиц (`if country == "DE" rate = 0.19`), флаги `if (props.enabled)` | `java-idioms/configuration-over-code` | — |
-| Ручной разбор поля `type` в JSON | `java-idioms/polymorphic-json` | — |
+| `if/switch` on a string/enum, branches return a value | `java-idioms/map-lookup` | `java-idioms/enum-with-behavior` |
+| `if/switch` on a type, branches are different logic with beans | `behavioral/strategy` | `creational/factory-method` (if branches do `new`) |
+| One `switch` on an enum repeats in 2+ places | `behavioral/strategy` | `java-idioms/enum-with-behavior` |
+| `instanceof` chains, a closed set of types | `java-idioms/sealed-switch` | `behavioral/visitor`, polymorphism |
+| The behavior of many methods depends on a status; transition checks are smeared | `behavioral/state` | — |
+| A long `validate()` / a sequence of handlers | `behavioral/chain-of-responsibility` | `structural/composite` (AND/OR rules) |
+| After `save()` a tail of calls: mail, audit, analytics | `behavioral/observer` | `behavioral/mediator` |
+| Services call each other in a circle, `@Lazy` against cycles | `behavioral/mediator` | `behavioral/observer` |
+| `switch (action)` in a controller/consumer; operations must be queued, logged, retried | `behavioral/command` | — |
+| The same algorithm "skeleton" in several classes | `behavioral/template-method` | `behavioral/strategy` (composing steps) |
+| Manual pagination / tree traversal loops in several places | `behavioral/iterator` | — |
+| Manual field backup and rollback, undo, "restore a version" | `behavioral/memento` | — |
+| Cache/retries/metrics mixed with logic; `CachingRetryingClient` | `structural/decorator` | `structural/proxy` |
+| Repeated access checks or lazy initialization at the start of methods | `structural/proxy` | `structural/decorator` |
+| Provider SDK types in domain code | `structural/adapter` | `structural/facade` |
+| The same orchestration of several subsystems in several places | `structural/facade` | `behavioral/mediator` |
+| Class names are a Cartesian product (`EmailOrderNotification`, `SmsInvoiceNotification`) | `structural/bridge` | — |
+| A tree: recursion with `instanceof Group / Item`, AND/OR rules, product bundles | `structural/composite` | `java-idioms/specification` |
+| The profiler shows millions of identical immutable objects | `structural/flyweight` | — |
+| `switch` branches create `new ConcreteX(...)`; beans passed into `new` by hand | `creational/factory-method` | `creational/abstract-factory` |
+| Several `switch (provider/country)` choosing a matching client + mapper + validator | `creational/abstract-factory` | `behavioral/strategy` |
+| A constructor/method with 5+ parameters, boolean flags | `creational/builder` | — |
+| Manual field copying "make a copy of a tariff/template" | `creational/prototype` | — |
+| `getInstance()`, `private static INSTANCE`, static access to the context | `creational/singleton` | → a plain Spring bean |
+| `if (filter.x != null) query += …`, an explosion of `findByAAndBAndC` | `java-idioms/specification` | — |
+| `if (x != null) x.do()`, empty `default -> {}` | `java-idioms/null-object` | — |
+| Hardcoded tables (`if country == "DE" rate = 0.19`), `if (props.enabled)` flags | `java-idioms/configuration-over-code` | — |
+| Manual parsing of a `type` field in JSON | `java-idioms/polymorphic-json` | — |
 
-## Часто путают
+## Often confused
 
-| Пара | Как различить |
+| Pair | How to tell them apart |
 |---|---|
-| Strategy ↔ State | Strategy выбирают снаружи (по типу запроса), она не знает о других стратегиях. State меняется изнутри по ходу жизни объекта, и состояния знают о переходах. |
-| Strategy ↔ Template Method | Strategy — композиция, вариант подставляется целиком. Template Method — наследование, меняются отдельные шаги фиксированного скелета. При сомнении выбирай композицию. |
-| Strategy ↔ Command | Strategy — *как* сделать одно и то же действие. Command — *что* сделать: запрос как объект, который можно поставить в очередь, залогировать, повторить. |
-| Strategy ↔ sealed + switch / Visitor | Добавляются типы — Strategy. Добавляются операции над закрытым набором типов — sealed + `switch` (Java 21) или Visitor (до 21). |
-| Chain of Responsibility ↔ Decorator | Звено цепочки может прервать обработку или не обрабатывать запрос. Декоратор всегда делегирует дальше и только добавляет поведение. |
-| Decorator ↔ Proxy | Оба оборачивают объект с тем же интерфейсом. Decorator добавляет поведение и собирается клиентом в комбинации. Proxy управляет доступом и жизненным циклом и обычно незаметен клиенту. |
-| Adapter ↔ Facade | Adapter приводит *один* чужой интерфейс к нужному. Facade упрощает работу с *несколькими* подсистемами. |
-| Adapter ↔ Bridge | Adapter стыкует то, что уже существует. Bridge закладывается при проектировании, чтобы две оси менялись независимо. |
-| Observer ↔ Mediator | Издатель в Observer не знает подписчиков. Mediator знает участников и координирует их. |
-| Factory Method ↔ Abstract Factory ↔ Builder | Один объект нужного типа — Factory Method. Согласованное семейство объектов — Abstract Factory. Один сложный объект пошагово — Builder. |
-| Composite ↔ Decorator | Composite — дерево из многих детей. Decorator — цепочка из одного вложенного объекта. |
-| Memento ↔ Command (undo) | Memento хранит снимок состояния. Command хранит операцию и умеет её отменить. |
+| Strategy ↔ State | A Strategy is chosen from outside (by request type) and does not know about other strategies. A State changes from inside over the object's life, and states know about transitions. |
+| Strategy ↔ Template Method | Strategy is composition, a variant is substituted whole. Template Method is inheritance, individual steps of a fixed skeleton change. In doubt, choose composition. |
+| Strategy ↔ Command | Strategy is *how* to do the same action. Command is *what* to do: a request as an object that can be queued, logged, retried. |
+| Strategy ↔ sealed + switch / Visitor | Types are added — Strategy. Operations over a closed set of types are added — sealed + `switch` (Java 21) or Visitor (before 21). |
+| Chain of Responsibility ↔ Decorator | A chain link may stop processing or not handle the request. A decorator always delegates further and only adds behavior. |
+| Decorator ↔ Proxy | Both wrap an object with the same interface. A Decorator adds behavior and is assembled by the client in combinations. A Proxy controls access and lifecycle and is usually invisible to the client. |
+| Adapter ↔ Facade | An Adapter turns *one* foreign interface into the needed one. A Facade simplifies working with *several* subsystems. |
+| Adapter ↔ Bridge | An Adapter joins what already exists. A Bridge is laid down at design time so that two axes change independently. |
+| Observer ↔ Mediator | The publisher in Observer does not know its subscribers. A Mediator knows the participants and coordinates them. |
+| Factory Method ↔ Abstract Factory ↔ Builder | One object of the needed type — Factory Method. A consistent family of objects — Abstract Factory. One complex object step by step — Builder. |
+| Composite ↔ Decorator | Composite is a tree of many children. Decorator is a chain of one nested object. |
+| Memento ↔ Command (undo) | Memento stores a snapshot of state. Command stores an operation and can undo it. |
 
 ---
 
-## Каталог: применимость и reference
+## Catalog: applicability and reference
 
-Путь — относительно `references/` (добавь `.md`). Строка даёт применимость коротко. Подробные признаки, код и риски — в самом reference.
+Paths are relative to `references/` (add `.md`). A row gives applicability briefly. Detailed signs, code and risks are in the reference itself.
 
-### Порождающие
-| Паттерн | Reference | Применять, когда | Не применять, когда |
+### Creational
+| Pattern | Reference | Apply when | Do not apply when |
 |---|---|---|---|
-| Factory Method | `creational/factory-method` | ветки `switch` делают `new ConcreteX`, создание повторяется; в `new` вручную передают бины; неясные конструкторы → `of/from` | объекты stateless (это Strategy); реализация одна |
-| Abstract Factory | `creational/abstract-factory` | несколько `switch (provider/country)` выбирают согласованные клиент + маппер + валидатор | одно семейство на деплой (`@Profile`); семейство из одного объекта |
-| Builder | `creational/builder` | 5+ параметров, телескопические конструкторы, boolean-флаги, сборка сеттерами | 2–4 обязательных параметра → конструктор или `record` |
-| Prototype | `creational/prototype` | «дублировать тариф/шаблон», ручное копирование полей, `clone()` | неизменяемые объекты; путаница со `@Scope("prototype")` |
-| Singleton | `creational/singleton` | *найти и убрать:* `getInstance()`, `static INSTANCE`, статический `getBean` | библиотеки без DI, константы, stateless-утилиты |
+| Factory Method | `creational/factory-method` | `switch` branches do `new ConcreteX`, creation repeats; beans are passed into `new` by hand; unclear constructors → `of/from` | the objects are stateless (that is Strategy); there is one implementation |
+| Abstract Factory | `creational/abstract-factory` | several `switch (provider/country)` choose a matching client + mapper + validator | one family per deployment (`@Profile`); a family of one object |
+| Builder | `creational/builder` | 5+ parameters, telescoping constructors, boolean flags, assembly via setters | 2–4 required parameters → a constructor or a `record` |
+| Prototype | `creational/prototype` | "duplicate a tariff/template", manual field copying, `clone()` | immutable objects; confusion with `@Scope("prototype")` |
+| Singleton | `creational/singleton` | *find and remove:* `getInstance()`, `static INSTANCE`, a static `getBean` | libraries without DI, constants, stateless utilities |
 
-### Структурные
-| Паттерн | Reference | Применять, когда | Не применять, когда |
+### Structural
+| Pattern | Reference | Apply when | Do not apply when |
 |---|---|---|---|
-| Adapter | `structural/adapter` | типы и исключения SDK в домене; `if (provider == …)` с разными клиентами; смена провайдера | одна стабильная интеграция; интерфейс «на всякий случай» |
-| Bridge | `structural/bridge` | имена классов — декартово произведение двух осей; `switch` в `switch` | ось изменений одна (это Strategy) |
-| Composite | `structural/composite` | деревья: правила AND/OR, бандлы, категории; рекурсия с `instanceof Group/Item` | плоская структура или малая фиксированная глубина |
-| Decorator | `structural/decorator` | кэш, ретраи, метрики вперемешку с логикой; подклассы под комбинации | хватает `@Cacheable`/`@Retryable`/`@Observed` |
-| Facade | `structural/facade` | одна и та же оркестрация подсистем или сложной библиотеки в нескольких местах | проброс методов один к одному; God-фасад |
-| Flyweight | `structural/flyweight` | профайлер показывает миллионы одинаковых неизменяемых объектов | нет данных профилирования |
-| Proxy | `structural/proxy` | повторяющиеся проверки доступа, ручная ленивая инициализация, ручные HTTP-клиенты | нужное уже даёт Spring AOP (`@PreAuthorize`, `@Lazy`, `@HttpExchange`) |
+| Adapter | `structural/adapter` | SDK types and exceptions in the domain; `if (provider == …)` with different clients; switching providers | one stable integration; an interface "just in case" |
+| Bridge | `structural/bridge` | class names are a Cartesian product of two axes; a `switch` inside a `switch` | there is one axis of change (that is Strategy) |
+| Composite | `structural/composite` | trees: AND/OR rules, bundles, categories; recursion with `instanceof Group/Item` | a flat structure or a small fixed depth |
+| Decorator | `structural/decorator` | cache, retries, metrics mixed with logic; subclasses for combinations | `@Cacheable`/`@Retryable`/`@Observed` are enough |
+| Facade | `structural/facade` | the same orchestration of subsystems or a complex library in several places | one-to-one method forwarding; a God facade |
+| Flyweight | `structural/flyweight` | the profiler shows millions of identical immutable objects | no profiling data |
+| Proxy | `structural/proxy` | repeated access checks, manual lazy initialization, hand-written HTTP clients | Spring AOP already provides it (`@PreAuthorize`, `@Lazy`, `@HttpExchange`) |
 
-### Поведенческие
-| Паттерн | Reference | Применять, когда | Не применять, когда |
+### Behavioral
+| Pattern | Reference | Apply when | Do not apply when |
 |---|---|---|---|
-| Chain of Responsibility | `behavioral/chain-of-responsibility` | длинный `validate()` из `if…throw`; выбор обработчика по сложному условию; pipeline шагов | простые ограничения полей → Bean Validation |
-| Command | `behavioral/command` | `switch (action)` в эндпоинте или consumer; операции нужно ставить в очередь, логировать, повторять, отменять | 3–4 операции в небольшом сервисе |
-| Iterator | `behavioral/iterator` | копии циклов пагинации (offset/cursor), `findAll()` на большой таблице, повторный обход дерева | обычные коллекции в памяти |
-| Mediator | `behavioral/mediator` | сервисы вызывают друг друга по кругу, `@Lazy` против циклов; процесс без единого места | 2–3 участника с простыми связями |
-| Memento | `behavioral/memento` | ручной backup полей и откат; undo/redo; «вернуть версию» | откат даёт транзакция; для аудита хватит Envers |
-| Observer | `behavioral/observer` | хвост побочных эффектов после `save()`; сервис зависит от множества несвязанных сервисов | эффект — бизнес-инвариант в той же транзакции |
-| State | `behavioral/state` | проверки переходов статусов размазаны; поведение методов зависит от статуса | статус — просто метка; движок FSM без нужды |
-| Strategy | `behavioral/strategy` | `switch` по типу с логикой и бинами в ветках, повторяется в нескольких местах; `Map<String, Bean>` | ветки — чистые вычисления; 2–3 стабильных варианта |
-| Template Method | `behavioral/template-method` | скопированный скелет алгоритма в нескольких классах, копии расходятся | шаги комбинируются по-разному → композиция |
-| Visitor | `behavioral/visitor` | операции над стабильной иерархией (AST, дерево документа) на Java < 21 | Java 21+ (sealed + `switch`); типы часто добавляются |
+| Chain of Responsibility | `behavioral/chain-of-responsibility` | a long `validate()` of `if…throw`; choosing a handler by a complex condition; a pipeline of steps | simple field constraints → Bean Validation |
+| Command | `behavioral/command` | `switch (action)` in an endpoint or consumer; operations must be queued, logged, retried, undone | 3–4 operations in a small service |
+| Iterator | `behavioral/iterator` | copies of pagination loops (offset/cursor), `findAll()` on a big table, repeated tree traversal | plain in-memory collections |
+| Mediator | `behavioral/mediator` | services call each other in a circle, `@Lazy` against cycles; a process without a single place | 2–3 participants with simple links |
+| Memento | `behavioral/memento` | manual field backup and rollback; undo/redo; "restore a version" | a transaction gives the rollback; Envers is enough for audit |
+| Observer | `behavioral/observer` | a tail of side effects after `save()`; a service depends on many unrelated services | the effect is a business invariant in the same transaction |
+| State | `behavioral/state` | status transition checks are smeared; method behavior depends on the status | the status is just a label; an FSM engine without need |
+| Strategy | `behavioral/strategy` | a `switch` on type with logic and beans in branches, repeated in several places; `Map<String, Bean>` | branches are pure calculations; 2–3 stable variants |
+| Template Method | `behavioral/template-method` | a copied algorithm skeleton in several classes, the copies drift apart | steps combine in different ways → composition |
+| Visitor | `behavioral/visitor` | operations over a stable hierarchy (AST, a document tree) on Java < 21 | Java 21+ (sealed + `switch`); types are added often |
 
-### Java/Spring-идиомы (не GoF)
-| Приём | Reference | Применять, когда |
+### Java/Spring idioms (not GoF)
+| Technique | Reference | Apply when |
 |---|---|---|
-| Map-lookup | `java-idioms/map-lookup` | ветки только возвращают значение или вызывают однострочник |
-| Enum с поведением | `java-idioms/enum-with-behavior` | один `switch` по enum в нескольких местах, ветки без бинов |
-| sealed + switch | `java-idioms/sealed-switch` | `instanceof`-цепочки, закрытый набор типов, операции добавляются |
-| Specification | `java-idioms/specification` | `if (x != null) query += …`, взрыв `findByAAndBAndC` |
-| Null Object | `java-idioms/null-object` | `if (x != null)`, `required = false`, пустые `default` |
-| Конфигурация вместо кода | `java-idioms/configuration-over-code` | хардкод таблиц и порогов, `if (props.enabled)` в нескольких местах |
-| Полиморфный JSON | `java-idioms/polymorphic-json` | ручной разбор поля `type` в JSON |
+| Map-lookup | `java-idioms/map-lookup` | branches only return a value or call a one-liner |
+| Enum with behavior | `java-idioms/enum-with-behavior` | one `switch` on an enum in several places, branches without beans |
+| sealed + switch | `java-idioms/sealed-switch` | `instanceof` chains, a closed set of types, operations are added |
+| Specification | `java-idioms/specification` | `if (x != null) query += …`, an explosion of `findByAAndBAndC` |
+| Null Object | `java-idioms/null-object` | `if (x != null)`, `required = false`, empty `default` |
+| Configuration over code | `java-idioms/configuration-over-code` | hardcoded tables and thresholds, `if (props.enabled)` in several places |
+| Polymorphic JSON | `java-idioms/polymorphic-json` | manual parsing of a `type` field in JSON |

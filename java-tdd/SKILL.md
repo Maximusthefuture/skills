@@ -1,274 +1,125 @@
 ---
 name: java-tdd
-description: Test-driven development для Java / Spring Boot (JUnit 5, AssertJ, Mockito, Spring test slices, Testcontainers или @EmbeddedKafka — по тому, что есть в проекте, Maven/Gradle) — порядок работы red → green → refactor с доказательством, что каждый тест умеет падать. Режимы для новой фичи, багфикса, рефакторинга и правки кода без тестов. Use this skill whenever you are about to implement or change behavior in Java code — new feature, bug fix, new endpoint, query, listener, business rule — BEFORE writing the production code, and whenever the user says "TDD", "сначала тест", "test first", "red green refactor", "почини баг", "добавь фичу", "реализуй", "/java-tdd". Не нужен для переименований, форматирования, правки yaml/конфигов и сгенерированного кода. Отвечает за порядок действий и проверку; какой уровень теста и инструмент выбрать — testing-with-discernment, ценен ли тест и не мусор ли он — test-audit.
-compatibility: Claude Code. Maven или Gradle (предпочтительно wrapper ./mvnw / ./gradlew). Docker — для Testcontainers, если они есть в проекте; без них Kafka тестируется на @EmbeddedKafka (spring-kafka-test). git — опционально (доказательство падения через stash).
+description: "Test-driven development for Java / Spring Boot: red → green → refactor with proof that every test can fail; modes for a feature, a bugfix, a refactoring and code without tests (JUnit 5, AssertJ, Mockito, Spring test slices, Testcontainers or @EmbeddedKafka, Maven/Gradle). Use BEFORE writing production code whenever you implement or change behavior in Java — new feature, bug fix, endpoint, query, listener, business rule — and on TDD, test first, red green refactor, «сначала тест», «почини баг», «реализуй», /java-tdd. Not for renames, formatting, yaml and generated code. The test level is chosen by testing-with-discernment, the test's value by test-audit."
+compatibility: Claude Code. Maven or Gradle (preferably the ./mvnw / ./gradlew wrapper). Docker — for Testcontainers if the project has them; without them Kafka is tested on @EmbeddedKafka (spring-kafka-test). git — optional (proving a failure via stash).
 ---
 
 # Java TDD
 
-Тест пишется до кода. Ты видишь, как он падает по нужной причине. Потом пишешь минимальный код, чтобы он прошёл.
+The test is written before the code. You see it fail for the right reason. Then you write the minimal code to make it pass.
 
-**Главный принцип:** если ты не видел, как тест падает, ты не знаешь, проверяет ли он то, что нужно. Тест, который ни разу не был красным, мог с тем же успехом проверять мок, опечатку или ничего.
+**The main principle:** if you have not seen the test fail, you do not know whether it checks what it should. A test that has never been red could just as well be checking a mock, a typo or nothing.
 
-Скилл адаптирован из `test-driven-development` из [obra/superpowers](https://github.com/obra/superpowers) (MIT): убраны противоречия, добавлены режимы для рефакторинга и legacy, примеры переписаны под Java/Spring.
+## Checklist for every behavior
 
-## Граница с соседними скиллами
+1. **A test** for one behavior, at the cheapest level where it is visible. Before writing the test body, name the code breakage it will catch.
+2. **Run only this test → red.** Show the failure line: an assertion failing for the expected reason. A compilation error, a failed Spring context, 401/403 or "no Docker" is not RED.
+3. **Minimal code** to make the test pass. Nothing "while I'm at it".
+4. **Run → green**, together with the tests of the same class or module.
+5. **At the end of the task — the full suite** (`./mvnw verify` / `./gradlew check`). Every failed and every not-run test goes into the report by name, with the reason (e.g. no Docker).
 
-| Вопрос | Кто отвечает |
+Skipped step 2 — go back and prove the failure (section "If the code was written before the test").
+
+## Boundary with neighboring skills
+
+| Question | Owner |
 |---|---|
-| Что за задача, какие фазы и скиллы нужны, дизайн, план срезов, итоговая проверка и отчёт | `java-dev-flow` (оркестратор; вызывает этот скилл в фазе реализации) |
-| В каком порядке писать тест и код, как доказать, что тест ловит баг, когда работа «готова» | **этот скилл** |
-| Какой уровень теста: unit, `@DataJpaTest`, `@WebMvcTest`, `@SpringBootTest`, WireMock — и на какой инфраструктуре: Testcontainers или `@EmbeddedKafka` | `testing-with-discernment` |
-| Стоит ли тест своих денег, не мусор ли он, не нужен ли ему test-only шов в `src/main` | `test-audit` (authoring gate) |
-| Как писать честные assertion'ы и моки | [references/writing-good-tests.md](references/writing-good-tests.md) |
+| What the task is, phases, design, slice plan, final verification and report | `java-dev-flow` (calls this skill in the implementation phase) |
+| Order of test and code, proof that the test catches the bug, when work is "done" | **this skill** |
+| Test level (unit, `@DataJpaTest`, `@WebMvcTest`, `@SpringBootTest`, WireMock) and infrastructure (Testcontainers or `@EmbeddedKafka`) | `testing-with-discernment` |
+| Is the test worth its cost, is there a test-only seam in `src/main` | `test-audit` (authoring gate) |
+| Honest assertions and mocks | [references/writing-good-tests.md](references/writing-good-tests.md) |
 
-Если соседних скиллов нет в сессии — минимальная таблица уровней есть ниже, а правила качества — в `references/writing-good-tests.md`.
+Neighboring skills are missing — the minimum on levels and infrastructure is in [references/infrastructure.md](references/infrastructure.md).
 
-## Когда применять
+## When to apply
 
-**Применяй:** новая бизнес-логика, новый endpoint, новый запрос в репозитории, новый listener/consumer, исправление бага, изменение существующего поведения — даже если правка в одну строку.
+**Apply:** new business logic, an endpoint, a repository query, a listener or consumer, a bug fix, a change of existing behavior — even if the edit is one line.
 
-**Не применяй (TDD тут ничего не даёт):**
-- переименования, перемещения, форматирование, обновление зависимостей без изменения поведения — достаточно зелёного прогона до и после;
-- `application.yml`, сгенерированный код (MapStruct-реализации, OpenAPI/Protobuf-классы, Lombok);
-- throwaway-прототип или исследовательский spike, который пользователь явно назвал одноразовым. Код из spike потом не «дорабатывают», а пишут заново по циклу;
-- Liquibase/Flyway changeset сам по себе — он исполняется в каждом интеграционном тесте. Но **constraint или поведение**, которое changeset добавляет, получает тест.
+**Do not apply:** renames, moves, formatting, dependency updates without behavior change (a green run before and after is enough); `application.yml` and generated code; a throwaway spike the user called so (the code is then rewritten through the cycle); a changeset by itself — but the constraint or behavior it adds gets a test.
 
-Сомневаешься, меняет ли правка поведение, — считай, что меняет.
+In doubt whether an edit changes behavior — assume it does.
 
-## Выбери режим
+## Modes
 
-| Ситуация | Режим |
+| Situation | Mode |
 |---|---|
-| Новое поведение | [A. Новая фича](#a-новая-фича) — полный цикл |
-| Баг | [B. Багфикс](#b-багфикс) — сначала воспроизвести тестом |
-| Рефакторинг без изменения поведения | [C. Рефакторинг](#c-рефакторинг) — фазы RED нет |
-| Нужно поменять код, на который нет тестов | [D. Код без тестов](#d-код-без-тестов) — сначала зафиксировать текущее поведение, потом режим A или B |
+| New behavior | **A** — the full cycle |
+| A bug | **B** — reproduce with a test first |
+| Refactoring without behavior change | **C** — no RED phase |
+| Code without tests must change | **D** — pin the current behavior first, then A or B |
 
-## Цикл red → green → refactor
+## The red → green → refactor cycle
 
 ```
-RED        один тест на одно поведение
-  ↓
-VERIFY RED тест падает на assertion, по ожидаемой причине   ── нет → чини тест, снова RED
-  ↓
-GREEN      минимальный код, чтобы тест прошёл
-  ↓
-VERIFY     этот тест и соседние зелёные                     ── нет → чини код
-  ↓
-REFACTOR   убрать дублирование, улучшить имена; тесты остаются зелёными
-  ↓
-следующее поведение → RED
+RED        one test for one behavior
+VERIFY RED the test fails on an assertion, for the expected reason   ── no → fix the test, RED again
+GREEN      minimal code to make the test pass
+VERIFY     this test and its neighbors are green                     ── no → fix the code
+REFACTOR   remove duplication, improve names; tests stay green
+next behavior → RED
 ```
 
-### RED — один падающий тест
+**RED.** One behavior ("and" in the name — split it). The name describes behavior: `rejectsTransferWhenBalanceIsInsufficient`, not `testTransfer`. The level is the cheapest where the behavior is observable: do not start `@SpringBootTest` for a pure function and do not mock the repository to check a query. The infrastructure is what the project already has. Variants of one rule — `@ParameterizedTest` with literal expected values.
 
-- **Одно поведение.** «and» в имени теста или в `@DisplayName` — раздели.
-- **Имя описывает поведение,** а не метод: `rejectsTransferWhenBalanceIsInsufficient`, не `testTransfer`.
-- **Уровень — самый дешёвый, на котором поведение наблюдаемо** (см. таблицу ниже). Не поднимай `@SpringBootTest` ради чистой функции и не мокай репозиторий ради проверки запроса.
-- **Инфраструктура — та, что уже есть в проекте** (см. [Выбор инфраструктуры](#выбор-инфраструктуры)): есть Testcontainers — интеграционный тест на них, нет — Kafka на `@EmbeddedKafka`.
-- **До тела теста назови изменение в коде, от которого тест упадёт** (подробно — `references/writing-good-tests.md`, «Назови поломку»). Не можешь назвать — тест не нужен или проверяет не то.
-- Варианты одного правила — `@ParameterizedTest` с `@CsvSource`/`@MethodSource` и литеральными ожидаемыми значениями, а не копии метода.
+**VERIFY RED — mandatory.** Run only the new test: `./mvnw -q test -Dtest='FooTest#rejectsX' -Dsurefire.failIfNoSpecifiedTests=false` or `./gradlew test --tests 'com.example.FooTest.rejectsX'`. A correct RED is a failure for the expected reason, usually an assertion: `expected: 409 but was: 201`. A compilation error — create a stub with the needed signature and run again. How to tell RED from an error in the other cases (context, Docker, Kafka, security, JSON) — [references/red-failures.md](references/red-failures.md). A test that is green right away in modes A and B does not check the new behavior — rewrite it.
 
-### VERIFY RED — увидеть правильное падение
+**GREEN.** The simplest code that makes the test pass. Do not add parameters, settings, generalizations. It turned out the test itself was wrong — that is a return to RED: fix the test and **again** make sure it fails without the implementation.
 
-**Обязательно. Не пропускай.** Запусти только новый тест (команды — в разделе [Команды](#команды)).
+**VERIFY GREEN.** The new test and the tests of the same class or module are green; the output has no new exceptions or warnings.
 
-Правильный RED — это **падение по ожидаемой причине: нужного поведения ещё нет.** Почти всегда это падение assertion'а: `AssertionFailedError`, `expected: 409 but was: 201`, `Expecting actual not to be empty`. Остальное, кроме одного исключения в таблице, — не RED, а ошибка, которую надо устранить, прежде чем двигаться дальше:
+**REFACTOR.** Only after green. Duplication, names, helpers — in code and tests. A green run after every step.
 
-| Что видишь | Это не RED, потому что | Что сделать |
-|---|---|---|
-| `cannot find symbol`, ошибка компиляции | тест не запускался | создай заглушку: класс/метод с нужной сигнатурой, тело `throw new UnsupportedOperationException()` или возврат значения по умолчанию. Потом снова запусти |
-| `UnsupportedOperationException` из заглушки | падение до проверки поведения | допустимо как промежуточный шаг, но лучше заглушка, возвращающая `null`/`0`/пустое — тогда упадёт assertion и ты увидишь, что он проверяет именно значение |
-| `NoSuchBeanDefinitionException`, `Failed to load ApplicationContext` | контекст не поднялся | почини конфигурацию теста или выбери уровень пониже |
-| `Could not find a valid Docker environment` | Testcontainers не стартовал | Docker недоступен — скажи пользователю; не выдавай это за RED, не подменяй Postgres на H2, а Kafka-контейнер — на `@EmbeddedKafka` |
-| `ConditionTimeoutException` от Awaitility в тесте `@KafkaListener`, а в логе нет следа, что listener получил запись | запись не дошла до listener'а: `auto-offset-reset=latest`, другой топик или группа, ошибка десериализации | поставь `spring.kafka.consumer.auto-offset-reset=earliest`, проверь топик и лог (`DeserializationException`, `ListenerExecutionFailedException`). RED — только timeout после того, как listener-заглушка получила запись |
-| 401/403 вместо ожидаемого статуса | падение в security-цепочке (CSRF, нет аутентификации), а не в проверяемом правиле | добавь `@WithMockUser`/`jwt()`/`csrf()`, чтобы тест дошёл до проверяемой логики |
-| 400 от парсинга JSON вместо 400 от валидации | падение не в той проверке | почини тело запроса |
-| Исключение из тестируемого кода, которое показывает отсутствие именно проверяемого поведения (например, MockMvc пробрасывает необработанное `EmailTakenException`, потому что обработчика ещё нет) | это **допустимый RED**: важна причина, а не тип падения | убедись, что исключение именно то, которое ожидал; любое другое — ошибка |
-| Тест **зелёный** сразу | он проверяет уже существующее поведение или ничего | см. ниже |
+One cycle — one behavior. Do not write five tests and then the whole implementation at once.
 
-**Тест сразу зелёный?** В режиме A и B это значит, что тест не проверяет новое поведение: оно уже есть, тест проверяет мок, или assertion тавтологичен. Перепиши тест. Исключение — режимы C и D, где зелёный тест ожидаем, но там своё доказательство (mutation check).
+## Modes in detail
 
-### GREEN — минимальный код
+**A. New feature.** Split it into observable behaviors: rules, branches, errors, edge cases; start with the simple success scenario. Error paths are behaviors too, each its own cycle: invalid input → 400 ProblemDetail with a code, someone else's resource → 404, a conflict → 409, no permission → 403.
 
-Пиши самый простой код, при котором тест проходит. Не добавляй параметры, настройки, обобщения и «заодно поправлю рядом» — это следующий цикл, если он вообще понадобится.
+**B. Bugfix.** Reproduce the bug with a test at the level where it is observable (often `@DataJpaTest` or `@SpringBootTest` + Testcontainers, not a unit test with mocks). VERIFY RED: **the error message describes exactly this bug**, otherwise you reproduced a different one. Minimal fix → VERIFY GREEN → the full suite. One regression test per bug, at the level that owns the behavior. A bug is not fixed without a failing test.
 
-**Тест не проходит?** Чини код. Если выяснилось, что неправ сам тест (неверное ожидание, не то поведение), — это возврат в RED: поправь тест и **снова** убедись, что он падает на коде без реализации.
+**C. Refactoring.** Find the tests for the code you change, run them — green. Check that they catch a breakage: break the code (remove a branch, return `null`) — a test must fail; none does — there is no coverage, mode D. Refactor in small steps with a green run. A test that failed from a refactoring without behavior change checks the implementation — rewrite it against observable behavior.
 
-### VERIFY GREEN — увидеть, что прошло
+**D. Code without tests.** Characterization tests pin the current behavior the edit will touch; they **pass right away**, that is expected. Prove they can fail: break the code, see red, restore the code. The current behavior looks like a bug — do not pin it silently, ask the user whether it is a contract or a bug. Then A or B.
 
-Запусти новый тест и тесты того же класса/модуля. Проверь:
-- новый тест зелёный;
-- соседние тесты зелёные;
-- в выводе нет новых исключений в логах, warning'ов компилятора, `WARN` от Spring о неиспользуемых бинах.
+## If the code was written before the test
 
-### REFACTOR — навести порядок
+Deleting the implementation is pointless: the code is already in the context. **Prove the test can fail without this code:**
 
-Только после зелёного. Убери дублирование, улучши имена, вынеси helper'ы — в коде и в тестах. Поведение не добавляй. После каждого шага — снова зелёный прогон.
+1. Write a test for the behavior — from the task description, not from how the implementation works.
+2. Remove your change: `git stash push -- <files>` or temporarily restore the old version of the method.
+3. Run the test — it must fail on an assertion for the expected reason. It passes — the test checks nothing, rewrite it.
+4. Restore the change (`git stash pop`), run — green.
 
-### Повтори
+Only for code you wrote yourself in this session. Do not stash someone else's uncommitted changes without asking.
 
-Следующее поведение — следующий RED. Один цикл — одно поведение; не пиши пять тестов, а потом всю реализацию сразу.
+## Infrastructure and commands — briefly
 
-## Режимы
+- Use the wrapper (`./mvnw`, `./gradlew`) and the commands from the project's `CLAUDE.md`. Other commands (a class, an IT, a module) — [references/commands.md](references/commands.md).
+- The build chooses the infrastructure, not the environment: Testcontainers present — tests run on them; absent — Kafka on `@EmbeddedKafka`, the DB the way the project already starts it, and if it does not — ask. Not H2. No Docker — tell the user and name the tests that did not run; do not rewrite a test to `@EmbeddedKafka` or H2 for a green run. Details — [references/infrastructure.md](references/infrastructure.md).
+- Do not change sources while a build is running in the same working copy.
 
-### A. Новая фича
+## When the work is done
 
-1. Разбей фичу на наблюдаемые поведения: правила, ветки, ошибки, граничные случаи. Начни с самого простого успешного сценария.
-2. Для каждого — полный цикл выше.
-3. Ошибочные пути — такие же поведения: невалидный ввод → 400 ProblemDetail с кодом, чужой ресурс → 404, конфликт версии → 409, нет прав → 403. Каждый — свой цикл.
+1. **Run the project's full suite**, even if the task touched one class. A green new test is not a green suite.
+2. **Name every failed test in the report**, including those that failed not because of you. Kept quiet about a failed test — the report is false.
+3. **Name what did not run and why**: e.g. `*IT` did not run — no Docker. Do not write "all tests are green" if some did not run.
+4. **Commit** — only if the user allowed it; the test and implementation of one behavior go in one commit.
 
-### B. Багфикс
+Quality checklist: every new behavior is covered at its level; you saw every A/B test red; every characterization test was checked by breaking the code; the implementation is minimal; expected values are literals; error paths and edges (null, empty, 0, someone else's id, no permission, duplicate) are covered where real; added test dependencies are named in the report.
 
-1. **Воспроизведи баг тестом** на том уровне, где баг наблюдаем (часто это `@DataJpaTest` или `@SpringBootTest` + Testcontainers, а не unit с моками).
-2. VERIFY RED: тест падает, и **сообщение об ошибке описывает именно этот баг**. Если падает по другой причине — ты воспроизвёл не тот баг.
-3. Исправь код минимально.
-4. VERIFY GREEN, потом весь набор.
-5. Один регрессионный тест на баг — на том уровне, который владеет поведением. Не дублируй сценарий в контроллере, сервисе и репозитории.
+## Red flags
 
-Без падающего теста баг не исправляют: исправление без теста — это предположение, что ты понял причину.
+Stop and go back to the cycle if you notice that:
 
-### C. Рефакторинг
+- you write an implementation for a behavior that has no failing test yet;
+- a new test in mode A/B passed on the first run and you move on;
+- you cannot explain why the test failed; the "RED" is a compilation error or a failed context;
+- you change an expectation in a test to make it green;
+- you ran only your test and are about to say "done";
+- you add a method, setter or `@VisibleForTesting` to `src/main` only for a test;
+- you write `verify(mock)` where the result is visible through an observable effect.
 
-Фазы RED нет: поведение не меняется, значит, тесты должны быть зелёными до и после.
+Tempted to skip a test ("too simple", "I'll check later", "H2 is faster") — [references/rationalizations.md](references/rationalizations.md). Full cycle samples (plain JUnit, `@DataJpaTest` + Testcontainers, `@WebMvcTest`, `@KafkaListener`) — [references/examples.md](references/examples.md).
 
-1. Найди тесты, покрывающие изменяемый код. Запусти — зелёные.
-2. **Проверь, что они действительно ловят поломку:** мысленно (или реально, если дёшево) сломай код, который собираешься трогать, — убери ветку, верни `null`, поменяй константу. Если ни один тест не упал — покрытия нет, переходи в режим D.
-3. Рефактори маленькими шагами; после каждого — зелёный прогон.
-4. Тест, который упал от рефакторинга без изменения поведения, проверяет реализацию, а не поведение (вызов приватного метода, `verify` порядка, `ReflectionTestUtils`). Перепиши его на уровне наблюдаемого поведения, а не подгоняй под новую структуру.
-
-### D. Код без тестов
-
-Нужно поменять поведение кода, на который нет тестов.
-
-1. **Characterization-тесты:** зафиксируй текущее поведение, которое затронет правка. Эти тесты **проходят сразу** — это ожидаемо и не является красным флагом.
-2. **Докажи, что они умеют падать:** сломай код (верни пустое значение, убери ветку) и убедись, что тест красный. Потом верни код. Тест, который не падает от поломки, удали или перепиши.
-3. Если наблюдаемое текущее поведение похоже на баг — не фиксируй его молча. Спроси пользователя: это контракт или баг.
-4. Дальше — режим A или B для самого изменения.
-
-## Если код уже написан до теста
-
-Агент иногда пишет реализацию раньше теста. Удалять её и «не подглядывать», как требует оригинальный скилл, бессмысленно: код уже в контексте. Вместо этого **докажи, что тест умеет падать без этого кода:**
-
-1. Напиши тест на поведение — по описанию задачи, а не по тому, как устроена реализация.
-2. Убери своё изменение из рабочей копии: `git stash push -- <файлы>` или временно верни старую версию метода.
-3. Запусти тест — он должен упасть на assertion по ожидаемой причине. Если проходит — тест ничего не проверяет, перепиши.
-4. Верни изменение (`git stash pop`), запусти — зелёный.
-
-Это правило касается **только кода, который ты сам написал в этой сессии.** Чужие незакоммиченные изменения пользователя не stash'и и не откатывай без спроса.
-
-## Выбор инфраструктуры
-
-Перед первым интеграционным тестом посмотри, что уже есть в сборке. Решает проект, а не привычка и не то, что сейчас запущено на машине. Подробно — `testing-with-discernment`.
-
-```bash
-grep -rnE 'org\.testcontainers|spring-boot-testcontainers|spring-kafka-test' \
-  --include=pom.xml --include='*.gradle' --include='*.gradle.kts' --include='*.toml' \
-  --exclude-dir=target --exclude-dir=build .
-grep -rlE '@Testcontainers|@ServiceConnection|@EmbeddedKafka' \
-  --include='*.java' --include='*.kt' --exclude-dir=target --exclude-dir=build .
-```
-
-| В сборке | БД | Kafka |
-|---|---|---|
-| Есть Testcontainers (любой артефакт `org.testcontainers` или `spring-boot-testcontainers`) | Testcontainers Postgres + `@ServiceConnection` | Testcontainers Kafka + `@ServiceConnection`; нет модуля `org.testcontainers:kafka` — добавь той же версии, что остальные |
-| Нет Testcontainers | Тот же движок, что в проде, тем способом, каким проект уже поднимает его в тестах. Такого способа нет — спроси пользователя, прежде чем добавлять Testcontainers. Не H2 | `@EmbeddedKafka` из `spring-kafka-test` (test scope, версия из BOM Spring Boot; нет зависимости — добавь) |
-
-- Смотри модуль, в котором пишешь тест, вместе с родительским pom / convention-плагином. Testcontainers в соседнем модуле тоже считается: подключи той же версии.
-- Нет Docker — это не «нет Testcontainers». Проект на Testcontainers, а Docker недоступен — скажи пользователю; не переписывай тест на `@EmbeddedKafka` или H2 ради зелёного прогона.
-- Есть базовый класс, `@TestConfiguration` с контейнерами или мета-аннотация с `@EmbeddedKafka` — пиши тест на них, а не заводи вторую настройку: это второй Spring-контекст и второй брокер.
-- Существующие тесты с одного варианта на другой не переносишь в рамках чужой задачи.
-- Добавленную тестовую зависимость назови в отчёте.
-
-## Уровень теста — минимальная таблица
-
-Подробно — `testing-with-discernment`. Если его нет:
-
-| Поведение | Уровень |
-|---|---|
-| Бизнес-правило, расчёт, state machine, value object | JUnit 5 + AssertJ, без Spring |
-| Запрос, маппинг, constraint, миграция | `@DataJpaTest` + `@AutoConfigureTestDatabase(replace = NONE)` + Testcontainers Postgres |
-| HTTP-контракт: статус, тело, валидация, security | `@WebMvcTest` + `MockMvc`/`MockMvcTester` |
-| Сценарий целиком: транзакции, outbox, listener'ы | `@SpringBootTest` + Testcontainers; Kafka без Testcontainers в проекте — `@EmbeddedKafka` |
-| `@KafkaListener`, producer | `@SpringBootTest` + брокер по [выбору инфраструктуры](#выбор-инфраструктуры), `auto-offset-reset=earliest`, Awaitility на наблюдаемом результате (строка в БД, запись в исходящем топике или DLT) |
-| Исходящий HTTP | WireMock на HTTP-границе |
-| Асинхронность | Awaitility на наблюдаемом результате, не `Thread.sleep` |
-| Время | инжектированный `Clock`, в тесте `Clock.fixed(...)` |
-
-## Команды
-
-Определи сборку по корню проекта и используй wrapper (`./mvnw`, `./gradlew`), а не глобальную установку. Если в `CLAUDE.md`/`CONTRIBUTING.md`/`README` описаны свои команды — используй их.
-
-| Что | Maven | Gradle |
-|---|---|---|
-| Один тест-метод | `./mvnw -q test -Dtest='FooServiceTest#rejectsX' -Dsurefire.failIfNoSpecifiedTests=false` | `./gradlew test --tests 'com.example.FooServiceTest.rejectsX'` |
-| Один класс | `./mvnw -q test -Dtest=FooServiceTest -Dsurefire.failIfNoSpecifiedTests=false` | `./gradlew test --tests 'com.example.FooServiceTest'` |
-| Интеграционный тест (Failsafe / отдельный source set) | `./mvnw -q verify -Dit.test=FooIT` (заодно прогонит unit-тесты модуля) | `./gradlew integrationTest --tests 'com.example.FooIT'` |
-| Модуль в multi-module | добавь `-pl <module> -am` | `./gradlew :<module>:test ...` |
-| Весь набор | `./mvnw verify` | `./gradlew check` |
-
-Не меняй исходники, пока в той же рабочей копии идёт сборка.
-
-## Когда работа готова
-
-1. **Прогони весь набор** проекта (`./mvnw verify` / `./gradlew check`), даже если задача касалась одного класса. Зелёный новый тест — это не зелёный набор. Область задачи ограничивает то, что ты меняешь, а не то, что ты проверяешь.
-2. **В отчёте назови каждый красный тест** — включая те, что упали не из-за тебя. Упавший тест, о котором ты промолчал, делает отчёт ложным.
-3. **Назови, что не запускалось и почему:** например, `*IT` не запускались, потому что нет Docker. Не пиши «все тесты зелёные», если часть не запускалась.
-4. **Коммит** — только если пользователь разрешил. Хорошая гранулярность — тест и реализация одного поведения в одном коммите.
-
-## Чеклист
-
-- [ ] Каждое новое или изменённое **поведение** покрыто тестом на уровне, который им владеет. Тривиальные геттеры, конструкторы без логики и проброс тестов не требуют.
-- [ ] Каждый тест режимов A/B я видел красным, и падение было на assertion по ожидаемой причине.
-- [ ] Каждый characterization-тест (режимы C/D) я проверил поломкой кода.
-- [ ] Реализация минимальна: нет параметров и обобщений, которых не требует ни один тест.
-- [ ] Ожидаемые значения — литералы или вручную проверенные фикстуры, а не результат вызова тестируемого кода.
-- [ ] Ошибочные пути и граничные случаи (null, пусто, 0, чужой id, нет прав, дубликат) покрыты, где они реальны.
-- [ ] Интеграционные тесты — на инфраструктуре проекта: Testcontainers, если они есть; иначе Kafka на `@EmbeddedKafka`. Добавленные тестовые зависимости названы в отчёте.
-- [ ] Весь набор прогнан; красные и незапущенные тесты названы в отчёте.
-
-Пункт не выполнен — вернись к нему, а не помечай работу готовой.
-
-## Типичные отговорки
-
-| Отговорка | На самом деле |
-|---|---|
-| «Слишком просто, чтобы тестировать» | Простой код тоже ломается, а тест на простое правило пишется за минуту. Исключение — код без поведения (геттер, проброс), а не «простой». |
-| «Напишу тесты потом» | Тест, написанный после, проходит сразу и ничего не доказывает: ты не видел, что он умеет ловить поломку. Если код уже есть — см. «Если код уже написан до теста». |
-| «Тесты после — то же самое, важен дух» | Тест после отвечает на вопрос «что делает этот код», тест до — «что он должен делать». Тест после проверяет случаи, которые ты помнил при написании кода, а не те, которые обнаружил бы. |
-| «Я уже проверил руками / через Postman» | Ручная проверка не воспроизводится, не покрывает граничные случаи и не защищает от регрессии. |
-| «Проще замокать репозиторий» | Мок репозитория не проверяет SQL, constraint и транзакцию. Пиши `@DataJpaTest` с Testcontainers. |
-| «Testcontainers медленные, возьму H2» | H2 врёт про диалект, типы, блокировки и constraint'ы. Зелёный H2 ничего не говорит о проде. |
-| «Docker не стартует — возьму `@EmbeddedKafka`» | Инфраструктуру выбирает проект, а не окружение. Проект на Testcontainers — скажи, что Docker недоступен, и назови незапущенные тесты в отчёте. |
-| «Замокаю `KafkaTemplate` / вызову метод listener'а напрямую» | Так не проверяются сериализация, конфигурация listener'а, error handler и DLT. Брокер в тесте настоящий в обоих вариантах — и в Testcontainers, и в `@EmbeddedKafka`. |
-| «Тест сложно написать» | Сложно тестировать — значит, сложно использовать. Слушай тест: упрости интерфейс, вынеси зависимость, инжектируй `Clock`. |
-| «Надо сначала поисследовать» | Можно. Потом выброси spike и пиши по циклу. |
-| «Тест упал — поправлю ожидание под код» | Если ожидание было неверным — это возврат в RED, и тест снова должен упасть без реализации. Если верным — чини код. |
-
-## Красные флаги
-
-Остановись и вернись к циклу, если заметил за собой:
-
-- пишешь реализацию для поведения, на которое ещё нет падающего теста;
-- новый тест в режиме A/B прошёл с первого запуска, а ты двигаешься дальше;
-- не можешь объяснить, почему тест упал;
-- «RED» — это ошибка компиляции или упавший Spring-контекст;
-- правишь ожидание в тесте, чтобы он позеленел;
-- запустил только свой тест и собираешься сказать «готово»;
-- добавляешь в `src/main` метод, setter или `@VisibleForTesting` только ради теста;
-- пишешь `verify(mock)` там, где результат можно проверить по наблюдаемому эффекту.
-
-## Когда застрял
-
-| Проблема | Что делать |
-|---|---|
-| Не знаешь, как тестировать | Напиши желаемый вызов API и assertion первыми, остальное достроится. Или спроси пользователя. |
-| Тест слишком сложный | Сложный дизайн. Упрости интерфейс, раздели класс. |
-| Приходится мокать всё подряд | Слишком сильная связность. Внедри зависимости через конструктор, выдели порт. |
-| Огромный setup | Вынеси test data builder / фикстуру. Всё ещё огромный — упрощай дизайн. |
-| Нужен доступ к приватному состоянию | Проверяй через публичное поведение или наблюдаемый эффект (БД, событие, HTTP-ответ). |
-
-## Примеры
-
-Полные циклы с кодом: бизнес-правило на чистом JUnit, багфикс с `@DataJpaTest` + Testcontainers, новый endpoint с `@WebMvcTest`, новый `@KafkaListener` на Testcontainers или `@EmbeddedKafka` — в [references/examples.md](references/examples.md). Открывай, когда нужен образец для конкретного уровня.
+The skill is adapted from `test-driven-development` in [obra/superpowers](https://github.com/obra/superpowers) (MIT): contradictions removed, modes for refactoring and legacy added, examples rewritten for Java/Spring.

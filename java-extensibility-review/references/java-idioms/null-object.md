@@ -1,22 +1,22 @@
-# Null Object / реализация по умолчанию
+# Null Object / a default implementation
 
-Тип: классический паттерн (не GoF), часто — дефолтная стратегия
+Type: a classic pattern (not GoF), often a default strategy
 
-## Суть
-Вместо `null` или «отсутствующего» обработчика используется реализация интерфейса, которая осознанно ничего не делает (или делает поведение по умолчанию). Проверки `if (x != null)` в местах вызова исчезают, а «ничего не делать» становится явным, именованным и тестируемым поведением.
+## Essence
+Instead of `null` or a "missing" handler, an implementation of the interface is used that deliberately does nothing (or does the default behavior). The `if (x != null)` checks at the call sites disappear, and "do nothing" becomes an explicit, named and testable behavior.
 
-## Признаки в Java/Spring коде
-- `if (notifier != null) notifier.send(…)` в нескольких местах.
-- `Optional<Handler>` с `ifPresent` в каждом месте вызова.
-- `@Autowired(required = false)` с последующими null-проверками.
-- `default -> {}` (пустая ветка) в каждом `switch`.
-- Флаг `if (props.isAuditEnabled()) audit.log(…)` в нескольких местах.
+## Signs in Java/Spring code
+- `if (notifier != null) notifier.send(…)` in several places.
+- `Optional<Handler>` with `ifPresent` at every call site.
+- `@Autowired(required = false)` followed by null checks.
+- `default -> {}` (an empty branch) in every `switch`.
+- A flag `if (props.isAuditEnabled()) audit.log(…)` in several places.
 
-## Когда не применять
-- «Ничего не делать» маскирует ошибку: если отсутствие обработчика — баг конфигурации, лучше упасть при старте (см. проверку полноты в `../behavioral/strategy.md`).
-- Вызывающему важно знать, что действие не выполнилось (тогда нужен явный результат).
+## When not to apply
+- "Do nothing" masks an error: if a missing handler is a configuration bug, better fail at startup (see the completeness check in `../behavioral/strategy.md`).
+- The caller needs to know the action did not happen (then an explicit result is needed).
 
-## После
+## After
 ```java
 public interface AuditLog { void record(AuditEvent e); }
 
@@ -29,19 +29,19 @@ class AuditConfig {
     @Bean
     @ConditionalOnMissingBean(AuditLog.class)
     AuditLog noopAuditLog() {
-        return e -> log.debug("Audit disabled, skipping {}", e.type());   // ничего не делаем, но видно в debug
+        return e -> log.debug("Audit disabled, skipping {}", e.type());   // do nothing, but visible in debug
     }
 }
 
-// в сервисах — без проверок
+// in services — no checks
 audit.record(new AuditEvent("order.created", orderId));
 ```
-В реестрах стратегий это обработчик по умолчанию для ключей без своей реализации, но только если такое поведение — осознанное бизнес-решение.
+In strategy registries this is the default handler for keys without their own implementation, but only if that behavior is a deliberate business decision.
 
-## Подводные камни
-- `@ConditionalOnMissingBean` надёжно работает в автоконфигурации; в обычных `@Configuration` порядок обработки может удивить. Безопаснее пара `@ConditionalOnProperty(havingValue = "true")` / `(havingValue = "false", matchIfMissing = true)`.
-- Null Object, который возвращает значения (например, пустой список), должен соблюдать контракт интерфейса.
-- Логируй на `debug`, что сработала заглушка. Иначе «почему не пришло письмо» будет долгим расследованием.
+## Pitfalls
+- `@ConditionalOnMissingBean` works reliably in auto-configuration; in plain `@Configuration` classes the processing order can surprise. A safer pair is `@ConditionalOnProperty(havingValue = "true")` / `(havingValue = "false", matchIfMissing = true)`.
+- A Null Object that returns values (e.g. an empty list) must honor the interface contract.
+- Log at `debug` that the stub fired. Otherwise "why did the email not arrive" becomes a long investigation.
 
-## Связанные паттерны
-Strategy (дефолтная стратегия) · Конфигурация вместо кода (`@ConditionalOnProperty`) · Proxy (`@Lazy` / опциональные зависимости).
+## Related patterns
+Strategy (a default strategy) · Configuration over code (`@ConditionalOnProperty`) · Proxy (`@Lazy` / optional dependencies).

@@ -1,15 +1,15 @@
-# Facade (Фасад)
+# Facade
 
-Группа: структурный
+Group: structural
 
-## Суть
-Фасад даёт простой интерфейс к сложной подсистеме или к набору подсистем. Клиенту нужен один вызов «сделай X», а фасад внутри знает порядок вызовов, детали библиотек и обработку ошибок. Подсистемы остаются доступными напрямую, фасад просто убирает повторение.
+## Essence
+A facade gives a simple interface to a complex subsystem or a set of subsystems. The client needs one call "do X", and inside the facade knows the call order, library details and error handling. The subsystems remain directly accessible; the facade just removes repetition.
 
-## Структура (участники)
-- **Facade** — простой интерфейс к сложной подсистеме. Знает, каким классам и в каком порядке делегировать (`SpreadsheetExporter`, `CheckoutService`).
-- **Subsystem classes** — классы подсистемы или библиотеки. О фасаде не знают и остаются доступны напрямую.
-- **Additional Facade** — отдельные фасады, когда один разрастается.
-- **Client** — использует фасад вместо прямой работы с подсистемой.
+## Structure (participants)
+- **Facade** — a simple interface to a complex subsystem. Knows which classes to delegate to and in what order (`SpreadsheetExporter`, `CheckoutService`).
+- **Subsystem classes** — classes of the subsystem or library. They do not know about the facade and remain directly accessible.
+- **Additional Facade** — separate facades when one grows too big.
+- **Client** — uses the facade instead of working with the subsystem directly.
 
 ```
 Client ──▶ Facade ──┬──▶ SubsystemA
@@ -17,30 +17,30 @@ Client ──▶ Facade ──┬──▶ SubsystemA
                     └──▶ SubsystemC
 ```
 
-## Признаки в Java/Spring коде
-- Одна и та же последовательность вызовов нескольких компонентов (клиент A → репозиторий B → кэш C → аудит) скопирована в контроллерах и сервисах.
-- Сложная библиотека используется напрямую во многих местах: Apache POI (листы, стили, ячейки), низкоуровневый клиент Elasticsearch, Kafka `AdminClient`, JasperReports, JSch.
-- Контроллеры знают детали инфраструктуры.
-- Обновление библиотеки требует правок по всему проекту.
+## Signs in Java/Spring code
+- The same sequence of calls to several components (client A → repository B → cache C → audit) is copied across controllers and services.
+- A complex library is used directly in many places: Apache POI (sheets, styles, cells), the low-level Elasticsearch client, Kafka `AdminClient`, JasperReports, JSch.
+- Controllers know infrastructure details.
+- A library upgrade requires edits across the whole project.
 
-## Когда не применять
-- Фасад один к одному пробрасывает методы подсистемы — пустой слой.
-- Фасад, который вырос до God-класса «всё про заказы», лучше разбить по use case.
-- Одно место использования.
+## When not to apply
+- The facade forwards subsystem methods one to one — an empty layer.
+- A facade that grew into a God class "everything about orders" is better split by use case.
+- A single place of use.
 
-## До
+## Before
 ```java
-// в трёх контроллерах и одном джобе:
+// in three controllers and one job:
 var wb = new XSSFWorkbook();
 var sheet = wb.createSheet("Orders");
 var header = sheet.createRow(0);
 var style = wb.createCellStyle();
 var font = wb.createFont(); font.setBold(true); style.setFont(font);
-// … 40 строк про ячейки, ширину колонок, форматы дат
+// … 40 lines about cells, column widths, date formats
 wb.write(out);
 ```
 
-## После
+## After
 ```java
 public interface SpreadsheetExporter {
     <T> void export(OutputStream out, String sheet, List<Column<T>> columns, List<T> rows);
@@ -50,8 +50,8 @@ public record Column<T>(String title, Function<T, Object> value) {}
 @Component
 class PoiSpreadsheetExporter implements SpreadsheetExporter {
     public <T> void export(OutputStream out, String sheet, List<Column<T>> columns, List<T> rows) {
-        try (var wb = new SXSSFWorkbook(100)) {     // streaming: не держит весь файл в памяти
-            // стили, заголовок, форматы, autosize — один раз и здесь
+        try (var wb = new SXSSFWorkbook(100)) {     // streaming: does not keep the whole file in memory
+            // styles, header, formats, autosize — once and here
             wb.write(out);
         } catch (IOException e) {
             throw new ExportFailedException(e);
@@ -59,32 +59,32 @@ class PoiSpreadsheetExporter implements SpreadsheetExporter {
     }
 }
 
-// использование
+// usage
 exporter.export(out, "Orders", List.of(
-        new Column<>("Номер", Order::number),
-        new Column<>("Сумма", Order::total)), orders);
+        new Column<>("Number", Order::number),
+        new Column<>("Total", Order::total)), orders);
 ```
-Для оркестрации подсистем фасадом обычно служит application service на один use case (`CheckoutService.checkout(cmd)`), которому контроллер делегирует целиком.
+For orchestrating subsystems the facade is usually an application service per use case (`CheckoutService.checkout(cmd)`), to which the controller delegates entirely.
 
-## Шаги рефакторинга
-1. Найти копии последовательности (grep по ключевым вызовам библиотеки).
-2. Описать интерфейс фасада по тому, что нужно клиентам, а не по API библиотеки.
-3. Перенести реализацию, заменить копии, добавить тест фасада.
+## Refactoring steps
+1. Find the copies of the sequence (grep for the library's key calls).
+2. Describe the facade interface by what clients need, not by the library's API.
+3. Move the implementation, replace the copies, add a facade test.
 
-## Подводные камни
-- Фасад, который протекает: возвращает типы библиотеки (`XSSFWorkbook`). Тогда клиенты всё равно от неё зависят.
-- Транзакционные границы: фасад, оркестрирующий несколько сервисов, — естественное место для `@Transactional`, но не для внешних HTTP-вызовов внутри транзакции.
+## Pitfalls
+- A leaking facade: it returns library types (`XSSFWorkbook`). Then clients still depend on the library.
+- Transaction boundaries: a facade orchestrating several services is a natural place for `@Transactional`, but not for external HTTP calls inside the transaction.
 
-## Плюсы и минусы
-**Плюсы**
-- Клиенты изолированы от сложности и деталей подсистемы.
-- Меньше связанность: смена или обновление библиотеки затрагивает только фасад.
-- Повторяющаяся оркестрация живёт в одном месте.
+## Pros and cons
+**Pros**
+- Clients are isolated from the subsystem's complexity and details.
+- Less coupling: replacing or upgrading a library touches only the facade.
+- Repeated orchestration lives in one place.
 
-**Минусы**
-- Риск God-объекта, привязанного ко всем классам системы.
-- Фасад может скрыть возможности подсистемы, которые нужны отдельным клиентам.
-- Пробрасывающий фасад (один к одному) — пустой слой.
+**Cons**
+- The risk of a God object tied to every class of the system.
+- A facade may hide subsystem capabilities individual clients need.
+- A forwarding facade (one to one) is an empty layer.
 
-## Связанные паттерны
-Adapter (один интерфейс приводится к другому) · Mediator (координирует участников, которые знают о посреднике) · Abstract Factory (может скрываться за фасадом).
+## Related patterns
+Adapter (one interface is turned into another) · Mediator (coordinates participants that know about the mediator) · Abstract Factory (can hide behind a facade).

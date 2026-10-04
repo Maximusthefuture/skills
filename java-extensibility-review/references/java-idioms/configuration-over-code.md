@@ -1,23 +1,23 @@
-# Конфигурация вместо кода
+# Configuration over code
 
-Тип: Spring Boot-идиома (externalized configuration, conditional beans)
+Type: a Spring Boot idiom (externalized configuration, conditional beans)
 
-## Суть
-Данные, которые меняются чаще кода (ставки, пороги, маппинги, списки стран), выносятся из `if/else` в типизированную конфигурацию. Выбор реализации по флагу делается один раз, при сборке контекста (`@ConditionalOnProperty`, `@Profile`), а не `if` в каждом вызове. Новое значение — строка в YAML, а не релиз.
+## Essence
+Data that changes more often than the code (rates, thresholds, mappings, country lists) moves out of `if/else` into typed configuration. Choosing an implementation by a flag happens once, when the context is assembled (`@ConditionalOnProperty`, `@Profile`), not as an `if` in every call. A new value is a line in YAML, not a release.
 
-## Признаки в Java/Spring коде
+## Signs in Java/Spring code
 - `if (country.equals("DE")) vat = 0.19; else if (country.equals("FR")) vat = 0.20; …`
-- Магические числа-пороги в бизнес-логике (`if (amount > 50000)`), которые бизнес просит менять.
-- `if (props.isNewPricingEnabled()) newEngine.calc() else oldEngine.calc()` в нескольких местах.
-- `@Value("${…}")` с одинаковыми ключами, разбросанные по многим классам.
-- Разные `if (env.equals("prod"))` в коде.
+- Magic threshold numbers in business logic (`if (amount > 50000)`) that the business asks to change.
+- `if (props.isNewPricingEnabled()) newEngine.calc() else oldEngine.calc()` in several places.
+- `@Value("${…}")` with the same keys scattered across many classes.
+- Various `if (env.equals("prod"))` in the code.
 
-## Когда не применять
-- Флаг переключается в рантайме без рестарта (A/B, процент пользователей, kill switch) — нужен feature-flag сервис (Unleash, LaunchDarkly, Togglz) и Strategy, выбираемая на каждый запрос.
-- Значения меняет бизнес-пользователь через админку (тарифы, акции) — это данные в БД, а не YAML.
-- Значение — часть логики, а не настройка (не надо выносить в конфиг каждое число).
+## When not to apply
+- The flag switches at runtime without a restart (A/B, a percentage of users, a kill switch) — you need a feature-flag service (Unleash, LaunchDarkly, Togglz) and a Strategy chosen per request.
+- A business user changes the values through an admin UI (tariffs, promotions) — that is data in the DB, not YAML.
+- The value is part of the logic, not a setting (not every number belongs in config).
 
-## После — таблицы
+## After — tables
 ```java
 @ConfigurationProperties(prefix = "tax")
 @Validated
@@ -41,9 +41,9 @@ class VatCalculator {
     }
 }
 ```
-Не забудь `@EnableConfigurationProperties(TaxProperties.class)` или `@ConfigurationPropertiesScan`.
+Do not forget `@EnableConfigurationProperties(TaxProperties.class)` or `@ConfigurationPropertiesScan`.
 
-## После — выбор реализации при старте
+## After — choosing the implementation at startup
 ```java
 @Component
 @ConditionalOnProperty(name = "pricing.engine", havingValue = "v2")
@@ -53,18 +53,18 @@ class PricingEngineV2 implements PricingEngine { … }
 @ConditionalOnProperty(name = "pricing.engine", havingValue = "v1", matchIfMissing = true)
 class PricingEngineV1 implements PricingEngine { … }
 ```
-Вызывающий код просто внедряет `PricingEngine`.
+The calling code simply injects `PricingEngine`.
 
-## Шаги рефакторинга
-1. Вынести значения в `@ConfigurationProperties` с валидацией, сохранив текущие значения по умолчанию.
-2. Заменить хардкод и разрозненные `@Value` на внедрение properties.
-3. Тест: контекст поднимается с реальным `application.yml`; невалидная конфигурация роняет старт.
+## Refactoring steps
+1. Move the values into `@ConfigurationProperties` with validation, keeping the current defaults.
+2. Replace the hardcoding and the scattered `@Value` with injected properties.
+3. A test: the context starts with the real `application.yml`; an invalid configuration fails the startup.
 
-## Подводные камни
-- Без `@Validated` опечатка в YAML даёт `null` в проде, а не ошибку при старте.
-- Ключи Map в YAML с точками или спецсимволами нужно экранировать (`"[a.b]": 1`).
-- Секреты не кладутся в `application.yml` в репозитории.
-- Изменение YAML — тоже изменение поведения. Ему нужны ревью и тест так же, как коду.
+## Pitfalls
+- Without `@Validated` a typo in YAML gives `null` in production, not an error at startup.
+- Map keys in YAML with dots or special characters must be escaped (`"[a.b]": 1`).
+- Secrets do not go into `application.yml` in the repository.
+- A YAML change is a behavior change too. It needs review and a test just like code.
 
-## Связанные паттерны
-Map-lookup (таблица в коде) · Null Object (`@ConditionalOnMissingBean`) · Abstract Factory (семейство бинов по профилю) · Strategy.
+## Related patterns
+Map-lookup (a table in code) · Null Object (`@ConditionalOnMissingBean`) · Abstract Factory (a family of beans per profile) · Strategy.

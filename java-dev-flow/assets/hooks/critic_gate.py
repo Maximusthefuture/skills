@@ -1,37 +1,36 @@
 #!/usr/bin/env python3
-"""critic-gate — Stop-хук: после задачи размера M или L просит Claude запустить агента critic.
+"""critic-gate — Stop hook: after a medium or large (M/L) task asks Claude to run the critic agent.
 
-Хук срабатывает, когда Claude заканчивает ход, и смотрит, что изменилось в проекте
-с последнего запроса пользователя:
-  - production-файлы. Изменение определяется по mtime, поэтому правки через Bash
-    и субагентов тоже видны;
-  - строки — по git diff и вызовам Edit/Write/MultiEdit/NotebookEdit в транскрипте;
-    новые файлы считаются целиком;
-  - миграции БД и security-конфиг — по java-dev-flow такая задача уже не S.
-Учитываются только файлы внутри проекта: корень git-репозитория, а без git — рабочий каталог.
+The hook fires when Claude ends a turn and looks at what changed in the project
+since the last user prompt:
+  - production files. A change is detected by mtime, so edits made via Bash
+    and by subagents are visible too;
+  - lines — from git diff and from Edit/Write/MultiEdit/NotebookEdit calls in the transcript;
+    new files count in full;
+  - DB migrations and security config — per java-dev-flow such a task is no longer S.
+Only files inside the project count: the git repository root, or the working directory without git.
 
-Пустяки не считаются:
-  - не код: документация, картинки, архивы, lock-файлы;
-  - тесты, .claude/, каталоги сборки и IDE;
-  - сгенерированный код: каталоги generated*, заголовки «DO NOT EDIT», «@generated»;
-  - инструменты Claude Code: файлы внутри пакета скилла или плагина, то есть под
-    каталогом с SKILL.md или .claude-plugin/;
-  - файлы, где поменялись только пробелы, пустые строки, комментарии, import и package.
-    В git с коммитами это видно по diff, без git — только для новых файлов.
+Trivia does not count:
+  - not code: documentation, images, archives, lock files;
+  - tests, .claude/, build and IDE directories;
+  - generated code: generated* directories, "DO NOT EDIT" / "@generated" headers;
+  - Claude Code tooling: files inside a skill or plugin package, i.e. under
+    a directory with SKILL.md or .claude-plugin/;
+  - files where only whitespace, blank lines, comments, imports and package changed.
+    In git with commits this is visible from the diff; without git — only for new files.
 
-Если изменение похоже на M или L, а critic с этого запроса не запускался, хук блокирует
-остановку (decision=block) и объясняет Claude, что сделать. На один запрос пользователя —
-не больше одного напоминания.
+If the change looks like M or L and critic has not run since this prompt, the hook blocks
+the stop (decision=block) and tells Claude what to do. At most one reminder per user prompt.
 
-Настройка — переменные окружения, например в "env" файла ~/.claude/settings.json
-или .claude/settings.json проекта:
-  CRITIC_GATE=off             выключить
-  CRITIC_GATE_MIN_FILES=4     порог: production-файлов за ход
-  CRITIC_GATE_MIN_LINES=150   порог: изменённых строк в production-файлах
-  CRITIC_GATE_AGENT=critic    имя агента
-  CRITIC_GATE_DEBUG=1         печатать ошибки хука в stderr
+Configuration — environment variables, e.g. in "env" of ~/.claude/settings.json
+or the project's .claude/settings.json:
+  CRITIC_GATE=off             disable
+  CRITIC_GATE_MIN_FILES=4     threshold: production files per turn
+  CRITIC_GATE_MIN_LINES=150   threshold: changed lines in production files
+  CRITIC_GATE_AGENT=critic    agent name
+  CRITIC_GATE_DEBUG=1         print hook errors to stderr
 
-Любая внутренняя ошибка — тихий выход с кодом 0: хук не должен ломать сессию.
+Any internal error is a silent exit with code 0: the hook must not break the session.
 """
 
 import json
@@ -58,11 +57,11 @@ MIN_FILES = env_int("CRITIC_GATE_MIN_FILES", 4)
 MIN_LINES = env_int("CRITIC_GATE_MIN_LINES", 150)
 STATE_DIR = os.environ.get("CRITIC_GATE_STATE_DIR") or os.path.join(tempfile.gettempdir(), "claude-critic-gate")
 
-CLOCK_SKEW = 2.0  # секунды: запас на округление mtime и разницу часов
-WALK_MAX_FILES = 50000  # обход каталога без git: не больше стольких файлов
-WALK_MAX_SECONDS = 3.0  # и не дольше
-MAX_COUNTED_BYTES = 1 << 20  # строки в файлах больше 1 МБ не считаем
-MAX_DIFF_FILES = 500  # больше — разбор diff не нужен, изменение и так большое
+CLOCK_SKEW = 2.0  # seconds: slack for mtime rounding and clock drift
+WALK_MAX_FILES = 50000  # directory walk without git: at most this many files
+WALK_MAX_SECONDS = 3.0  # and no longer than this
+MAX_COUNTED_BYTES = 1 << 20  # do not count lines in files over 1 MB
+MAX_DIFF_FILES = 500  # beyond this no diff parsing is needed, the change is large anyway
 SHOWN_FILES = 8
 GIT_TIMEOUT = 4
 
@@ -86,12 +85,12 @@ NON_CODE_EXT = {
     ".log", ".csv", ".tsv", ".lock", ".iml", ".pyc", ".dll", ".exe", ".so", ".dylib", ".o", ".a",
 }
 LOCKFILES = {"package-lock.json", "pnpm-lock.yaml", "go.sum", ".DS_Store"}
-# Заголовки генераторов: protoc, Go, jOOQ, OpenAPI Generator. Не "@generated": совпадёт с @GeneratedValue.
+# Generator headers: protoc, Go, jOOQ, OpenAPI Generator. Not "@generated": it would match @GeneratedValue.
 GENERATED_RE = re.compile(
     rb"do not edit|code generated by|protocol buffer compiler|(file|class|code) (is|was) (auto[- ]?)?generated"
 )
 
-# Строка-пустяк: после strip начинается с маркера комментария (по расширению файла) или с import/package.
+# A trivial line: after strip it starts with a comment marker (by file extension) or with import/package.
 C_COMMENTS = ("//", "/*", "*")
 HASH_COMMENTS = ("#",)
 COMMENT_MARKERS = {
@@ -126,7 +125,7 @@ SECURITY_RE = re.compile(
     r"|(^|/)[^/]*(Security|Auth[A-Z0-9]|Authenticat|Authoriz|OAuth|Jwt|JWT|Permission|Acl[A-Z.])[^/]*\.(java|kt|scala|groovy)$"
 )
 TS_RE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?(Z|[+-]\d\d:?\d\d)?$")
-# Пользовательские записи, которые пишет сам Claude Code, а не человек (для транскриптов без поля origin).
+# User entries written by Claude Code itself, not by a human (for transcripts without the origin field).
 SYSTEM_PREFIXES = (
     "<task-notification", "<local-command", "<bash-stdout", "<bash-stderr",
     "Stop hook feedback", "[Request interrupted", "Caveat:",
@@ -139,7 +138,7 @@ class Turn(object):
         self.prompt_ts = prompt_ts
         self.prompt_id = prompt_id
         self.critic_launched = critic_launched
-        self.edits = edits  # realpath -> изменённые строки по вызовам инструментов
+        self.edits = edits  # realpath -> changed lines from tool calls
 
 
 def parse_ts(value):
@@ -207,7 +206,7 @@ def edit_size(name, tool_input, cwd):
 
 
 def read_turn(transcript_path, cwd):
-    """Идёт по транскрипту с конца до последнего запроса человека."""
+    """Walks the transcript backwards to the last human prompt."""
     with open(transcript_path, "rb") as transcript:
         raw_lines = transcript.read().splitlines()
     critic_launched = False
@@ -262,7 +261,7 @@ def project_root(cwd):
 
 
 def git_candidates(root, since):
-    """Грязные и неотслеживаемые файлы плюс файлы из коммитов за ход. Значение — статус git или "log"."""
+    """Dirty and untracked files plus files from commits made during the turn. Value — the git status or "log"."""
     found = {}
     out = git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     tokens = out.split(b"\0") if out else []
@@ -274,7 +273,7 @@ def git_candidates(root, since):
             continue
         status = token[:2]
         if b"R" in status or b"C" in status:
-            i += 1  # следом идёт исходный путь переименования
+            i += 1  # the rename source path follows
         found[os.path.realpath(os.path.join(root, os.fsdecode(token[3:])))] = os.fsdecode(status)
     out = git(root, "log", "--since=@%d" % int(since), "--name-only", "--no-renames", "--format=")
     for line in out.splitlines() if out else []:
@@ -284,7 +283,7 @@ def git_candidates(root, since):
 
 
 def walk_candidates(root, since):
-    """Без git: файлы рабочего каталога с mtime после запроса. Значение — "new" или "changed"."""
+    """Without git: working directory files with mtime after the prompt. Value — "new" or "changed"."""
     found = {}
     if root in (os.path.realpath(os.path.expanduser("~")), os.path.realpath(os.sep)):
         return found
@@ -312,7 +311,7 @@ def file_stat(path):
 
 
 def read_text(path):
-    """Содержимое текстового файла до 1 МБ, иначе None."""
+    """Contents of a text file up to 1 MB, otherwise None."""
     try:
         if os.path.getsize(path) > MAX_COUNTED_BYTES:
             return None
@@ -344,7 +343,7 @@ def is_production(rel):
 
 
 def is_tooling(root, path, cache):
-    """Файл внутри пакета скилла или плагина Claude Code: это инструмент, а не прод-код."""
+    """A file inside a Claude Code skill or plugin package: tooling, not production code."""
     directory = os.path.dirname(path)
     visited = []
     result = False
@@ -387,13 +386,13 @@ def is_trivial_line(text, prefixes):
 
 
 def substantive_lines(rel, data):
-    """Строки нового файла без пустых, комментариев, import и package."""
+    """Lines of a new file excluding blank lines, comments, imports and package."""
     prefixes = trivial_prefixes(rel)
     return sum(1 for line in data.decode("utf-8", "replace").splitlines() if not is_trivial_line(line, prefixes))
 
 
 def header_path(line):
-    """Путь из `diff --git a/<p> b/<p>`; с --no-renames половины совпадают. Пути в кавычках — None."""
+    """The path from `diff --git a/<p> b/<p>`; with --no-renames both halves match. Quoted paths — None."""
     body = line[len("diff --git a/"):] if line.startswith("diff --git a/") else ""
     half = (len(body) - 3) // 2
     if half > 0 and body[half:half + 3] == " b/" and body[:half] == body[half + 3:]:
@@ -402,12 +401,12 @@ def header_path(line):
 
 
 def diff_against_head(root, rels):
-    """Существенные строки `git diff HEAD` по файлам: rel -> [добавлено, удалено].
+    """Substantive lines of `git diff HEAD` per file: rel -> [added, removed].
 
-    Пробелы и пустые строки git отбрасывает сам (-w, --ignore-blank-lines), комментарии,
-    import и package — is_trivial_line. Файла нет в ответе — существенных правок нет.
-    None — разбора нет, и файлы считаются как раньше: нет коммитов, файлов слишком много
-    или путь из diff не удалось сопоставить.
+    Git drops whitespace and blank lines itself (-w, --ignore-blank-lines); comments,
+    imports and package are dropped by is_trivial_line. A file missing from the result has no substantive edits.
+    None means no parsing, and files are counted as before: no commits, too many files,
+    or a path from the diff could not be matched.
     """
     if not rels or len(rels) > MAX_DIFF_FILES:
         return None
@@ -422,7 +421,7 @@ def diff_against_head(root, rels):
         if line.startswith("diff --git "):
             current, in_hunk = header_path(line), False
             if current not in stats:
-                return None  # при сомнении считаем файл, а не пропускаем
+                return None  # when in doubt, count the file rather than skip it
             prefixes = trivial_prefixes(current)
         elif line.startswith("Binary files ") and current is not None:
             stats[current] = [1, 1]
@@ -440,7 +439,7 @@ def measure(root, is_git, turn):
     for path in turn.edits:
         candidates.setdefault(path, "edit")
     tooling_cache = {}
-    changed = []  # (path, rel, статус)
+    changed = []  # (path, rel, status)
     for path, status in candidates.items():
         rel = relative_inside(root, path)
         if rel is None or not is_production(rel):
@@ -451,7 +450,7 @@ def measure(root, is_git, turn):
         if is_tooling(root, path, tooling_cache) or is_generated(path):
             continue
         changed.append((path, rel, status))
-    # В diff — только отслеживаемые и изменённые сейчас: у коммитов за ход и новых файлов своя оценка.
+    # Only tracked files changed right now go to the diff: commits made during the turn and new files are estimated separately.
     diff = diff_against_head(root, [rel for _, rel, status in changed if status not in ("??", "log", "edit")]) \
         if is_git else None
     prod, risky = [], []
@@ -460,14 +459,14 @@ def measure(root, is_git, turn):
         if diff is not None and rel in diff:
             lines = max(diff[rel])
             if lines == 0:
-                continue  # только пробелы, комментарии, import
+                continue  # whitespace, comments, imports only
             if from_tools:
-                lines = min(lines, from_tools)  # diff может включать правки до этого запроса
+                lines = min(lines, from_tools)  # the diff may include edits made before this prompt
         elif status in ("??", "new"):
             data = read_text(path)
             lines = substantive_lines(rel, data) if data is not None else from_tools
             if data is not None and lines == 0:
-                continue  # новый файл из одних комментариев
+                continue  # a new file of comments only
         else:
             lines = from_tools
         prod.append((rel, lines))
@@ -503,24 +502,24 @@ def build_reason(prod, total_lines, risky):
     shown = [rel for rel, _ in prod[:SHOWN_FILES]]
     files = ", ".join(shown)
     if len(prod) > len(shown):
-        files += " и ещё %d" % (len(prod) - len(shown))
-    stats = "production-файлов: %d" % len(prod)
+        files += " and %d more" % (len(prod) - len(shown))
+    stats = "production files: %d" % len(prod)
     if total_lines:
-        stats += ", изменённых строк: ~%d" % total_lines
+        stats += ", changed lines: ~%d" % total_lines
     if risky:
-        stats += "; затронуты миграции или безопасность: " + ", ".join(risky[:SHOWN_FILES])
+        stats += "; migrations or security touched: " + ", ".join(risky[:SHOWN_FILES])
     return (
-        "critic-gate: изменение похоже на задачу размера M или L, а агент {agent} с последнего запроса "
-        "пользователя не запускался. Изменено {stats}.\n"
-        "Файлы: {files}\n\n"
-        "Перед итоговым ответом запусти агента {agent} (Agent, subagent_type: \"{agent}\") по этим изменениям. "
-        "Передай ему область diff или список файлов, 2–5 строк о том, что сделано, требования или спеку, "
-        "если они есть, размер задачи и что известно о проде: нагрузку, объёмы данных, потребителей API "
-        "и событий, способ деплоя. Подтверждённые блокеры исправь (баг — сначала тест), риски и вопросы "
-        "вынеси пользователю.\n"
-        "Если критик здесь не нужен — механическая правка, переименование, форматирование, сгенерированный "
-        "код, — одной строкой скажи пользователю почему и заверши ход. Если агента {agent} нет среди "
-        "доступных, скажи пользователю, что его нужно положить в ~/.claude/agents/ и начать новую сессию."
+        "critic-gate: the change looks like a medium or large (M/L) task, and the {agent} agent has not run "
+        "since the last user prompt. Changed {stats}.\n"
+        "Files: {files}\n\n"
+        "Before the final answer run the {agent} agent (Agent, subagent_type: \"{agent}\") on these changes. "
+        "Pass it the diff scope or the file list, 2–5 lines on what was done, the requirements or spec "
+        "if any, the task size and what is known about production: load, data volumes, API and event "
+        "consumers, deploy method. Fix confirmed blockers (a bug — test first), bring risks and questions "
+        "to the user.\n"
+        "If the critic is not needed here — a mechanical edit, rename, formatting, generated "
+        "code — tell the user why in one line and end the turn. If the {agent} agent is not among "
+        "the available ones, tell the user it must be put into ~/.claude/agents/ and a new session started."
     ).format(agent=AGENT, stats=stats, files=files)
 
 
@@ -549,14 +548,14 @@ def main():
     if len(prod) < MIN_FILES and total_lines < MIN_LINES and not risky:
         return
     remember_reminder(session_id, turn.prompt_id)
-    # ASCII-JSON: вывод не зависит от локали процесса хука
+    # ASCII JSON: the output does not depend on the hook process locale
     print(json.dumps({"decision": "block", "reason": build_reason(prod, total_lines, risky)}))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception:  # хук не должен ломать сессию
+    except Exception:  # the hook must not break the session
         if os.environ.get("CRITIC_GATE_DEBUG"):
             traceback.print_exc()
     sys.exit(0)

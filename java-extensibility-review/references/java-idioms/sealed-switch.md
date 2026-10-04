@@ -1,27 +1,27 @@
-# sealed + switch с pattern matching
+# sealed + switch with pattern matching
 
-Тип: Java 17/21-идиома, современная альтернатива Visitor и `instanceof`-цепочкам
+Type: a Java 17/21 idiom, a modern alternative to Visitor and `instanceof` chains
 
-## Суть
-Закрытая иерархия (`sealed interface … permits A, B, C`) из `record` и `switch` по типу без `default` — компилятор проверяет, что обработаны все подтипы. Когда в `permits` добавится новый тип, **каждый** такой `switch` перестанет компилироваться. Это расширяемость, которую гарантирует компилятор.
+## Essence
+A closed hierarchy (`sealed interface … permits A, B, C`) of `record`s and a `switch` on the type without `default` — the compiler checks that all subtypes are handled. When a new type is added to `permits`, **every** such `switch` stops compiling. This is extensibility guaranteed by the compiler.
 
-## Признаки в Java/Spring коде
-- `instanceof`-цепочки: `if (n instanceof Email e) … else if (n instanceof Sms s) …`.
-- Набор подтипов закрыт (его контролирует твой модуль), а **операции** над ним добавляются часто: рендер, валидация, маппинг в DTO, расчёт.
-- Visitor на Java 21+.
-- `switch` по полю-дискриминатору (`type`) с последующим приведением типов.
+## Signs in Java/Spring code
+- `instanceof` chains: `if (n instanceof Email e) … else if (n instanceof Sms s) …`.
+- The set of subtypes is closed (your module controls it), while **operations** on it are added often: rendering, validation, mapping to a DTO, calculation.
+- A Visitor on Java 21+.
+- A `switch` on a discriminator field (`type`) followed by casts.
 
-## Как выбрать между sealed + switch и Strategy (expression problem)
+## Choosing between sealed + switch and Strategy (the expression problem)
 
-| Что добавляется чаще | Выбирай | Почему |
+| What is added more often | Choose | Why |
 |---|---|---|
-| Новые **варианты** (провайдеры, способы оплаты), операций мало и они стабильны | Strategy / полиморфизм | новый вариант — новый класс, остальное не трогаем |
-| Новые **операции** над закрытым набором вариантов | sealed + `switch` | новая операция — один метод со `switch`, классы данных не трогаем |
-| Варианты добавляют другие модули или команды (плагины) | Strategy | sealed требует, чтобы все подтипы были в одном модуле или пакете |
+| New **variants** (providers, payment methods), few stable operations | Strategy / polymorphism | a new variant is a new class, nothing else is touched |
+| New **operations** over a closed set of variants | sealed + `switch` | a new operation is one method with a `switch`, the data classes are not touched |
+| Variants are added by other modules or teams (plugins) | Strategy | sealed requires all subtypes to be in one module or package |
 
-Не советуй заменить работающий sealed + `switch` на Strategy (и наоборот), не определив, какая ось реально меняется.
+Do not advise replacing a working sealed + `switch` with a Strategy (or the reverse) without determining which axis really changes.
 
-## После (Java 21)
+## After (Java 21)
 ```java
 public sealed interface Notification permits EmailNotification, SmsNotification, PushNotification {}
 public record EmailNotification(String to, String subject, String body) implements Notification {}
@@ -29,14 +29,14 @@ public record SmsNotification(String phone, String text) implements Notification
 public record PushNotification(String deviceToken, String title) implements Notification {}
 
 String preview(Notification n) {
-    return switch (n) {                     // без default: компилятор требует покрыть все подтипы
+    return switch (n) {                     // no default: the compiler demands all subtypes be covered
         case EmailNotification e -> e.subject();
         case SmsNotification s   -> s.text();
         case PushNotification p  -> p.title();
     };
 }
 
-// record patterns и guard-условия
+// record patterns and guards
 String route(Notification n) {
     return switch (n) {
         case EmailNotification(var to, var subject, var body) when to.endsWith("@corp.example") -> "internal-smtp";
@@ -47,16 +47,16 @@ String route(Notification n) {
 }
 ```
 
-## Шаги рефакторинга
-1. Убедиться, что Java ≥ 21 (на 17 pattern matching в `switch` — preview). На 17 можно ввести `sealed` и `instanceof`-паттерны, но полноту `switch` по типам компилятор не проверяет.
-2. Сделать иерархию `sealed`, подтипы — `record` или `final`.
-3. Заменить `instanceof`-цепочки на `switch`-выражения без `default`.
+## Refactoring steps
+1. Make sure Java ≥ 21 (on 17 pattern matching in `switch` is a preview). On 17 you can introduce `sealed` and `instanceof` patterns, but the compiler does not check `switch` completeness over types.
+2. Make the hierarchy `sealed`, the subtypes `record` or `final`.
+3. Replace the `instanceof` chains with `switch` expressions without `default`.
 
-## Подводные камни
-- `default ->` в `switch` по sealed-типу отключает проверку полноты. Отмечай это как замечание: найти такие места можно поиском `default\s*->` рядом с `case [A-Z]\w* \w+ ->`.
-- Все подтипы должны лежать в одном модуле (JPMS) или, без модулей, в одном пакете.
-- JPA-сущности и sealed сочетаются плохо (прокси Hibernate — подклассы). Применяй к DTO, событиям, командам и value-объектам.
-- Jackson: для (де)сериализации sealed-иерархии нужен `@JsonTypeInfo` (`polymorphic-json.md`).
+## Pitfalls
+- `default ->` in a `switch` over a sealed type disables the completeness check. Flag it as a remark: such places can be found by searching for `default\s*->` next to `case [A-Z]\w* \w+ ->`.
+- All subtypes must live in one module (JPMS) or, without modules, in one package.
+- JPA entities and sealed do not combine well (Hibernate proxies are subclasses). Apply it to DTOs, events, commands and value objects.
+- Jackson: (de)serializing a sealed hierarchy needs `@JsonTypeInfo` (`polymorphic-json.md`).
 
-## Связанные паттерны
-Visitor (классический аналог) · Strategy (противоположная ось) · Composite (sealed-дерево) · Command (sealed-набор команд).
+## Related patterns
+Visitor (the classic analog) · Strategy (the opposite axis) · Composite (a sealed tree) · Command (a sealed set of commands).

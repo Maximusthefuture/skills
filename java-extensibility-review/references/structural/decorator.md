@@ -1,32 +1,32 @@
-# Decorator (Декоратор)
+# Decorator
 
-Группа: структурный
+Group: structural
 
-## Суть
-Декоратор оборачивает объект, реализует тот же интерфейс, делегирует вызов внутрь и добавляет поведение до или после. Обёртки складываются в слои (метрики → кэш → ретраи → HTTP), и каждый слой ничего не знает о других. Поведение добавляется без изменения исходного класса и без подклассов на каждую комбинацию.
+## Essence
+A decorator wraps an object, implements the same interface, delegates the call inside and adds behavior before or after. Wrappers stack in layers (metrics → cache → retries → HTTP), and each layer knows nothing about the others. Behavior is added without changing the original class and without a subclass per combination.
 
-## Структура (участники)
-- **Component** — общий интерфейс (`RateProvider`).
-- **ConcreteComponent** — базовая реализация с основной работой (`HttpRateProvider`).
-- **Decorator** — реализует Component, хранит ссылку на обёрнутый Component и делегирует ему вызов.
-- **ConcreteDecorator** — добавляет поведение до или после делегирования (`CachingRateProvider`, `MeteredRateProvider`).
-- **Client** — работает с Component. В Spring цепочку обёрток собирает `@Configuration` с `@Primary`.
+## Structure (participants)
+- **Component** — the common interface (`RateProvider`).
+- **ConcreteComponent** — the base implementation doing the main work (`HttpRateProvider`).
+- **Decorator** — implements Component, holds a reference to the wrapped Component and delegates the call to it.
+- **ConcreteDecorator** — adds behavior before or after delegating (`CachingRateProvider`, `MeteredRateProvider`).
+- **Client** — works with Component. In Spring a `@Configuration` with `@Primary` assembles the wrapper chain.
 
 ```
 Client ──▶ MeteredDecorator ──▶ CachingDecorator ──▶ ConcreteComponent
-              (все реализуют один интерфейс Component)
+              (all implement the same Component interface)
 ```
 
-## Признаки в Java/Spring коде
-- Бизнес-метод перемешан с кэшем, ретраями, логированием, метриками, rate limiting.
-- Подклассы под комбинации: `CachingRateClient extends RateClient`, `RetryingCachingRateClient extends CachingRateClient`.
-- Нужно добавить поведение бину из библиотеки или чужого модуля, который нельзя менять.
-- Слои надо включать и выключать конфигурацией.
+## Signs in Java/Spring code
+- A business method mixed with cache, retries, logging, metrics, rate limiting.
+- Subclasses for combinations: `CachingRateClient extends RateClient`, `RetryingCachingRateClient extends CachingRateClient`.
+- You need to add behavior to a bean from a library or another module that cannot be changed.
+- Layers must be switched on and off by configuration.
 
-## Когда не применять — сначала проверь готовые инструменты
-Spring уже делает декораторы через прокси: `@Cacheable`, `@Retryable` (Spring Retry), Resilience4j (`@CircuitBreaker`, `@RateLimiter`, `@Bulkhead`), `@Timed` / `@Observed`, `@Transactional`. Для HTTP — `ClientHttpRequestInterceptor` (RestClient/RestTemplate), `ExchangeFilterFunction` (WebClient). Ручной декоратор нужен, когда аннотаций не хватает: self-invocation, логика, зависящая от результата, бин из библиотеки, нестандартный порядок слоёв.
+## When not to apply — check the ready-made tools first
+Spring already makes decorators via proxies: `@Cacheable`, `@Retryable` (Spring Retry), Resilience4j (`@CircuitBreaker`, `@RateLimiter`, `@Bulkhead`), `@Timed` / `@Observed`, `@Transactional`. For HTTP — `ClientHttpRequestInterceptor` (RestClient/RestTemplate), `ExchangeFilterFunction` (WebClient). A hand-written decorator is needed when annotations are not enough: self-invocation, logic depending on the result, a bean from a library, a non-standard layer order.
 
-## До
+## Before
 ```java
 @Service
 class RateService {
@@ -49,17 +49,17 @@ class RateService {
 }
 ```
 
-## После
+## After
 ```java
 public interface RateProvider { BigDecimal rate(Currency from, Currency to); }
 
 @Component("httpRateProvider")
-class HttpRateProvider implements RateProvider { /* только HTTP */ }
+class HttpRateProvider implements RateProvider { /* HTTP only */ }
 
 @RequiredArgsConstructor
 class CachingRateProvider implements RateProvider {
     private final RateProvider delegate;
-    private final Cache<String, BigDecimal> cache;          // Caffeine с TTL и размером
+    private final Cache<String, BigDecimal> cache;          // Caffeine with a TTL and a size
     public BigDecimal rate(Currency from, Currency to) {
         return cache.get(from + "/" + to, k -> delegate.rate(from, to));
     }
@@ -84,31 +84,31 @@ class RateProviderConfig {
     }
 }
 ```
-Клиенты внедряют `RateProvider` и получают собранную цепочку. Новый слой — новый класс и одна строка в конфигурации.
+Clients inject `RateProvider` and get the assembled chain. A new layer is a new class and one line in the configuration.
 
-## Шаги рефакторинга
-1. Тест на поведение: попадание в кэш, повтор после ошибки, итоговое исключение.
-2. Выделить интерфейс; «голая» реализация — только основная работа.
-3. Вынести каждый сквозной аспект в свой декоратор или заменить готовой аннотацией.
-4. Собрать цепочку в `@Configuration` с `@Primary`.
+## Refactoring steps
+1. A test on the behavior: a cache hit, a retry after an error, the final exception.
+2. Extract the interface; the "bare" implementation does only the main work.
+3. Move every cross-cutting aspect into its own decorator or replace it with a ready annotation.
+4. Assemble the chain in a `@Configuration` with `@Primary`.
 
-## Подводные камни
-- **Порядок слоёв важен.** Метрики снаружи кэша меряют и попадания в кэш, метрики внутри — только реальные вызовы. Ретраи снаружи circuit breaker и внутри него ведут себя по-разному.
-- **Self-invocation:** аннотации на прокси не срабатывают при вызове из того же класса. У ручного декоратора этой проблемы нет.
-- **Неоднозначность бинов:** без `@Primary` или `@Qualifier` будет `NoUniqueBeanDefinitionException`, а декоратор может случайно получить сам себя.
-- Декоратор должен сохранять контракт: те же исключения и семантику `null`.
+## Pitfalls
+- **Layer order matters.** Metrics outside the cache measure cache hits too, metrics inside measure only real calls. Retries outside and inside a circuit breaker behave differently.
+- **Self-invocation:** proxy annotations do not fire when called from the same class. A hand-written decorator does not have this problem.
+- **Bean ambiguity:** without `@Primary` or `@Qualifier` you get `NoUniqueBeanDefinitionException`, and a decorator may accidentally get itself injected.
+- A decorator must keep the contract: the same exceptions and `null` semantics.
 
-## Плюсы и минусы
-**Плюсы**
-- Поведение добавляется без изменения исходного класса и без подклассов.
-- Комбинации слоёв собираются конфигурацией.
-- Одна сквозная ответственность — один класс (SRP).
+## Pros and cons
+**Pros**
+- Behavior is added without changing the original class and without subclasses.
+- Layer combinations are assembled by configuration.
+- One cross-cutting responsibility — one class (SRP).
 
-**Минусы**
-- Порядок обёрток важен и неочевиден.
-- Много мелких объектов; стек вызовов при отладке длиннее.
-- Убрать конкретный слой из середины цепочки неудобно.
-- Идентичность объекта теряется: обёртка — это другой объект.
+**Cons**
+- Wrapper order matters and is not obvious.
+- Many small objects; a longer call stack when debugging.
+- Removing a specific layer from the middle of the chain is awkward.
+- Object identity is lost: the wrapper is a different object.
 
-## Связанные паттерны
-Proxy (тот же интерфейс, но про контроль доступа) · Chain of Responsibility (звено может прервать цепочку) · Adapter (меняет интерфейс, а не поведение) · Composite.
+## Related patterns
+Proxy (the same interface, but about access control) · Chain of Responsibility (a link may stop the chain) · Adapter (changes the interface, not the behavior) · Composite.

@@ -1,38 +1,38 @@
-# Chain of Responsibility (Цепочка обязанностей)
+# Chain of Responsibility
 
-Группа: поведенческий
+Group: behavioral
 
-## Суть
-Запрос проходит через последовательность обработчиков. Каждый решает сам: обработать, дополнить, отказать или передать дальше. Вызывающий код не знает, сколько звеньев в цепочке и какие они. В Spring цепочка — это `List<Handler>` бинов, упорядоченный `@Order`. Новое правило — новый `@Component`.
+## Essence
+A request passes through a sequence of handlers. Each decides for itself: handle it, enrich it, reject it or pass it on. The calling code does not know how many links the chain has or which ones. In Spring a chain is a `List<Handler>` of beans ordered by `@Order`. A new rule is a new `@Component`.
 
-Варианты:
-- **все по очереди** — валидаторы собирают нарушения, шаги обогащают контекст (pipeline);
-- **первый подходящий** — `supports(ctx)` + `findFirst` (выбор политики или обработчика по сложному условию);
-- **любой может прервать** — фильтры, проверки доступа.
+Variants:
+- **all in turn** — validators collect violations, steps enrich the context (a pipeline);
+- **the first that fits** — `supports(ctx)` + `findFirst` (choosing a policy or handler by a complex condition);
+- **any can stop** — filters, access checks.
 
-## Структура (участники)
-- **Handler** — интерфейс обработчика: обработать запрос и/или передать дальше (`OrderRule.check`, `FeePolicy.supports/fee`).
-- **ConcreteHandler** — конкретное правило или шаг. Решает, обработать ли запрос, прервать ли цепочку, передать ли дальше.
-- **Client** — отправляет запрос в начало цепочки и не знает её состав.
-- Классически каждый обработчик хранит ссылку `next`. В Spring цепочку обычно задаёт `List<Handler>` с `@Order` и цикл, без явных ссылок.
+## Structure (participants)
+- **Handler** — the handler interface: handle the request and/or pass it on (`OrderRule.check`, `FeePolicy.supports/fee`).
+- **ConcreteHandler** — a concrete rule or step. Decides whether to handle the request, stop the chain or pass it on.
+- **Client** — sends the request to the start of the chain and does not know its composition.
+- Classically every handler holds a `next` reference. In Spring the chain is usually a `List<Handler>` with `@Order` and a loop, without explicit references.
 
 ```
-Client ──▶ Handler1 ──▶ Handler2 ──▶ Handler3 ──▶ (никто не обработал → default / ошибка)
+Client ──▶ Handler1 ──▶ Handler2 ──▶ Handler3 ──▶ (nobody handled it → default / error)
              │             │
-          обработал     прервал
+          handled       stopped
 ```
 
-## Признаки в Java/Spring коде
-- Длинный `validate()` на десяток `if (…) throw`, и правила регулярно добавляются.
-- `if/else if` по сочетанию условий (страна + сумма + тип клиента), выбирающий политику.
-- Последовательность шагов импорта или обработки копируется и редактируется в разных местах.
-- Часть правил использует бины (лимиты из БД, антифрод), поэтому их нельзя оформить простыми аннотациями.
+## Signs in Java/Spring code
+- A long `validate()` of a dozen `if (…) throw`, and rules are added regularly.
+- An `if/else if` on a combination of conditions (country + amount + customer type) choosing a policy.
+- A sequence of import or processing steps is copied and edited in different places.
+- Some rules use beans (limits from the DB, anti-fraud), so they cannot be simple annotations.
 
-## Когда не применять
-- Простые ограничения на поля DTO — Bean Validation (`@NotNull`, `@Size`, кастомный `@Constraint`).
-- Правил 2–3, и они не меняются.
+## When not to apply
+- Simple constraints on DTO fields — Bean Validation (`@NotNull`, `@Size`, a custom `@Constraint`).
+- 2–3 rules that do not change.
 
-## После — валидаторы
+## After — validators
 ```java
 public interface OrderRule {
     Optional<Violation> check(Order order);
@@ -55,7 +55,7 @@ class BlockedCustomerRule implements OrderRule {
 @Service
 @RequiredArgsConstructor
 class OrderValidator {
-    private final List<OrderRule> rules; // Spring отсортирует по @Order
+    private final List<OrderRule> rules; // Spring sorts them by @Order
 
     void validate(Order order) {
         var violations = rules.stream().map(r -> r.check(order)).flatMap(Optional::stream).toList();
@@ -64,14 +64,14 @@ class OrderValidator {
 }
 ```
 
-## После — первый подходящий обработчик
+## After — the first handler that fits
 ```java
 public interface FeePolicy {
     boolean supports(FeeContext ctx);
     Money fee(FeeContext ctx);
 }
 
-@Component @Order(Ordered.LOWEST_PRECEDENCE)   // политика по умолчанию — последней
+@Component @Order(Ordered.LOWEST_PRECEDENCE)   // the default policy goes last
 class DefaultFeePolicy implements FeePolicy {
     public boolean supports(FeeContext ctx) { return true; }
     public Money fee(FeeContext ctx) { /* … */ }
@@ -90,30 +90,30 @@ class FeeCalculator {
 }
 ```
 
-## Готовые цепочки Spring — сначала проверь их
-Servlet `Filter` / `OncePerRequestFilter`, `SecurityFilterChain`, `HandlerInterceptor`, `ClientHttpRequestInterceptor` (RestClient/RestTemplate), `ExchangeFilterFunction` (WebClient). Если задача — сквозная обработка HTTP, своя цепочка не нужна.
+## Spring's ready-made chains — check them first
+Servlet `Filter` / `OncePerRequestFilter`, `SecurityFilterChain`, `HandlerInterceptor`, `ClientHttpRequestInterceptor` (RestClient/RestTemplate), `ExchangeFilterFunction` (WebClient). If the task is cross-cutting HTTP processing, you do not need your own chain.
 
-## Шаги рефакторинга
-1. Тест на текущий набор проверок, включая порядок, если он важен (первое сообщение об ошибке).
-2. Интерфейс правила; вынести правила по одному с явным `@Order`.
-3. Заменить монолитный метод проходом по `List`.
+## Refactoring steps
+1. A test on the current set of checks, including the order if it matters (the first error message).
+2. A rule interface; move the rules out one at a time with an explicit `@Order`.
+3. Replace the monolithic method with a pass over the `List`.
 
-## Подводные камни
-- Без `@Order` порядок не гарантирован. Если условия `supports` пересекаются, результат зависит от порядка регистрации бинов.
-- Дорогие правила (ходят в БД): реши явно, собирать все нарушения или выходить на первом. Дешёвые правила ставь раньше.
-- Цепочка не должна молча пропускать запрос, который никто не обработал: нужен обработчик по умолчанию или исключение.
+## Pitfalls
+- Without `@Order` the order is not guaranteed. If `supports` conditions overlap, the result depends on bean registration order.
+- Expensive rules (that hit the DB): decide explicitly whether to collect all violations or exit on the first. Put cheap rules earlier.
+- A chain must not silently let through a request nobody handled: a default handler or an exception is needed.
 
-## Плюсы и минусы
-**Плюсы**
-- Отправитель не зависит от конкретных получателей.
-- Правила добавляются, удаляются и переставляются независимо (Open/Closed).
-- Одно правило — один класс, легко тестировать отдельно.
+## Pros and cons
+**Pros**
+- The sender does not depend on concrete receivers.
+- Rules are added, removed and reordered independently (Open/Closed).
+- One rule — one class, easy to test separately.
 
-**Минусы**
-- Запрос может пройти цепочку необработанным, если не предусмотреть обработчик по умолчанию.
-- Порядок — неявный контракт (`@Order`), и ошибки порядка трудно заметить.
-- Сложнее отлаживать: по коду не видно, какое звено сработало (нужно логирование).
-- Длинные цепочки с дорогими звеньями бьют по производительности.
+**Cons**
+- A request may pass the chain unhandled unless a default handler is provided.
+- The order is an implicit contract (`@Order`), and order mistakes are hard to notice.
+- Harder to debug: the code does not show which link fired (logging is needed).
+- Long chains with expensive links hurt performance.
 
-## Связанные паттерны
-Decorator (всегда делегирует дальше) · Composite (правила AND/OR в дереве) · Command (запрос как объект, идущий по цепочке) · Strategy (выбор по ключу вместо условия).
+## Related patterns
+Decorator (always delegates further) · Composite (AND/OR rules in a tree) · Command (a request as an object passing through the chain) · Strategy (choosing by key instead of a condition).

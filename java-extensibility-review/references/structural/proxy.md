@@ -1,32 +1,32 @@
-# Proxy (Заместитель)
+# Proxy
 
-Группа: структурный
+Group: structural
 
-## Суть
-Заместитель реализует тот же интерфейс, что и настоящий объект, и контролирует доступ к нему: создаёт лениво, проверяет права, кэширует, вызывает удалённо, логирует. Клиент не замечает подмены. Spring построен на прокси: `@Transactional`, `@Cacheable`, `@PreAuthorize`, `@Async`, lazy-связи JPA, клиенты `@HttpExchange` и Feign.
+## Essence
+A proxy implements the same interface as the real object and controls access to it: creates it lazily, checks permissions, caches, calls remotely, logs. The client does not notice the substitution. Spring is built on proxies: `@Transactional`, `@Cacheable`, `@PreAuthorize`, `@Async`, JPA lazy associations, `@HttpExchange` and Feign clients.
 
-## Структура (участники)
-- **Subject** — общий интерфейс реального объекта и заместителя.
-- **RealSubject** — настоящий объект с полезной работой.
-- **Proxy** — реализует Subject, хранит или создаёт RealSubject и контролирует доступ к нему: лениво создаёт, проверяет права, кэширует, вызывает удалённо, логирует.
-- **Client** — работает с Subject и не замечает подмены.
-- Виды: виртуальный (ленивый), защищающий, удалённый, кэширующий, логирующий, «умная ссылка». В Spring их генерирует контейнер (JDK dynamic proxy или CGLIB).
+## Structure (participants)
+- **Subject** — the common interface of the real object and the proxy.
+- **RealSubject** — the real object doing the useful work.
+- **Proxy** — implements Subject, holds or creates the RealSubject and controls access to it: lazy creation, permission checks, caching, remote calls, logging.
+- **Client** — works with Subject and does not notice the substitution.
+- Kinds: virtual (lazy), protection, remote, caching, logging, "smart reference". In Spring the container generates them (JDK dynamic proxy or CGLIB).
 
 ```
-Client ──▶ «interface» Subject ◀── Proxy ──контроль доступа──▶ RealSubject
+Client ──▶ «interface» Subject ◀── Proxy ──access control──▶ RealSubject
 ```
 
-## Признаки в Java/Spring коде
-- В начале многих методов повторяется `if (!securityService.hasAccess(user, id)) throw new AccessDeniedException()`.
-- Ручная ленивая инициализация тяжёлого ресурса с double-checked locking.
-- Ручные HTTP-клиенты: в каждом методе собирается URL, сериализуется тело, разбирается ответ. Их можно заменить декларативным интерфейсом.
-- Кэширование или rate limiting вокруг удалённого сервиса вписаны в вызывающий код.
+## Signs in Java/Spring code
+- `if (!securityService.hasAccess(user, id)) throw new AccessDeniedException()` repeats at the start of many methods.
+- Manual lazy initialization of a heavy resource with double-checked locking.
+- Hand-written HTTP clients: every method builds a URL, serializes the body, parses the response. They can be replaced with a declarative interface.
+- Caching or rate limiting around a remote service is written into the calling code.
 
-## Когда не применять
-- Нужное поведение уже даёт Spring AOP — достаточно правильно его использовать.
-- Цель — добавить поведение и собирать слои в комбинации → `decorator.md`.
+## When not to apply
+- Spring AOP already gives the needed behavior — it is enough to use it correctly.
+- The goal is to add behavior and assemble layers in combinations → `decorator.md`.
 
-## После — декларативная проверка прав
+## After — declarative permission checks
 ```java
 @Service
 class DocumentService {
@@ -43,9 +43,9 @@ class DocumentAccess {
     public boolean canEdit(Authentication auth, UUID id) { … }
 }
 ```
-Требует `@EnableMethodSecurity`.
+Requires `@EnableMethodSecurity`.
 
-## После — удалённый прокси вместо ручного клиента (Spring 6+)
+## After — a remote proxy instead of a hand-written client (Spring 6+)
 ```java
 @HttpExchange("/api/v1/customers")
 public interface CustomerClient {
@@ -67,25 +67,25 @@ class ClientsConfig {
 }
 ```
 
-## После — ленивая инициализация
-`@Lazy` на точке внедрения (Spring подставит прокси), `ObjectProvider<T>` для получения по требованию, или мемоизирующий `Supplier` вместо ручного double-checked locking.
+## After — lazy initialization
+`@Lazy` at the injection point (Spring substitutes a proxy), `ObjectProvider<T>` to get it on demand, or a memoizing `Supplier` instead of hand-written double-checked locking.
 
-## Подводные камни
-- **Self-invocation:** вызов `this.method()` идёт мимо прокси, и аннотации не работают. Это самая частая ошибка.
-- CGLIB не проксирует `final`-классы и методы и `private`-методы. Аннотации на них молча игнорируются.
-- Hibernate-прокси: `getClass()` возвращает класс прокси, поэтому `equals` через `getClass() ==` ломается. Используй `Hibernate.getClass(…)` или `instanceof`.
-- `@Lazy`, использованный для разрыва циклической зависимости, прячет проблему дизайна (см. `../behavioral/mediator.md`).
+## Pitfalls
+- **Self-invocation:** a `this.method()` call bypasses the proxy, and the annotations do not work. This is the most common mistake.
+- CGLIB does not proxy `final` classes and methods or `private` methods. Annotations on them are silently ignored.
+- Hibernate proxies: `getClass()` returns the proxy class, so `equals` via `getClass() ==` breaks. Use `Hibernate.getClass(…)` or `instanceof`.
+- `@Lazy` used to break a circular dependency hides a design problem (see `../behavioral/mediator.md`).
 
-## Плюсы и минусы
-**Плюсы**
-- Контроль доступа и жизненного цикла незаметно для клиента.
-- Работает, даже если реальный объект ещё не создан или удалён (ленивость, удалённые вызовы).
-- Новые прокси добавляются без изменения сервиса и клиента (Open/Closed).
+## Pros and cons
+**Pros**
+- Access and lifecycle control invisible to the client.
+- Works even if the real object is not created yet or is gone (laziness, remote calls).
+- New proxies are added without changing the service and the client (Open/Closed).
 
-**Минусы**
-- Дополнительная задержка и косвенность.
-- Поведение может удивлять: кэшированный ответ, ленивая ошибка при первом обращении.
-- Ограничения прокси в Spring: self-invocation, `final`, `private`.
+**Cons**
+- Extra latency and indirection.
+- The behavior can surprise: a cached answer, a lazy error on first access.
+- Spring proxy limitations: self-invocation, `final`, `private`.
 
-## Связанные паттерны
-Decorator (структура та же, цель — добавить поведение) · Adapter (меняет интерфейс) · Facade.
+## Related patterns
+Decorator (the same structure, the goal is adding behavior) · Adapter (changes the interface) · Facade.

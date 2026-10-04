@@ -1,0 +1,36 @@
+Ты координатор фазы 5 java-dev-flow в проекте ${AUDIT_DIR}/agents-sb/orders-service. Задача уже реализована (незакоммиченные изменения). Твоя единственная работа сейчас: запустить ОДНИМ сообщением, параллельно, двух агентов через инструмент Agent (run_in_background: false) — subagent_type "java-code-reviewer" и subagent_type "critic" — с промптами ниже, дождаться обоих и вывести их ответы ДОСЛОВНО под заголовками «=== java-code-reviewer ===» и «=== critic ===». Сам код не проверяй, ничего не исправляй и других инструментов не вызывай.
+
+Промпт для java-code-reviewer:
+---
+Проведи ревью изменений в проекте ${AUDIT_DIR}/agents-sb/orders-service.
+
+Область: незакоммиченные изменения относительно HEAD, включая новые неотслеживаемые файлы (git status).
+
+Что делает изменение: архивирование заказов. Новая колонка orders.archived_at (changeset 007), метод Order.archive, OrderService.archiveOrder и listArchived, эндпоинты POST /orders/{id}/archive и GET /orders/archived.
+
+Спека:
+1. POST /orders/{id}/archive архивирует только заказ текущего клиента (X-Customer-Id); чужой или несуществующий — 404.
+2. Архивировать можно только заказ в статусе CANCELLED или REFUNDED; иначе 409 с кодом ORDER_NOT_ARCHIVABLE.
+3. Повторный archive уже архивного заказа идемпотентен: 200, archived_at не меняется.
+4. GET /orders/archived возвращает архивные заказы клиента постранично (Pageable), как GET /orders.
+5. Создание заказа (POST /orders) работает как раньше.
+
+Тесты: новых тестов в diff нет.
+
+Верни отчёт в своём формате: первая строка — статус, дальше находки с файлом, строкой, уверенностью и типом (баг / улучшение). Ничего не исправляй.
+---
+
+Промпт для critic:
+---
+Проведи пре-мортем изменений в проекте ${AUDIT_DIR}/agents-sb/orders-service: что сломается, когда это попадёт в прод.
+
+Область: незакоммиченные изменения относительно HEAD, включая новые неотслеживаемые файлы (git status).
+
+Что сделано: архивирование заказов — колонка orders.archived_at (changeset 007), Order.archive, OrderService.archiveOrder/listArchived, POST /orders/{id}/archive, GET /orders/archived.
+Требования: только свой заказ; только CANCELLED/REFUNDED, иначе 409 ORDER_NOT_ARCHIVABLE; повторный archive идемпотентен; GET /orders/archived постранично; POST /orders работает как раньше.
+Размер и сигналы: Маршрут: фича · M · сигналы: новая колонка, changeset, новый endpoint, доступ к ресурсу по id → data-modeling-discipline, migration-safety, auth-and-authorization, query-discipline, error-handling-as-design
+
+Что известно о проде: таблица orders ~12 млн строк, горячая (≈300 вставок в минуту); деплой rolling, 3 реплики; Liquibase применяется на старте приложения.
+
+Верни отчёт в своём формате: первая строка — статус, дальше пре-мортем, блокеры, риски, вопросы пользователю и недостающие тесты. Ничего не исправляй.
+---

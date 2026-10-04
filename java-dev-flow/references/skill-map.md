@@ -1,392 +1,242 @@
-# Карта скиллов, агентов, команд и хуков
+# Map of skills, agents, commands and hooks
 
-**Открывай, когда:** не ясно, кого вызвать; два скилла тянут в разные стороны; нужного скилла нет в сессии.
+**Open when:** it is unclear whom to call, or two skills pull in different directions.
 
-Разделы:
-1. [Инвентарь](#1-инвентарь)
-2. [Пересечения и как они разрешены](#2-пересечения-и-как-они-разрешены)
-3. [Если скилла нет — краткие чеклисты](#3-если-скилла-нет--краткие-чеклисты)
+Sections:
+1. [Inventory](#1-inventory)
+2. [Overlaps and how they are resolved](#2-overlaps-and-how-they-are-resolved)
+
+Short checklists for when a skill is missing in the session — [fallback-checklists.md](fallback-checklists.md).
 
 ---
 
-## 1. Инвентарь
+## 1. Inventory
 
-Имена базовые. В сессии возможен префикс плагина (`backend-design-java:`, `backend-design:`, `anthropic-skills:`).
+Base names. A session may add a plugin prefix (`backend-design-java:`, `backend-design:`, `anthropic-skills:`).
 
-### Процессные скиллы
+### Process skills
 
-| Скилл | Отвечает за | Где в оркестраторе |
+| Skill | Responsible for | Where in the orchestrator |
 |---|---|---|
-| `grilling` | интервью раундами с рекомендуемым ответом к каждому вопросу, пока не останется открытых решений. Из `mattpocock-skills/` | фаза 1, L |
-| `think-before-coding` | 6 шагов дизайна: контекст и нагрузка, данные, ошибки, авторизация, повторы и конкуренция, наблюдаемость; порядок сборки | фаза 2; порядок срезов в фазе 3 |
-| `java-tdd` | red → green → refactor, доказательство падения теста, режимы A (фича), B (баг), C (рефакторинг), D (код без тестов) | фаза 4, маршруты B и C |
-| `java-diagnosing-bugs` | причина локального бага: команда, которая краснеет на нём, минимизация, гипотезы, замеры, уборка | маршрут B, шаг 1 |
-| `debugging-discipline` | метод расследования симптома в проде или на стенде | маршрут B, прод |
-| `java-code-review` | ревью diff: корректность, конкурентность, Spring/JPA, безопасность, контракты; в отчёт идут только находки с уверенностью ≥ 80 | фаза 5, M и L |
-| `java-extensibility-review` | ветвления по типу и статусу, подбор паттерна, оценка, окупится ли он | фаза 2 (задача добавляет вариант), фаза 5 (в diff выросло ветвление), маршрут C |
-| `java-spec-review` | разбор OpenSpec change до кода: форма и трассировка скриптом, доменные скиллы как вопросы к артефактам, факты по коду, решения раундами `grilling`, правки артефактов после согласия | OpenSpec: пауза после `/opsx:propose`, M и L |
-| `testing-with-discernment` | уровень теста и инструмент Spring, реальный Postgres, детерминизм | фаза 4 |
-| `test-audit` | ценность теста: authoring gate, мусорные паттерны, test-only швы в `src/main` | фазы 4–5 |
-| `jira-tasks` | задачи в Jira с подтверждением и лимитом на спринт; нарезка плана на вертикальные срезы со связями «blocks» | фаза 6, только по просьбе |
-| `handoff` | документ для продолжения в новой сессии. Вызывается только пользователем (`/handoff`). Из `mattpocock-skills/` | L-задача не помещается в сессию — предложить пользователю |
+| `grilling` | interview in rounds with a recommended answer to each question until no open decisions remain. From `mattpocock-skills/` | phase 1, L |
+| `think-before-coding` | 6 design steps: context and load, data, errors, authorization, retries and concurrency, observability; build order | phase 2; slice order in phase 3 |
+| `java-tdd` | red → green → refactor, proof that the test fails, modes A (feature), B (bug), C (refactoring), D (code without tests) | phase 4, routes B and C |
+| `java-diagnosing-bugs` | cause of a local bug: a command that fails on it, minimization, hypotheses, measurements, cleanup | route B, step 1 |
+| `debugging-discipline` | investigating a symptom in production or staging | route B, production |
+| `java-code-review` | diff review: correctness, concurrency, Spring/JPA, security, contracts; only findings with confidence ≥ 80 go into the report | phase 5, M and L |
+| `java-extensibility-review` | branching on type and status, choosing a pattern, judging whether it pays off. Runs in a separate context (`context: fork`) | phase 2 (the task adds a variant), phase 5 (branching grew in the diff), route C |
+| `java-spec-review` | reviewing an OpenSpec change before code: form and traceability by a script, domain skills as questions to the artifacts, facts from the code, decisions in `grilling` rounds, artifact edits after consent. Fact gathering goes to a subagent by default | OpenSpec: pause after `/opsx:propose`, M and L |
+| `testing-with-discernment` | test level and Spring tooling, real Postgres, determinism | phase 4 |
+| `test-audit` | test value: authoring gate, junk patterns, test-only seams in `src/main` | phases 4–5 |
+| `jira-tasks` | Jira tickets with confirmation and a per-sprint limit; slicing a plan into vertical slices with "blocks" links | phase 6, only on request |
+| `handoff` | a document for continuing in a new session. Invoked only by the user (`/handoff`). From `mattpocock-skills/` | an L task does not fit in a session — suggest it to the user |
 
-### Доменные скиллы (backend-design-java)
+### Domain skills (backend-design-java)
 
-| Скилл | Отвечает за | Фаза |
+| Skill | Responsible for | Phase |
 |---|---|---|
-| `data-modeling-discipline` | инварианты в схеме, типы, nullability, FK | 2 |
-| `migration-safety` | безопасные changeset'ы Liquibase для PostgreSQL | 4 |
-| `jpa-and-transactions` | прокси `@Transactional`, маппинг, persistence context, блокировки, ID. **Есть только в форке** | 4 |
-| `query-discipline` | N+1, пагинация, индексы, неограниченные выборки | 4 |
-| `idempotency-and-side-effects` | идемпотентность, outbox, дедупликация, ретраи | 2 |
-| `error-handling-as-design` | ProblemDetail, стабильные коды, валидация, откаты | 2 |
-| `auth-and-authorization` | аутентификация отдельно от авторизации, слой проверки, tenant, RLS | 2 |
-| `security-discipline` | IDOR, mass assignment, инъекции, секреты, Actuator | 4 |
-| `observability-by-default` | JSON-логи с traceId, метрики Micrometer, health-группы | 2, 4 |
-| `performance-and-scaling` | «при какой нагрузке», узкое место, пулы, вертикальное масштабирование | 2, маршрут P |
-| `boring-by-default` | защита сложности перед новой технологией | до фазы 2 |
+| `data-modeling-discipline` | invariants in the schema, types, nullability, FKs | 2 |
+| `migration-safety` | safe Liquibase changesets for PostgreSQL | 4 |
+| `jpa-and-transactions` | `@Transactional` proxies, mapping, persistence context, locks, IDs. **Only in the fork** | 4 |
+| `query-discipline` | N+1, pagination, indexes, unbounded selects | 4 |
+| `idempotency-and-side-effects` | idempotency, outbox, deduplication, retries | 2 |
+| `error-handling-as-design` | ProblemDetail, stable codes, validation, rollbacks | 2 |
+| `auth-and-authorization` | authentication separate from authorization, the check layer, tenant, RLS | 2 |
+| `security-discipline` | IDOR, mass assignment, injections, secrets, Actuator | 4 |
+| `observability-by-default` | JSON logs with traceId, Micrometer metrics, health groups | 2, 4 |
+| `performance-and-scaling` | "at what load", the bottleneck, pools, vertical scaling | 2, route P |
+| `boring-by-default` | defending against complexity before a new technology | before phase 2 |
 
-### Агенты
+### Agents
 
-Агент работает в отдельном контексте. Ревьюеры — только на чтение: правки делаешь ты, проверив находку. Все агенты, кроме `java-code-reviewer` и `critic`, — из `backend-design-java`. Эти два лежат в `assets/agents/` этого скилла и ставятся в `~/.claude/agents/` (или в `.claude/agents/` проекта).
+An agent works in a separate context. Reviewers are read-only: you make the edits after checking a finding. All agents except `java-code-reviewer`, `critic` and `test-runner` come from `backend-design-java`. Those three live in this skill's `assets/agents/` and are installed into `~/.claude/agents/` (or the project's `.claude/agents/`).
 
-| Агент | Когда | Инструменты |
+Models: `java-code-reviewer` and `critic` use `sonnet` (on Haiku they miss cross-file links such as "NOT NULL in the schema + entity without a value" and get PostgreSQL mechanics wrong); `test-runner` uses `haiku`. The orchestrator itself is better run on Sonnet or Opus: on Haiku it skips RED and embellishes the report.
+
+| Agent | When | Tools |
 |---|---|---|
-| `java-code-reviewer` | фаза 5, M и L: независимое ревью diff по скиллу `java-code-review` и соответствие спеке (недостающее, лишнее, неверно реализованное), по флагу — тесты по `test-audit` | чтение + Bash (git, компиляция), без правок |
-| `critic` | фаза 5, M и L: пре-мортем — что сломается в проде (старые данные, деплой и откат, потребители, повторы, частичные отказы, нагрузка, наблюдаемость); доменные скиллы подгружает сам по сигналам в diff | чтение + Bash (git, компиляция), без правок |
-| `component-architect` | L: дизайн, требующий широкого обзора кода | только чтение |
-| `incident-thinker` | фаза 5: consumer, job, интеграция, деньги | только чтение |
-| `schema-reviewer` | фаза 5: changeset или `@Entity` в L, большая или горячая таблица | только чтение |
-| `security-reviewer` | фаза 5: endpoint, security config, роли, tenant | только чтение |
-| `incident-investigator` | активный инцидент в проде | чтение + Bash |
-| `boring-tech-advisor` | спорное предложение новой технологии | только чтение |
+| `java-code-reviewer` | phase 5, M and L: independent diff review with the `java-code-review` skill and spec conformance (missing, extra, implemented wrong), on request — tests against `test-audit` | read + Bash (git, compilation), no edits |
+| `critic` | phase 5, M and L: pre-mortem — what breaks in production (existing data, deploy and rollback, consumers, retries, partial failures, load, observability); loads domain skills by diff signals itself | read + Bash (git, compilation), no edits |
+| `test-runner` | phases 4–5: runs the test command and returns a short summary instead of logs: passed / failed / skipped, failed tests with the first assertion line, what did not run and why | Bash only, no edits |
+| `component-architect` | L: a design that needs a wide code overview | read only |
+| `incident-thinker` | phase 5: consumer, job, integration, money | read only |
+| `schema-reviewer` | phase 5: changeset or `@Entity` in L, a big or hot table | read only |
+| `security-reviewer` | phase 5: endpoint, security config, roles, tenant | read only |
+| `incident-investigator` | an active production incident | read + Bash |
+| `boring-tech-advisor` | a contested proposal of a new technology | read only |
 
-### Команды (backend-design-java)
+### Commands (backend-design-java)
 
-| Команда | Когда |
+| Command | When |
 |---|---|
-| `design` | вход для пользователя: «только спроектировать». Оркестратор сам вместо неё вызывает `think-before-coding` |
-| `audit` | аудит уже существующего компонента на готовность к проду |
-| `review-migration` | фаза 5: новые changeset'ы |
-| `explain-this-query` | фаза 5 и маршрут P: план выполнения конкретного запроса |
-| `hunt-n-plus-one` | маршрут P: поиск N+1 по пакету |
+| `design` | user entry point: "design only". The orchestrator calls `think-before-coding` instead |
+| `audit` | production-readiness audit of an existing component |
+| `review-migration` | phase 5: new changesets |
+| `explain-this-query` | phase 5 and route P: the execution plan of a specific query |
+| `hunt-n-plus-one` | route P: N+1 search across a package |
 
-### Хуки (backend-design-java, PostToolUse на Write/Edit/MultiEdit)
+### Hooks (backend-design-java, PostToolUse on Write/Edit/MultiEdit)
 
-Только предупреждают, ничего не блокируют. Находки приходят как дополнительный контекст сразу после записи файла.
+They only warn and block nothing. Findings arrive as additional context right after a file is written. When installed without the plugin, the hooks must be registered in `settings.json` by hand (README, option 2) — otherwise the "handle hook warnings" step does nothing.
 
-| Хук | Что ловит |
+| Hook | What it catches |
 |---|---|
-| `check_migration.py` | правка существующего changeset'а, индекс без `CONCURRENTLY`, NOT NULL без default, FK без `NOT VALID`, rename/drop, `UPDATE` в changeset'е, нет rollback и `lock_timeout` |
-| `check_backend_component.py` | `@Transactional` на private, HTTP или Kafka внутри транзакции, `@RequestBody` без `@Valid`, `findAll()` без лимита, `@Scheduled` без ShedLock, клиент без таймаутов, ловушки в entity и конфиге |
-| `check_security.py` | конкатенация в SQL/JPQL, SpEL, небезопасная десериализация, trust-all TLS, слабые алгоритмы, `permitAll`, секреты в коде и yml |
+| `check_migration.py` | editing an applied changeset, an index without `CONCURRENTLY`, NOT NULL without a default, an FK without `NOT VALID`, rename/drop, `UPDATE` in a changeset, no rollback and `lock_timeout` |
+| `check_backend_component.py` | `@Transactional` on private, HTTP or Kafka inside a transaction, `@RequestBody` without `@Valid`, `findAll()` without a limit, `@Scheduled` without ShedLock, a client without timeouts, traps in entities and config |
+| `check_security.py` | concatenation in SQL/JPQL, SpEL, unsafe deserialization, trust-all TLS, weak algorithms, `permitAll`, secrets in code and yml |
 
-Оркестратор требует обработать каждое предупреждение в текущем цикле: исправить или обосновать в отчёте.
+The orchestrator requires handling every warning in the current cycle: fix it or justify it in the report.
 
-### Хук critic-gate (Stop, из `assets/hooks/` этого скилла)
+### This skill's hooks (`assets/hooks/`)
 
-Страховка на случай, если фаза 5 пропущена или задача шла мимо оркестратора. Два варианта, ставь один.
+Mechanical gates: what the model forgets from the skill text, code checks. All scripts are `python3`, stdlib only, no network and no model; any internal error is a silent exit with code 0. Put them into the Java project's `.claude/settings.json`, not the user settings: other projects do not need them. A ready block — `assets/hooks/settings.example.json`.
 
-**Промпт-хук (по умолчанию)** — `assets/hooks/critic-gate.prompt.json`, хук `type: "prompt"`. Когда Claude заканчивает ход, лёгкая модель (по умолчанию та, что Claude Code использует для фоновых задач) читает итоговое сообщение хода и список фоновых задач и решает сама:
-- пропускает ответы, планы, документацию, тесты, правку скиллов и настроек, задачи размера S и механические правки, а также ходы, где `critic` уже запущен или Claude объяснил, почему он не нужен. Если по сообщению не понять, что менялось, тоже пропускает;
-- для M и L (новый компонент, схема, контракт, авторизация, транзакции, внешние вызовы, 4+ файлов) возвращает Claude инструкцию запустить критика.
+| Hook | Event | What it does |
+|---|---|---|
+| `critic_gate.py` | Stop | From the changes on disk since the last user prompt (mtime and `git diff`, so edits via Bash, `git apply`, generators and subagents are visible): 4+ production files, ~150+ lines, a migration or security config → blocks the stop and asks to run `critic`. Tests, docs, `.claude/`, generated code, skill and plugin packages, whitespace/comment/import-only edits do not count. Once per prompt |
+| `critic-gate.prompt.json` | Stop | Prompt hook: a light model reads the turn's conversation and decides whether it was M or L by meaning (a new endpoint in two files is M too). Costs one Haiku call per turn end |
+| `evidence_guard.py` | Stop | The last `mvn` / `gradle` run in the turn failed or did not run (Docker), and the final message is silent about it → blocks the stop and asks to name the failed and not-run tests |
+| `tdd_guard.py` | PostToolUse on Write/Edit/MultiEdit | An edit of `src/main/**` in a session where no failing test run followed the last test edit → a "RED was not shown" reminder. Blocks nothing; during a refactoring (mode C) the reminder can be ignored |
 
-Модель видит только итоговое сообщение, а не diff, поэтому отчёт должен называть размер и изменённые файлы — шаблон фазы 6 это делает. Цена: один короткий вызов модели на каждое завершение хода, около 1–3 секунд.
+`critic_gate.py` and the prompt hook complement each other: the script sees real files and costs no tokens, the model understands meaning. Hooks of one event run in parallel; if both block, Claude gets both reasons.
 
-Установка: перенести объект из `hooks.Stop` файла `critic-gate.prompt.json` в `hooks.Stop` файла `~/.claude/settings.json` (или `.claude/settings.json` проекта, если хук нужен только там). Выключить — удалить этот объект.
+Thresholds and switches — variables in `env`: `CRITIC_GATE_MIN_FILES`, `CRITIC_GATE_MIN_LINES`, `CRITIC_GATE=off`, `EVIDENCE_GUARD=off`, `TDD_GUARD=off`. Tests: `python3 -m unittest discover -s assets/hooks/tests`.
 
-**Скрипт (детерминированный)** — `assets/hooks/critic_gate.py`, хук `type: "command"`. Без модели: смотрит реальные изменения на диске с последнего запроса пользователя (mtime и `git diff`, поэтому видны и правки через Bash). Срабатывает на 4+ production-файлов, около 150+ строк, миграции и security-конфиг. Не считаются: тесты, документация, `.claude/`, сборка, сгенерированный код, файлы внутри пакетов скиллов и плагинов, правки только пробелов, комментариев и import. Установка: скопировать скрипт в `~/.claude/hooks/` и добавить в `hooks.Stop`:
+### OpenSpec (if the project uses it)
 
-```json
-{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/critic_gate.py", "timeout": 30 }] }
-```
-
-Пороги и выключение — переменные `CRITIC_GATE_MIN_FILES`, `CRITIC_GATE_MIN_LINES` и `CRITIC_GATE=off` в `env`.
-
-### OpenSpec (если используется в проекте)
-
-`openspec init` создаёт скиллы `.claude/skills/openspec-*` и команды `/opsx:*`. Базовый профиль: `propose`, `explore`, `apply`, `update`, `sync`, `archive`. Расширенный добавляет `new`, `continue`, `ff`, `verify`, `bulk-archive`, `onboard`. Как они делят работу с оркестратором — в [references/openspec.md](openspec.md).
+`openspec init` creates `.claude/skills/openspec-*` skills and `/opsx:*` commands. The base profile: `propose`, `explore`, `apply`, `update`, `sync`, `archive`. The extended one adds `new`, `continue`, `ff`, `verify`, `bulk-archive`, `onboard`. How they share the work with the orchestrator — [references/openspec.md](openspec.md).
 
 ---
 
-## 2. Пересечения и как они разрешены
+## 2. Overlaps and how they are resolved
 
-### 2.1. Кто «первый»
+### 2.1. Who goes "first"
 
-`think-before-coding` требует вызывать его первым. `java-tdd` требует теста до production-кода. `data-modeling-discipline` хочет вызова до entity, `error-handling-as-design` — до happy path, `idempotency-and-side-effects` — до контроллера. На «реализуй фичу» срабатывают сразу несколько.
+`think-before-coding` demands to be called first. `java-tdd` demands a test before production code. `data-modeling-discipline` wants to be called before the entity, `error-handling-as-design` before the happy path, `idempotency-and-side-effects` before the controller. Several of them fire on "implement a feature".
 
-**Решение:** первым идёт оркестратор. Затем фаза 2: `think-before-coding` и доменные скиллы по сигналам. Затем фаза 4: `java-tdd`. «Первый» в описании профильного скилла означает «до кода», и это соблюдается.
+**Resolution:** the orchestrator goes first. Then phase 2: `think-before-coding` and domain skills by signals. Then phase 4: `java-tdd`. "First" in a specialist skill's description means "before code", and that holds.
 
-### 2.2. Тесты в конце порядка сборки
+### 2.2. Tests at the end of the build order
 
-`think-before-coding` предлагает порядок «changeset → entity/repository → service → controller/listener → error mapping → metrics → tests». `java-tdd` требует теста первым.
+`think-before-coding` proposes "changeset → entity/repository → service → controller/listener → error mapping → metrics → tests". `java-tdd` demands the test first.
 
-**Решение:** порядок сборки задаёт порядок срезов. Внутри каждого среза тест пишется первым. В конце остаётся только сквозной тест сценария, если он нужен.
+**Resolution:** the build order sets the slice order. Inside every slice the test comes first. At the end only an end-to-end scenario test remains, if needed.
 
-### 2.3. «Слишком просто, чтобы думать» против задачи S
+### 2.3. "Too simple to think" vs an S task
 
-Hard gate в `think-before-coding` говорит: если задача кажется слишком простой, ты ошибаешься.
+The hard gate in `think-before-coding` says: if a task seems too simple, you are wrong.
 
-**Решение:** S по определению исключает новые компоненты и изменения схемы, контракта, авторизации, транзакций и внешних эффектов, то есть всё, о чём шесть шагов. Сам скилл говорит «match depth to stakes». Для S дизайн — это строка классификации. Как только задача перестаёт быть S, повышай размер.
+**Resolution:** S by definition excludes new components and changes to the schema, contract, authorization, transactions and external effects — everything the six steps are about. The skill itself says "match depth to stakes". For S the design is the classification line. As soon as the task stops being S, upgrade its size.
 
-### 2.4. Баг вне прода
+### 2.4. A bug outside production
 
-`debugging-discipline` по описанию — только прод и стенд. На «баг» срабатывают ещё `java-diagnosing-bugs` и `java-tdd` (режим B), и оба говорят о воспроизведении тестом.
+By its description `debugging-discipline` is for production and staging only. On "bug", `java-diagnosing-bugs` and `java-tdd` (mode B) also fire, and both talk about reproducing with a test.
 
-**Решение:** у каждого свой отрезок.
-- `java-diagnosing-bugs` — от симптома до подтверждённой причины: команда, которая краснеет на баге, минимизация, гипотезы, замеры, а в конце уборка отладочных логов.
-- `java-tdd`, режим B — регрессионный тест и правка: минимальное воспроизведение становится тестом, тест красный по правильной причине, потом минимальная правка.
-- `debugging-discipline` — прод и стенд. Когда баг воспроизведён локально, работа переходит к `java-diagnosing-bugs`.
-- Активный инцидент с пострадавшими клиентами — агент `incident-investigator`, смягчение идёт первым.
+**Resolution:** each has its own segment.
+- `java-diagnosing-bugs` — from the symptom to a confirmed cause: a command that fails on the bug, minimization, hypotheses, measurements, and at the end cleanup of debug logs.
+- `java-tdd`, mode B — the regression test and the fix: the minimal reproduction becomes a test, the test fails for the right reason, then the minimal fix.
+- `debugging-discipline` — production and staging. Once the bug is reproduced locally, the work moves to `java-diagnosing-bugs`.
+- An active incident with affected customers — the `incident-investigator` agent, mitigation first.
 
-Если причина видна из stacktrace и подтверждается одной строкой, гипотезы и замеры в `java-diagnosing-bugs` сводятся к одной фразе. Цикл обратной связи и регрессионный тест остаются.
+If the cause is visible from the stack trace and confirmed in one line, the hypotheses and measurements in `java-diagnosing-bugs` shrink to one sentence. The feedback loop and the regression test remain.
 
-### 2.5. Безопасность проверяют четыре инструмента
+### 2.5. Four tools check security
 
-Хук `check_security`, скилл `security-discipline` («на каждый diff»), раздел безопасности в `java-code-review`, агент `security-reviewer`.
+The `check_security` hook, the `security-discipline` skill ("on every diff"), the security section of `java-code-review`, the `security-reviewer` agent.
 
-**Решение:**
-- хук работает сам при каждой записи;
-- `security-discipline` подключается в фазе 4, когда трогаешь контроллер, security config, yml или десериализацию;
-- в M и L безопасность в diff покрывает `java-code-review` в фазе 5 — через агента `java-code-reviewer`, со свежим контекстом;
-- агент `security-reviewer` — только при сигнале «endpoint, security config, роли, tenant», ради свежего контекста.
+**Resolution:**
+- the hook runs by itself on every write;
+- `security-discipline` is loaded in phase 4 when you touch a controller, security config, yml or deserialization;
+- in M and L, security in the diff is covered by `java-code-review` in phase 5 — via the `java-code-reviewer` agent, with a fresh context;
+- the `security-reviewer` agent — only on the "endpoint, security config, roles, tenant" signal, for the fresh context.
 
-### 2.6. Дизайн тремя способами
+### 2.6. Design in three ways
 
-Скилл `think-before-coding`, команда `design` (тот же workflow с вопросами пользователю), агент `component-architect` (тот же workflow в отдельном контексте).
+The `think-before-coding` skill, the `design` command (the same workflow with questions to the user), the `component-architect` agent (the same workflow in a separate context).
 
-**Решение:** по умолчанию скилл в основном контексте. Команда — вход для пользователя, когда нужен только дизайн. Агент — для L, когда дизайн требует широкого обзора кода.
+**Resolution:** by default the skill in the main context. The command is the user's entry point when only a design is needed. The agent — for L when the design needs a wide code overview.
 
-### 2.7. Миграции проверяют четыре инструмента
+### 2.7. Four tools check migrations
 
-`migration-safety` (при написании), хук `check_migration`, команда `review-migration`, агент `schema-reviewer`.
+`migration-safety` (while writing), the `check_migration` hook, the `review-migration` command, the `schema-reviewer` agent.
 
-**Решение:** при написании работают скилл и хук. В фазе 5 для M — команда `review-migration`, для L или большой и горячей таблицы — агент `schema-reviewer`.
+**Resolution:** while writing, the skill and the hook work. In phase 5 for M — the `review-migration` command, for L or a big, hot table — the `schema-reviewer` agent.
 
-### 2.8. Три скилла о тестах
+### 2.8. Three skills about tests
 
-На «напиши тест» срабатывают `java-tdd`, `testing-with-discernment` и `test-audit`.
+On "write a test", `java-tdd`, `testing-with-discernment` and `test-audit` fire.
 
-**Решение:** у каждого своя зона. Порядок и доказательство падения — `java-tdd`. Уровень и инструмент — `testing-with-discernment`. Нужен ли тест и не мусор ли он — `test-audit`. Противоречий по существу между ними нет; если кажется, что есть, побеждает владелец вопроса.
+**Resolution:** each has its own zone. Order and proof of failure — `java-tdd`. Level and tooling — `testing-with-discernment`. Whether the test is needed and whether it is junk — `test-audit`. There are no substantive contradictions; if one seems to appear, the owner of the question wins. Do not load all three at once: for S `java-tdd` is enough, `testing-with-discernment` comes with the first integration test, `test-audit` — in phase 5 via the reviewer flag.
 
-### 2.9. `java-code-review --fix` правит без теста
+### 2.9. `java-code-review --fix` fixes without a test
 
-В режиме `--fix` тест добавляется после правки, и только для блокирующих находок. Агент `java-code-reviewer` этот режим не использует вовсе — он только находит.
+In `--fix` mode the test is added after the fix, and only for blocking findings. The `java-code-reviewer` agent never uses this mode — it only finds.
 
-**Решение:** в оркестраторе найденный баг идёт по маршруту B — тест первым. Улучшения без бага — без теста, если они не меняют поведение.
+**Resolution:** in the orchestrator a found bug goes through route B — test first. Improvements without a bug — no test if they do not change behavior.
 
-### 2.10. Одинаковые триггеры «entity», «репозиторий»
+### 2.10. The same triggers "entity", "repository"
 
-На эти слова срабатывают `data-modeling-discipline`, `jpa-and-transactions` и `query-discipline`.
+`data-modeling-discipline`, `jpa-and-transactions` and `query-discipline` fire on these words.
 
-**Решение:** они разведены по фазам. `data-modeling-discipline` — на дизайне: что хранить и какие инварианты. `jpa-and-transactions` — на реализации маппинга и транзакций. `query-discipline` — на запросах.
+**Resolution:** they are split by phase. `data-modeling-discipline` — at design: what to store and which invariants. `jpa-and-transactions` — when implementing mapping and transactions. `query-discipline` — for queries.
 
-### 2.11. Форк и оригинал одновременно
+### 2.11. Fork and original at the same time
 
-`backend-design` и `backend-design-java` содержат скиллы с одинаковыми именами и конкурируют за срабатывание.
+`backend-design` and `backend-design-java` have skills with the same names and compete for triggering.
 
-**Решение:** держи установленным один плагин, форк. Если в сессии оба, вызывай с префиксом `backend-design-java:`. В оригинале нет `jpa-and-transactions`, а примеры там на Prisma и Python.
+**Resolution:** keep one plugin installed, the fork. Disable the original synced from claude.ai: `"enabledPlugins": {"backend-design@synced": false}`. If both are in the session, call with the `backend-design-java:` prefix. The original has no `jpa-and-transactions`, and its examples are in Prisma and Python.
 
-### 2.12. Паттерны и ревью кода
+### 2.12. Patterns and code review
 
-`java-extensibility-review` и `java-code-review` читают один и тот же diff. Первый прямо исключает баги и безопасность, у второго в чеклистах нет паттернов. Пересечение возможно в трёх местах.
+`java-extensibility-review` and `java-code-review` read the same diff. The first explicitly excludes bugs and security; the second has no patterns in its checklists. An overlap is possible in three places.
 
-**Решение:**
-- **Категория «Улучшения» в `java-code-review`.** Предложение вида «замени switch на стратегию» не исполняется напрямую: вопрос уходит к `java-extensibility-review`, который проверяет правило трёх и историю изменений.
-- **`switch` по enum без обработки новых значений.** Если есть конкретный сценарий, где неверно работает уже сейчас (существующее значение попадает в `default`), — это баг, `java-code-review`, маршрут B. Если это цена следующего варианта (новое значение придётся добавлять в N мест), — это `java-extensibility-review`.
-- **Оба `--fix`.** Багфикс меняет поведение, рефакторинг сохраняет. В одном коде сначала багфикс с тестом, потом рефакторинг под зелёными тестами, иначе characterization-тесты закрепят баг.
+**Resolution:**
+- **The "Improvements" category in `java-code-review`.** A suggestion like "replace the switch with a strategy" is not executed directly: the question goes to `java-extensibility-review`, which checks the rule of three and the change history.
+- **A `switch` on an enum that does not handle new values.** If there is a concrete scenario that already works wrong (an existing value falls into `default`), it is a bug: `java-code-review`, route B. If it is the cost of the next variant (a new value must be added in N places), it is `java-extensibility-review`.
+- **Both `--fix`.** A bugfix changes behavior, a refactoring keeps it. In the same code: first the bugfix with a test, then the refactoring under green tests, otherwise characterization tests pin the bug.
 
-На дизайне (фаза 2) пересечения нет: `java-code-review` работает только с готовым diff.
+At design time (phase 2) there is no overlap: `java-code-review` works only with a finished diff.
 
-### 2.13. OpenSpec и оркестратор
+### 2.13. OpenSpec and the orchestrator
 
-Оба претендуют на план и порядок работы: у OpenSpec есть артефакты и команды, у оркестратора — фазы и gates.
+Both claim the plan and the order of work: OpenSpec has artifacts and commands, the orchestrator has phases and gates.
 
-**Решение:** OpenSpec владеет файлами, статусами, чекбоксами и архивом. Оркестратор владеет содержанием дизайна, структурой задач, реализацией через `java-tdd` и проверкой. Пауза на ревью после `/opsx:propose` нужна и для M, не только для L. Подробно — `references/openspec.md`.
+**Resolution:** OpenSpec owns the files, statuses, checkboxes and archive. The orchestrator owns the design content, the task structure, implementation via `java-tdd` and verification. The review pause after `/opsx:propose` is needed for M too, not only for L. Details — `references/openspec.md`.
 
-### 2.14. Вопросы пользователю: `grilling`, фаза 1 и `think-before-coding`
+### 2.14. Questions to the user: `grilling`, phase 1 and `think-before-coding`
 
-`grilling` задаёт все вопросы, предпосылки которых решены, одним раундом и не отпускает, пока открытых решений не останется. Фаза 1 раньше ограничивала вопросы тремя за раз. `think-before-coding` и команда `design` тоже задают вопросы по ходу шести шагов.
+`grilling` asks every question whose premises are settled in one round and does not let go until no open decisions remain. Phase 1 used to limit questions to three at a time. `think-before-coding` and the `design` command also ask questions during the six steps.
 
-**Решение:** в L фаза 1 идёт через `grilling`, и на дизайн приходят уже закрытые решения; `think-before-coding` спрашивает только то, что всплыло в шести шагах. В M — до трёх вопросов за раз с рекомендуемым ответом. В S вопросов нет, допущения идут в отчёт. Факты из кода, конфигурации и git агент ищет сам и пользователю не задаёт.
+**Resolution:** in L, phase 1 goes through `grilling`, and the design starts with the decisions already closed; `think-before-coding` asks only what surfaced in the six steps. In M — up to three questions at a time with a recommended answer. In S there are no questions; assumptions go into the report. Facts from the code, configuration and git the agent finds itself and does not ask the user.
 
-### 2.15. Соответствие спеке: `java-code-reviewer` и `/opsx:verify`
+### 2.15. Spec conformance: `java-code-reviewer` and `/opsx:verify`
 
-Агент `java-code-reviewer` проверяет diff на соответствие спеке: чего не хватает, что лишнее, что сделано неверно. `/opsx:verify` в расширенном профиле OpenSpec тоже сверяет код с артефактами change.
+The `java-code-reviewer` agent checks the diff against the spec: what is missing, what is extra, what is wrong. `/opsx:verify` in the extended OpenSpec profile also compares the code with the change artifacts.
 
-**Решение:** в проекте с OpenSpec оба работают. Verify сверяет структуру: задачи отмечены, сценарии и дизайн отражены в коде. Агент читает код и ищет, где реализация расходится со сценарием по смыслу, и находит scope creep. Без OpenSpec ось спеки есть только у агента, и ему нужно передать требования (`subagent-handoff.md`).
+**Resolution:** in an OpenSpec project both work. Verify checks structure: tasks ticked, scenarios and design reflected in the code. The agent reads the code and looks for where the implementation diverges from a scenario in meaning, and finds scope creep. Without OpenSpec only the agent has the spec axis, and it needs the requirements passed in (`subagent-handoff.md`).
 
-### 2.16. Риски после реализации: `java-code-reviewer`, `critic`, `incident-thinker`
+### 2.16. Risks after implementation: `java-code-reviewer`, `critic`, `incident-thinker`
 
-Все трое читают готовый diff, и все трое могут написать про ретраи, транзакции или отказ внешней системы.
+All three read the finished diff, and all three may write about retries, transactions or an external system failing.
 
-**Решение:** у каждого свой вопрос.
-- `java-code-reviewer` — что сломано сейчас: баги, контракты, соответствие спеке. Только подтверждённое, с уверенностью от 80. Для M и L всегда.
-- `critic` — что случится в проде: данные, которые уже лежат в таблицах, деплой и откат, потребители API и событий, повторы, частичные отказы, нагрузка. Для M и L всегда.
-- `incident-thinker` — глубина по эксплуатации: детекция, восстановление и runbook для consumer, job, интеграций и денег. По сигналу из фазы 5.
+**Resolution:** each has its own question.
+- `java-code-reviewer` — what is broken now: bugs, contracts, spec conformance. Only confirmed things, confidence 80+. Always for M and L.
+- `critic` — what happens in production: data already in the tables, deploy and rollback, API and event consumers, retries, partial failures, load. Always for M and L.
+- `incident-thinker` — operational depth: detection, recovery and a runbook for consumers, jobs, integrations and money. On the phase 5 signal.
 
-Одинаковая находка от двух агентов — одна находка. Блокеры критика проверяются по коду так же, как находки ревьюера, и исправляются по маршруту B. Вопросы критика — решения пользователя, их не закрывают молчаливым допущением.
+The same finding from two agents is one finding. Critic blockers are checked against the code just like reviewer findings and fixed via route B. Critic questions are the user's decisions; they are not closed by a silent assumption.
 
-### 2.17. Вопросы к спеке: `grilling`, `/opsx:explore`, `java-spec-review`, `/opsx:verify`
+### 2.17. Questions about the spec: `grilling`, `/opsx:explore`, `java-spec-review`, `/opsx:verify`
 
-Все четыре задают вопросы о том, что строим. `java-spec-review` ещё и подгружает те же доменные скиллы, что `critic`, только к артефактам, а не к diff.
+All four ask questions about what we build. `java-spec-review` also loads the same domain skills as `critic`, only against artifacts rather than a diff.
 
-**Решение:** их разводит время.
-- `/opsx:explore` и `grilling` в фазе 1 — до change: что строить.
-- `java-spec-review` — после `/opsx:propose`, до `/opsx:apply`: что написано в proposal, design, specs и tasks, чего там не хватает и сходится ли написанное с кодом. Решения, уже закрытые в фазе 1 и записанные в артефакты, он заново не открывает.
-- `/opsx:verify` и агенты фазы 5 — после кода: соответствует ли код артефактам.
+**Resolution:** time separates them.
+- `/opsx:explore` and `grilling` in phase 1 — before the change: what to build.
+- `java-spec-review` — after `/opsx:propose`, before `/opsx:apply`: what is written in proposal, design, specs and tasks, what is missing and whether it matches the code. Decisions already closed in phase 1 and recorded in the artifacts are not reopened.
+- `/opsx:verify` and the phase 5 agents — after the code: does the code match the artifacts.
 
-Пре-мортем `java-spec-review` (раздел G его банка вопросов) не заменяет `critic`. Первый ищет дыры в договорённости, второй — в коде, который по ней написан.
+The pre-mortem in `java-spec-review` (section G of its question bank) does not replace `critic`. The first looks for holes in the agreement, the second in the code written from it.
 
 ---
 
-## 3. Если скилла нет — краткие чеклисты
-
-Используй, только если скилла нет в сессии, и упомяни это в отчёте. Чеклист не заменяет скилл, он лишь не даёт пропустить шаг целиком.
-
-**grilling.** Задай раундом все вопросы, ответы на которые не зависят от ещё открытых, пронумеруй их и к каждому дай рекомендуемый ответ. После ответов пересчитай, какие вопросы стали доступны, и задай следующий раунд. Закончи, когда открытых решений нет и пользователь подтвердил общее понимание.
-
-**think-before-coding.** Ответь на шесть вопросов, 10–20 строк:
-1. тип компонента и ожидаемая нагрузка;
-2. сущности, инварианты и их constraint'ы, нужен ли changeset;
-3. ошибки: что, каким кодом, как восстанавливаться;
-4. кто вызывает, с каким правом, к каким строкам есть доступ;
-5. что будет при повторе и при параллельном запуске (ключ идемпотентности, `@Version`, outbox);
-6. логи, метрики, health.
-
-**java-tdd.** Одно поведение → тест → запуск: тест должен упасть на assertion по ожидаемой причине (ошибка компиляции или упавший контекст — не RED) → минимальный код → запуск → рефакторинг. В конце — весь набор тестов; красные и незапущенные тесты назвать.
-
-**java-diagnosing-bugs.**
-- Сначала одна команда, уже запущенная и красная именно на этом баге: тест, `curl`, повтор захваченного входа. Без неё к гипотезам не переходи.
-- Сократи воспроизведение, пока каждый оставшийся элемент не станет несущим.
-- 3–5 гипотез по вероятности, у каждой предсказание «если X, то Y». Покажи список пользователю.
-- Замеры по одной переменной; отладочные логи с меткой `[DEBUG-xxxx]`, в конце удалить их `grep`.
-- Регрессионный тест на границе, где баг воспроизводится по-настоящему; нет такой — записать в отчёт.
-
-**debugging-discipline.**
-- Определи режим: идёт инцидент (сначала смягчение; thread dump, heap histogram и `pg_stat_activity` снять до рестарта) или стабильный баг.
-- Симптом: когда началось, кого задевает, какая доля, что именно не так.
-- Где смотреть: Hikari pending, error rate по маршрутам, недавние деплои.
-- Воспроизведение, bisect, одна гипотеза за раз.
-
-**java-code-reviewer (агент).** Агента нет — запусти скилл `java-code-review` в основном контексте и отметь в отчёте, что ревью было самопроверкой автора.
-
-**java-code-review.** Возьми свой diff относительно базы, включая незакоммиченное. Для каждого изменённого метода прочитай файл целиком и вызывающий код. Проверь:
-- null и граничные случаи;
-- `@Transactional` и прокси;
-- N+1 и lazy loading;
-- авторизацию и инъекции;
-- обратную совместимость DTO и статусов.
-
-Каждую находку попробуй опровергнуть кодом. Оставь только подтверждённые.
-
-**critic (агент).** Агента нет — задай себе вопросы сам, по своему diff, и на каждый найди ответ в коде с файлом и строкой:
-- что станет с данными, которые уже лежат в затронутых таблицах;
-- совместимы ли старая и новая версии при rolling deploy, можно ли откатить код без отката схемы;
-- кто потребляет изменённые API, события и форматы;
-- что будет при повторе, гонке и сбое между шагами;
-- что кончится первым при прод-нагрузке;
-- заметим ли поломку ночью и как восстановимся.
-
-Чего код не отвечает — в вопросы пользователю. В отчёте отметь, что это самопроверка автора.
-
-**java-spec-review.** Прочитай целиком proposal, design, tasks, все дельты и главные спеки, которые change меняет. Проверь:
-- у каждого требования есть SHALL или MUST и сценарий с `#### Scenario:`; THEN — с литералами: статус, `code`, поле, состояние;
-- есть сценарии ошибок (400/403/404/409), повтора и старых данных;
-- коды ошибок и статусы одинаковые в specs, design и коде;
-- MODIFIED не теряет сценарии базы;
-- Open Questions не меняют specs и tasks;
-- у каждого нового сценария есть задача, последняя группа — «Проверка».
-
-Решения — вопросами пользователю с рекомендуемым ответом. Артефакты правь после согласия.
-
-**java-extensibility-review.** Вопрос: что придётся менять, когда добавится ещё один вариант? Кандидаты: `switch` или цепочка `if` по типу, статусу, строке; повторяющееся ветвление по одному enum; цепочки `instanceof`. Варианты: enum с поведением, `Map<String, Bean>`, стратегия, sealed + switch. `switch` на три стабильные ветки часто лучше паттерна.
-
-**testing-with-discernment.**
-- Чистая логика — JUnit без Spring.
-- Запросы и constraint'ы — `@DataJpaTest` + Testcontainers Postgres.
-- HTTP-контракт — `@WebMvcTest`.
-- Сценарий целиком — `@SpringBootTest` + Testcontainers.
-- Инфраструктура — по сборке проекта (`grep -rnE 'org\.testcontainers|spring-kafka-test'` по `pom.xml` / `*.gradle*`):
-  - есть Testcontainers — БД и Kafka на них; модуля `org.testcontainers:kafka` нет — добавь той же версии;
-  - нет — Kafka на `@EmbeddedKafka` (`spring-kafka-test`, версия из BOM), БД — тем способом, каким проект уже поднимает её в тестах, иначе спроси;
-  - нет Docker — сообщи, вариант не меняй.
-- Kafka-тест: `auto-offset-reset=earliest`, Awaitility на результате (БД, исходящий топик, DLT); повтор события — один эффект.
-- Внешний HTTP — WireMock; асинхронность — Awaitility; время — `Clock`.
-- Никакого H2 и `Thread.sleep`.
-
-**test-audit.** До добавления теста ответь на четыре вопроса: какое поведение он защищает; какая реалистичная регрессия его уронит; почему существующие тесты её не ловят; не требует ли он шва в `src/main`, нужного только тестам. Мусор:
-- тест без assertion'ов;
-- единственный assertion — `verify` на моке;
-- мок возвращает то, что потом проверяется;
-- ожидаемое значение посчитано тестируемым кодом;
-- H2 вместо Postgres;
-- `Thread.sleep`.
-
-**data-modeling-discipline.**
-- NOT NULL по умолчанию; UNIQUE, CHECK, FK с явным `ON DELETE` и индексом на стороне FK.
-- Деньги — `numeric` / `BigDecimal`; моменты времени — `timestamptz` / `Instant`; фиксированные наборы — `text` + CHECK и `@Enumerated(STRING)`.
-- Soft delete — только с обоснованием.
-
-**migration-safety.**
-- Применённые changeset'ы не редактируются.
-- Индекс — `CONCURRENTLY` и `runInTransaction:false`.
-- NOT NULL на большой таблице — `CHECK NOT VALID` → `VALIDATE` → `SET NOT NULL`; FK — `NOT VALID`, потом `VALIDATE`.
-- Rename, drop и смена типа — через expand/contract, не одним шагом.
-- Обязательны `lock_timeout` и rollback; backfill — не внутри changeset'а.
-
-**jpa-and-transactions.**
-- `@Transactional` — только на public-методах, вызываемых через прокси (без self-invocation).
-- Никаких HTTP и Kafka внутри транзакции; checked exception по умолчанию не откатывает.
-- to-one связи — LAZY; enum — STRING; без Lombok `@Data` на entity.
-- `@Version` там, где возможна конкурентная правка; OSIV выключен.
-
-**query-discipline.**
-- Нет запросов в цикле и lazy-доступа в мапперах.
-- Нет `findAll()` без лимита.
-- `JOIN FETCH` коллекции вместе с `Pageable` даёт пагинацию в памяти.
-- На больших таблицах — keyset-пагинация.
-- Индекс под `WHERE` и `ORDER BY`.
-
-**idempotency-and-side-effects.**
-- Ключ идемпотентности для изменяющих HTTP-запросов; таблица дедупликации для consumer'ов.
-- Запись в БД + сообщение — через outbox; ничего удалённого внутри `@Transactional`.
-- Ретраи — с тем же ключом; `@Scheduled` — с ShedLock.
-
-**error-handling-as-design.**
-- `@RestControllerAdvice` + ProblemDetail со стабильным `code`; валидация на границе через `@Valid`.
-- Исключения не глотаются и cause не теряется.
-- Unique violation → 409; таймауты на всех исходящих вызовах.
-
-**auth-and-authorization.**
-- Аутентификация отдельно от авторизации; filter chain заканчивается `authenticated()` или `denyAll()`.
-- Проверка владельца или tenant на уровне строки (`findByIdAndOwnerId`, RLS).
-- Tenant берётся из principal, а не из тела запроса.
-- `@PreAuthorize` — только на public-методах бина.
-
-**security-discipline.**
-- IDOR при доступе по id; mass assignment (`@RequestBody` с entity).
-- Конкатенация в SQL/JPQL/SpEL.
-- Секреты в yml, открытый Actuator, stacktrace в ответах, выключенная проверка TLS.
-
-**observability-by-default.**
-- JSON-логи с traceId и бизнес-идентификаторами на границе.
-- Метрики: RED для HTTP; лаг, DLT и ретраи для consumer'ов; длительность и последний успех для job'ов.
-- Readiness включает обязательные зависимости; liveness никогда не включает БД.
-
-**performance-and-scaling.**
-- Сначала «при какой нагрузке» и узкое место: пул, план запроса, GC, блокировки.
-- Запрос и индекс чинятся до масштабирования.
-- Измерение до и после — одним и тем же способом.
-
-**boring-by-default.** Четыре вопроса:
-1. Какую измеримую проблему текущий стек не решает?
-2. Какое самое дешёвое расширение текущего стека её решит?
-3. Сколько новая технология будет стоить в эксплуатации за пять лет?
-4. Кто будет чинить её в три часа ночи?
-
-**jira-tasks.** Без скилла задачи в Jira не создавай. Дай пользователю список follow-ups текстом.
-
----
-
-Идеи правила доказательств, статусов субагента и плана срезами частично заимствованы из [obra/superpowers](https://github.com/obra/superpowers) (MIT).
+Ideas for the evidence rule, subagent statuses and the sliced plan are partly borrowed from [obra/superpowers](https://github.com/obra/superpowers) (MIT).

@@ -1,181 +1,183 @@
 ---
 name: java-spec-review
-description: Разбор OpenSpec change до кода — spec.md и всё, что к нему относится: proposal.md, design.md, tasks.md, остальные дельты в specs/ и главные спеки из openspec/specs, которые change меняет. Скрипт проверяет форму (формат OpenSpec, правила java-dev-flow, трассировку «сценарий ↔ задача»). Затем скиллы think-before-coding, backend-design-java, java-extensibility-review и testing-with-discernment работают как банки вопросов к артефактам. Факты проверяются по коду, решения уходят пользователю раундами в формате grilling, а по ответам готовится правка артефактов. Use when the user points at an OpenSpec spec.md, change folder or change name and wants it analyzed again, checked, challenged or grilled before /opsx:apply — «проверь спеку», «разбери change», «посмотри spec.md и дочерние файлы», «погоняй меня вопросами по спеке», «готов ли change к apply», «ревью артефактов после propose», "review this openspec change", "/java-spec-review <path>". Also in java-dev-flow during the review pause after /opsx:propose. Не для ревью кода (java-code-review), не для сверки готового кода со спекой (агент java-code-reviewer, /opsx:verify), не для создания change с нуля (/opsx:propose, /opsx:explore).
-compatibility: Claude Code. python3 для scripts/collect_change.py. CLI openspec необязателен (openspec validate --strict). Опирается на grilling, think-before-coding, доменные скиллы backend-design-java (или backend-design), java-extensibility-review, testing-with-discernment; если какого-то нет — вопросы из references/questions.md.
+description: "Review of an OpenSpec change before code: spec.md, proposal, design, tasks, the other deltas and the main specs the change modifies. A script checks form and \"scenario ↔ task\" traceability, domain skills ask questions about the artifacts, facts are checked against the code, decisions go to the user in grilling rounds, then the artifacts are edited with consent. Use when the user points at an OpenSpec spec.md, change folder or change name before /opsx:apply — «проверь спеку», «разбери change», «погоняй меня вопросами по спеке», «готов ли change к apply», «ревью артефактов после propose», review this openspec change, /java-spec-review <path>; also in java-dev-flow after /opsx:propose. Not for code review (java-code-review), checking finished code against the spec (java-code-reviewer, /opsx:verify) or creating a change (/opsx:propose)."
+compatibility: Claude Code. python3 for scripts/collect_change.py. The openspec CLI is optional (openspec validate --strict). Relies on grilling, think-before-coding, backend-design-java (or backend-design) domain skills, java-extensibility-review, testing-with-discernment; if one is missing — questions from references/questions.md.
 ---
 
-# Java Spec Review — разбор OpenSpec change до кода
+# Java Spec Review — reviewing an OpenSpec change before code
 
-До `/opsx:apply` найди в change то, что сломает реализацию или прод: сценарии, по которым нельзя написать тест; ошибки и повторы без сценариев; противоречия между артефактами и кодом; решения, принятые молча или спрятанные в Open Questions. На выходе — правки артефактов, согласованные с пользователем, и ответ, можно ли идти в apply.
+Before `/opsx:apply` find in the change what will break the implementation or production: scenarios no test can be written from; errors and retries without scenarios; contradictions between the artifacts and the code; decisions made silently or hidden in Open Questions. The output is artifact edits agreed with the user and an answer on whether apply can start.
 
-Код не пишешь. Артефакты правишь только после согласия пользователя.
+You do not write code. You edit artifacts only after the user agrees.
 
-**Факты ищешь сам, решения задаёшь пользователю.** Каждый вопрос сначала задай артефактам и коду. Пользователю уходит только то, на что не отвечают ни артефакты, ни репозиторий: бизнес-правила, факты прода, выбор между разумными вариантами.
+**You find facts yourself; you ask the user for decisions.** Ask every question of the artifacts and the code first. Only what neither the artifacts nor the repository answer goes to the user: business rules, production facts, a choice between reasonable options.
 
-Общайся на языке пользователя.
+Talk to the user in their language.
 
-## 1. Найди change и собери артефакты
+## 1. Find the change and collect the artifacts
 
 ```bash
-python3 <путь-к-скиллу>/scripts/collect_change.py <путь или имя>
+python3 <skill-path>/scripts/collect_change.py <path or name>
 ```
 
-| Вход | Что разбирается |
+| Input | What is reviewed |
 |---|---|
-| `openspec/changes/<имя>/specs/<cap>/spec.md` | весь change, эта дельта — фокус |
-| любой другой файл или каталог внутри change | весь change |
-| `openspec/specs/<cap>/spec.md` (главный спек) | активный change, который меняет эту capability. Если таких несколько, скрипт вернёт код 2 и список — спроси, какой. Если ни одного — режим «главный спек» (раздел ниже) |
-| имя change | `openspec/changes/<имя>`, затем архив |
-| ничего или корень проекта | единственный активный change; если их несколько — код 2 и список |
+| `openspec/changes/<name>/specs/<cap>/spec.md` | the whole change, this delta is the focus |
+| any other file or directory inside a change | the whole change |
+| `openspec/specs/<cap>/spec.md` (a main spec) | the active change that modifies this capability. Several — the script returns code 2 and a list; ask which one. None — "main spec" mode (section below) |
+| a change name | `openspec/changes/<name>`, then the archive |
+| nothing or the project root | the only active change; several — code 2 and a list |
 
-Скрипт печатает инвентарь требований, сценариев и задач, трассировку «сценарий ↔ задача» и находки по форме. Как к ним относиться:
-- `error` почти всегда правда: на этом упадёт `openspec validate` или `archive`;
-- `warn` и `hint` — повод посмотреть, а не вердикт;
-- трассировка сверяет задачи со сценариями только по имени. Задача может ссылаться на сценарий своими словами, поэтому перед находкой «сценарий без задачи» прочитай задачи.
+The script prints an inventory of requirements, scenarios and tasks, the "scenario ↔ task" traceability and form findings. How to treat them:
+- `error` is almost always true: `openspec validate` or `archive` will fail on it;
+- `warn` and `hint` are a reason to look, not a verdict;
+- the traceability matches tasks to scenarios by name only. A task may refer to a scenario in its own words, so read the tasks before reporting "scenario without a task".
 
-Если в сессии есть CLI `openspec`, запусти ещё `openspec validate <имя> --strict`. Его ошибки весят больше, чем ошибки скрипта.
+If the session has the `openspec` CLI, also run `openspec validate <name> --strict`. Its errors weigh more than the script's.
 
-Затем прочитай **целиком**:
+Then read **in full**:
 - `proposal.md`, `design.md`, `tasks.md`;
-- каждую дельту в `specs/`;
-- главный спек каждой capability с MODIFIED, REMOVED или RENAMED;
-- `openspec/config.yaml` проекта: его `context` и `rules` — тоже требования к артефактам;
-- `CLAUDE.md` проекта.
+- every delta in `specs/`;
+- the main spec of every capability with MODIFIED, REMOVED or RENAMED;
+- the project's `openspec/config.yaml`: its `context` and `rules` are requirements for the artifacts too;
+- the project's `CLAUDE.md`.
 
-Читай как чужой текст: проверяй то, что написано, а не то, что имелось в виду. Если change писал ты в этой же сессии, предложи пользователю отдать шаги 1–3 субагенту со свежим контекстом (промпт — в [references/handoff.md](references/handoff.md)). Вопросы и правки остаются за тобой.
+Read it as someone else's text: check what is written, not what was meant.
 
-## 2. Подключи скиллы по сигналам
+**By default steps 1–3 are done by a subagent** (`general-purpose`) with the prompt from [references/handoff.md](references/handoff.md): it runs the script, reads the artifacts, loads skills as question banks, checks facts against the code and returns findings and draft questions. The main context gets the conclusion, not the artifacts and skill texts — that saves 8–10 thousand tokens. It matters even more if you wrote the change in this same session: the subagent does not know what is "obvious". Do steps 1–3 yourself only if there are no subagents or the user asked. Steps 4–6 (report, question rounds, edits) — always in the main context.
 
-Сигналы бери из строки «Маршрут» в Impact (там уже названы скиллы) и из текста артефактов. Вызывай скиллы через Skill tool. У имени может быть префикс плагина: `backend-design-java:migration-safety`, `backend-design:migration-safety`. Бери тот вариант, что есть в списке доступных; если есть оба — форк `backend-design-java`. Обычно хватает 2–5 скиллов.
+## 2. Load skills by signals
 
-| Сигнал в артефактах | Скилл | Что спросить у артефактов |
+Take the signals from the "Route" line in Impact (it already names the skills) and from the artifact text. Call skills via the Skill tool. A name may carry a plugin prefix: `backend-design-java:migration-safety`, `backend-design:migration-safety`. Take the variant from the available list; if both exist — the `backend-design-java` fork. Usually 2–5 skills are enough.
+
+| Signal in the artifacts | Skill | What to ask the artifacts |
 |---|---|---|
-| размер M или L | `think-before-coding` | шесть шагов — каркас проверки `design.md`: на каждый есть ответ в Decisions? |
-| новая таблица или колонка, changeset, entity, статус в БД | `data-modeling-discipline`, `migration-safety` | инварианты → constraint'ы; Migration Plan; что со строками, которые уже лежат в таблице |
-| граница транзакции, блокировки, `@Version` | `jpa-and-transactions` | где транзакция, нет ли внешних вызовов внутри |
-| запись + событие или HTTP-вызов, consumer, webhook, платёж, ретрай, `@Scheduled` | `idempotency-and-side-effects` | сценарий повтора, ключ, outbox, состояние после сбоя между шагами |
-| endpoint, коды ошибок, валидация, клиент внешней системы | `error-handling-as-design` | у каждой ошибки статус и `code` в сценарии; таймауты; отказ соседа |
-| роли, права, чужой ресурс, tenant, admin | `auth-and-authorization`, `security-discipline` | сценарии 401/403/404; откуда берётся владелец или tenant |
-| списки, фильтры, поиск, отчёты, выгрузки | `query-discipline` | лимит, пагинация, сортировка, индекс |
-| нагрузка, SLA, объёмы, batch | `performance-and-scaling` | числа в Context; что кончится первым |
-| новый компонент: endpoint, consumer, job, клиент | `observability-by-default` | логи, метрики и health в Decisions и в задачах |
-| новая технология, библиотека, инфраструктура | `boring-by-default` | защита сложности в Decisions |
-| вариант к набору, по которому код уже ветвится: провайдер, канал, тип, способ оплаты, статус | `java-extensibility-review` по **коду** затрагиваемых классов | вердикт в подразделе «Расширяемость»; группа «Подготовительный рефакторинг» в tasks |
-| в `tasks.md` указаны уровни тестов | `testing-with-discernment` | уровень и инструмент под каждый сценарий |
+| size M or L | `think-before-coding` | the six steps are the frame for checking `design.md`: does each have an answer in Decisions? |
+| a new table or column, changeset, entity, a status in the DB | `data-modeling-discipline`, `migration-safety` | invariants → constraints; Migration Plan; what happens to rows already in the table |
+| transaction boundary, locks, `@Version` | `jpa-and-transactions` | where the transaction is, no external calls inside |
+| a write + an event or HTTP call, consumer, webhook, payment, retry, `@Scheduled` | `idempotency-and-side-effects` | a retry scenario, the key, outbox, the state after a failure between steps |
+| endpoint, error codes, validation, an external system client | `error-handling-as-design` | every error has a status and a `code` in a scenario; timeouts; a neighbor failing |
+| roles, permissions, someone else's resource, tenant, admin | `auth-and-authorization`, `security-discipline` | 401/403/404 scenarios; where the owner or tenant comes from |
+| lists, filters, search, reports, exports | `query-discipline` | limit, pagination, sorting, index |
+| load, SLA, volumes, batch | `performance-and-scaling` | numbers in Context; what runs out first |
+| a new component: endpoint, consumer, job, client | `observability-by-default` | logs, metrics and health in Decisions and in tasks |
+| a new technology, library, infrastructure | `boring-by-default` | defending the complexity in Decisions |
+| a variant for a set the code already branches on: provider, channel, type, payment method, status | `java-extensibility-review` on the **code** of the affected classes | the verdict in the "Extensibility" subsection; a "Preparatory refactoring" group in tasks |
+| `tasks.md` names test levels | `testing-with-discernment` | the level and tool for every scenario |
 
-Скиллы здесь работают как **банки вопросов**. Их разделы Red Flags, Anti-Patterns, Quick Decision Guide и чеклисты превращай в вопросы к артефактам. Указания писать код и тесты пропускай: кода на этом шаге нет. Требование `think-before-coding` «до кода» соблюдено — спека и есть «до кода».
+Skills work here as **question banks**. Turn their Red Flags, Anti-Patterns, Quick Decision Guide and checklists into questions to the artifacts. Skip instructions to write code and tests: there is no code at this step. The "before code" requirement of `think-before-coding` holds — the spec is "before code".
 
-Скилла нет в сессии — возьми соответствующий раздел [references/questions.md](references/questions.md) и упомяни это в отчёте.
+A skill is missing in the session — take the matching section of [references/questions.md](references/questions.md) and mention it in the report.
 
-## 3. Задай вопросы артефактам
+## 3. Ask the artifacts questions
 
-Пройди банк [references/questions.md](references/questions.md): A — proposal, B — specs, C — design, D — tasks, E — сквозная сверка, F — факты из кода, G — пре-мортем. Вопросы из подгруженных скиллов добавь к соответствующим разделам. В фокусной дельте (если вход — конкретный spec.md) разбирай каждое требование и сценарий; остальные артефакты — по связям с ней и по сквозной сверке.
+Go through the bank [references/questions.md](references/questions.md): A — proposal, B — specs, C — design, D — tasks, E — cross-checking, F — facts from the code, G — pre-mortem. Add the questions from the loaded skills to the matching sections. In the focus delta (if the input is a specific spec.md) go through every requirement and scenario; the other artifacts — by their links to it and by the cross-check.
 
-На каждый вопрос:
+For every question:
 
-1. Найди ответ в артефактах, с файлом и строкой.
-2. Если ответ — утверждение о системе («таблица уже есть», «сейчас cancel для PAID возвращает 409», «вызывающих три»), проверь его по коду через Grep и Read. Факты из кода, конфигурации, git и существующих спеков — твоя работа.
-3. Разложи результат:
-   - ответ есть и подтверждён — строка в «Проверено»;
-   - ответ противоречит коду, другому артефакту или правилу проекта — находка;
-   - ответа нет, но его можно вывести из кода и конвенций проекта — находка с готовым текстом правки;
-   - ответа нет, и он зависит от бизнес-решения или фактов прода, которых нет в репозитории, — вопрос пользователю.
+1. Find the answer in the artifacts, with file and line.
+2. If the answer is a claim about the system ("the table already exists", "cancel for PAID currently returns 409", "there are three callers"), check it against the code with Grep and Read. Facts from the code, configuration, git and existing specs are your job.
+3. Sort the result:
+   - the answer exists and is confirmed — a line under "Checked";
+   - the answer contradicts the code, another artifact or a project rule — a finding;
+   - no answer, but it can be derived from the code and the project's conventions — a finding with a ready edit text;
+   - no answer, and it depends on a business decision or production facts not in the repository — a question to the user.
 
-**Блокер** — с этим нельзя идти в apply:
-- артефакты противоречат друг другу или коду;
-- `validate` или `archive` упадёт;
-- не принято решение, которое меняет specs, подход или tasks, в том числе спрятанное в Open Questions;
-- по ключевому поведению нет сценария, который можно превратить в тест;
-- выбранный подход теряет или портит данные или деньги либо открывает доступ к чужому.
+**Blocker** — apply cannot start with this:
+- the artifacts contradict each other or the code;
+- `validate` or `archive` will fail;
+- a decision that changes specs, the approach or tasks has not been made, including one hidden in Open Questions;
+- a key behavior has no scenario that can be turned into a test;
+- the chosen approach loses or corrupts data or money or opens access to someone else's data.
 
-**Пробел** — нужно дописать или поправить: недостающий сценарий ошибки, повтора или границы; задача без проверки; Migration Plan без отката; размытый THEN.
+**Gap** — something to add or fix: a missing error, retry or edge scenario; a task without verification; a Migration Plan without rollback; a vague THEN.
 
-**Замечание** — apply не мешает, одна строка. Не больше пяти.
+**Remark** — does not block apply, one line. At most five.
 
-Не больше 15 блокеров и пробелов, по убыванию «насколько сломает реализацию или прод». Стиль формулировок не трогай, если он не мешает написать тест.
+At most 15 blockers and gaps, ordered by "how much it breaks the implementation or production". Do not touch the wording style unless it prevents writing a test.
 
-## 4. Отчёт и первый раунд вопросов
-
-```
-Статус: READY | GAPS | BLOCKERS — change <имя>: <N> требований, <M> сценариев, <K> задач
-Маршрут: <строка из Impact или «нет»> · validate: <ok | N ошибок | CLI нет>
-Скиллы: <подгружены>; нет в сессии: <…>
-```
-
-- `READY` — блокеров, пробелов и открытых решений нет, можно `/opsx:apply`;
-- `GAPS` — есть пробелы или открытые вопросы, блокеров нет;
-- `BLOCKERS` — есть хотя бы один блокер.
-
-Дальше разделы; пустые не пиши.
-
-**Блокеры** и **Пробелы** — для каждой находки:
+## 4. Report and the first round of questions
 
 ```
-### <короткое название> — `файл:строка`
-- Что: <что не так или чего нет>
-- Чем грозит: <что пойдёт не так в реализации или в проде>
-- Правка: <готовый текст сценария, решения или задачи — или «зависит от Вn»>
+Status: READY | GAPS | BLOCKERS — change <name>: <N> requirements, <M> scenarios, <K> tasks
+Route: <line from Impact or "none"> · validate: <ok | N errors | no CLI>
+Skills: <loaded>; missing in session: <…>
 ```
 
-**Замечания** — по одной строке.
+- `READY` — no blockers, gaps or open decisions; `/opsx:apply` can start;
+- `GAPS` — there are gaps or open questions, no blockers;
+- `BLOCKERS` — at least one blocker.
 
-**Проверено по коду** — `утверждение артефакта — чем подтверждено (файл:строка)`, до 10 строк.
+Then the sections; skip empty ones.
 
-**Вопросы — раунд 1.** Раунды ведёт скилл `grilling` (пользователь вызывает его как `/grill-me`): вызови его через Skill tool и передай вопросы. Если его нет, держи формат сам:
-
-```
-❓ **В1 — <тема>** (`файл:строка`): <вопрос; варианты; что поменяется в specs, design или tasks при каждом ответе>
-
-➡️ <рекомендуемый ответ и почему>
-```
-
-В раунд попадают все вопросы, предпосылки которых уже решены. Вопрос, ответ на который зависит от другого открытого вопроса, ждёт следующего раунда.
-
-## 5. Раунды
-
-После каждого ответа:
-- запиши решение и то, какие артефакты оно меняет;
-- найди вопросы, которые этот ответ открыл. Пример: выбран ключ идемпотентности — нужен сценарий «тот же ключ, другое тело»;
-- нужен факт — найди его сам в коде и артефактах, пользователя о нём не спрашивай;
-- задай следующий раунд.
-
-Раунды заканчиваются, когда открытых решений не осталось и пользователь подтвердил, что понимание общее. Если пользователь говорит «хватит» или «дальше сам», оставшиеся вопросы закрой рекомендуемыми ответами и явно пометь их как допущения в плане правок.
-
-## 6. Правки артефактов
-
-Покажи план правок по файлам: что добавляется или меняется. Это готовые тексты требований и сценариев в формате OpenSpec, записи в Decisions с отвергнутой альтернативой, строки задач в формате `tasks.md`. Применяй только после «да» пользователя.
-
-- Формат OpenSpec: `#### Scenario:` ровно с четырьмя `#`, SHALL или MUST в требовании, MODIFIED — весь блок требования из главного спека, а не кусок.
-- Новый сценарий → задача в нужной группе `tasks.md`: «X.Y Сценарий «…» — <уровень теста> — проверка: <тест>».
-- Решение из ответа → Decisions в `design.md`. В Open Questions — только то, что можно решить позже, не меняя specs, подход и tasks.
-- Главные спеки в `openspec/specs/` не правь — они меняются через archive. Поведение главного спека меняется новым change.
-- Отмеченные `[x]` задачи не трогай. Если change уже в apply и правка задевает сделанное, скажи об этом и предложи `/opsx:update`.
-
-После правок снова запусти скрипт (и `openspec validate --strict`, если CLI есть) и дай итог:
+**Blockers** and **Gaps** — for every finding:
 
 ```
-Статус после правок: READY | GAPS | BLOCKERS
-Изменено: <файл — что> …
-Решения пользователя: В1 — …; В2 — …
-Допущения (рекомендованный ответ без подтверждения): …
-Осталось: …
-Дальше: /opsx:apply <имя> | ещё раунд | …
+### <short title> — `file:line`
+- What: <what is wrong or missing>
+- Risk: <what goes wrong in the implementation or in production>
+- Edit: <a ready text of the scenario, decision or task — or "depends on Qn">
 ```
 
-## Режим «главный спек»
+**Remarks** — one line each.
 
-Вход — главный спек, и активных change по нему нет. Разбери спек по разделам B и F банка: можно ли по каждому сценарию написать тест, все ли ошибки, повторы и границы описаны, совпадает ли спек с кодом. Расхождение спека с кодом — находка в одну из двух сторон, и сторону выбирает пользователь: баг в коде (маршрут B в `java-dev-flow`) или неверный спек (новый change). Правки поведения — только через новый change (`/opsx:propose`), не прямой правкой спека.
+**Checked against the code** — `artifact claim — what confirmed it (file:line)`, up to 10 lines.
 
-## Ограничения
+**Questions — round 1.** The rounds are run by the `grilling` skill (the user calls it as `/grill-me`): call it via the Skill tool and pass the questions. If it is missing, keep the format yourself:
 
-- Не пиши код и тесты, не запускай `/opsx:apply` и `/opsx:archive`.
-- Артефакты правь только после согласия пользователя. Главные спеки и чекбоксы не трогай.
-- Не меняй состояние git: можно `status`, `diff`, `log`, `show`, нельзя `commit`, `checkout`, `stash`, `reset`.
-- Ничего не публикуй: Jira, PR, комментарии.
-- Без общих слов. «Добавить обработку ошибок» — не находка. Находка — конкретный сценарий, решение или задача, с местом в файле.
+```
+❓ **Q1 — <topic>** (`file:line`): <question; options; what changes in specs, design or tasks for each answer>
 
-## Место в процессе
+➡️ <recommended answer and why>
+```
 
-- `/opsx:explore` и `grilling` в фазе 1 `java-dev-flow` решают, **что строить**, до того как change написан. Этот скилл проверяет, **что написано**, после `/opsx:propose`. Вопросы здесь — только о том, что есть в артефактах или чего в них не хватает.
-- В `java-dev-flow` после `/opsx:propose` для M и L нужна пауза на ревью артефактов человеком. Этот скилл — инструмент для этой паузы.
-- После реализации соответствие кода спеке проверяют агенты `java-code-reviewer` и `critic` и `/opsx:verify`, а не этот скилл.
+A round includes every question whose premises are already settled. A question whose answer depends on another open question waits for the next round.
+
+## 5. Rounds
+
+After every answer:
+- record the decision and which artifacts it changes;
+- find the questions this answer opened. Example: an idempotency key was chosen — a "same key, different body" scenario is needed;
+- a fact is needed — find it yourself in the code and artifacts, do not ask the user;
+- ask the next round.
+
+The rounds end when no open decisions remain and the user has confirmed the shared understanding. If the user says "enough" or "carry on yourself", close the remaining questions with the recommended answers and mark them explicitly as assumptions in the edit plan.
+
+## 6. Editing the artifacts
+
+Show the edit plan per file: what is added or changed. These are ready texts of requirements and scenarios in OpenSpec format, Decisions entries with the rejected alternative, task lines in the `tasks.md` format. Apply only after the user's "yes".
+
+- OpenSpec format: `#### Scenario:` with exactly four `#`, SHALL or MUST in the requirement, MODIFIED — the whole requirement block from the main spec, not a piece.
+- A new scenario → a task in the right group of `tasks.md`: "X.Y Scenario "…" — <test level> — verify: <test>".
+- A decision from an answer → Decisions in `design.md`. Open Questions hold only what can be decided later without changing specs, the approach and tasks.
+- Do not edit the main specs in `openspec/specs/` — they change through archive. A main spec's behavior changes with a new change.
+- Do not touch tasks ticked `[x]`. If the change is already in apply and an edit touches done work, say so and suggest `/opsx:update`.
+
+After the edits run the script again (and `openspec validate --strict` if the CLI exists) and give the summary:
+
+```
+Status after edits: READY | GAPS | BLOCKERS
+Changed: <file — what> …
+User decisions: Q1 — …; Q2 — …
+Assumptions (recommended answer without confirmation): …
+Left: …
+Next: /opsx:apply <name> | another round | …
+```
+
+## "Main spec" mode
+
+The input is a main spec and no active change touches it. Review the spec with sections B and F of the bank: can a test be written from every scenario, are all errors, retries and edges described, does the spec match the code. A divergence between spec and code is a finding in one of two directions, and the user picks the direction: a bug in the code (route B in `java-dev-flow`) or a wrong spec (a new change). Behavior edits — only through a new change (`/opsx:propose`), not by editing the spec directly.
+
+## Constraints
+
+- Do not write code and tests, do not run `/opsx:apply` and `/opsx:archive`.
+- Edit artifacts only after the user agrees. Do not touch main specs and checkboxes.
+- Do not change git state: `status`, `diff`, `log`, `show` are allowed; `commit`, `checkout`, `stash`, `reset` are not.
+- Publish nothing: Jira, PRs, comments.
+- No generalities. "Add error handling" is not a finding. A finding is a concrete scenario, decision or task, with a place in a file.
+
+## Place in the process
+
+- `/opsx:explore` and `grilling` in phase 1 of `java-dev-flow` decide **what to build** before the change is written. This skill checks **what is written**, after `/opsx:propose`. Questions here are only about what the artifacts contain or lack.
+- In `java-dev-flow`, after `/opsx:propose` for M and L a pause for human artifact review is needed. This skill is the tool for that pause.
+- After implementation, the code's conformance to the spec is checked by the `java-code-reviewer` and `critic` agents and `/opsx:verify`, not by this skill.

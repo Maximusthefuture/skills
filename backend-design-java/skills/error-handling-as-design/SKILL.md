@@ -1,6 +1,6 @@
 ---
 name: error-handling-as-design
-description: Use when designing or implementing any Spring Boot component, BEFORE the happy path. Treats the error path as part of the contract: @RestControllerAdvice with ProblemDetail, stable error codes, validation at the boundary, rollback semantics, timeouts. Catches the swallowed exception, the lost cause, the generic 500 and the checked exception that silently commits. Triggers also on "обработка ошибок", "исключения", "ControllerAdvice", "ProblemDetail", "500 ошибка", "валидация", "try/catch".
+description: "Use when designing or implementing any Spring Boot component, BEFORE the happy path. Treats the error path as part of the contract: @RestControllerAdvice with ProblemDetail, stable error codes, validation at the boundary, rollback semantics, timeouts. Catches the swallowed exception, the lost cause, the generic 500 and the checked exception that silently commits. Triggers also on \"обработка ошибок\", \"исключения\", \"ControllerAdvice\", \"ProblemDetail\", \"500 ошибка\", \"валидация\", \"try/catch\"."
 ---
 
 # Error Handling As Design

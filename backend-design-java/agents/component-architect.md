@@ -1,6 +1,6 @@
 ---
 name: component-architect
-description: Designs a Spring Boot backend component (REST controller, @KafkaListener/@RabbitListener consumer, @Scheduled or Spring Batch job, admin task, outbound client, webhook receiver) by running the 6-step senior workflow and producing a tight implementation blueprint: Liquibase changesets, entities, transaction boundaries, error codes, metrics. Use when a user wants to build any server-side component and needs a design before code ("спроектируй", "дизайн компонента").
+description: "Designs a Spring Boot backend component (REST controller, @KafkaListener/@RabbitListener consumer, @Scheduled or Spring Batch job, admin task, outbound client, webhook receiver) by running the 6-step senior workflow and producing a tight implementation blueprint: Liquibase changesets, entities, transaction boundaries, error codes, metrics. Use when a user wants to build any server-side component and needs a design before code (\"спроектируй\", \"дизайн компонента\")."
 tools: Glob, Grep, Read, WebFetch
 model: sonnet
 color: green

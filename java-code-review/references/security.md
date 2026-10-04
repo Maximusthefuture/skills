@@ -1,37 +1,37 @@
-# Безопасность
+# Security
 
-Находка по безопасности должна описывать конкретный путь: откуда приходят недоверенные данные и куда они попадают. «Здесь может быть уязвимость» без пути — это не находка.
+A security finding must describe a concrete path: where untrusted data comes from and where it ends up. "There may be a vulnerability here" without a path is not a finding.
 
-## Инъекции
-- SQL/JPQL/HQL/нативные запросы, собранные конкатенацией или `String.format` с пользовательскими данными. Динамический `ORDER BY` из параметра запроса без белого списка.
-- `Criteria`/`Specification` с `like` и необработанными `%`/`_` (не инъекция, но обход фильтра).
-- Командная строка (`ProcessBuilder`, `Runtime.exec`) с пользовательским вводом.
-- LDAP, XPath, SpEL (`SpelExpressionParser` на пользовательской строке), шаблоны (Thymeleaf/Freemarker с пользовательским шаблоном).
-- Пути к файлам из ввода без нормализации и проверки корня (path traversal); `MultipartFile.getOriginalFilename()` как путь.
+## Injections
+- SQL/JPQL/HQL/native queries built by concatenation or `String.format` with user data. A dynamic `ORDER BY` from a request parameter without an allowlist.
+- `Criteria`/`Specification` with `like` and unescaped `%`/`_` (not an injection, but a filter bypass).
+- A command line (`ProcessBuilder`, `Runtime.exec`) with user input.
+- LDAP, XPath, SpEL (`SpelExpressionParser` on a user string), templates (Thymeleaf/Freemarker with a user-supplied template).
+- File paths from input without normalization and a root check (path traversal); `MultipartFile.getOriginalFilename()` as a path.
 
-## Аутентификация и авторизация
-- Новый эндпоинт не покрыт правилами `SecurityFilterChain` или открыт `permitAll` по слишком широкому шаблону.
-- Нет проверки владения ресурсом (IDOR): `GET /orders/{id}` возвращает чужой заказ, проверяется только аутентификация.
-- `@PreAuthorize` на методе, вызываемом через self-invocation (не сработает), или на интерфейсе без включённого method security.
-- Отключён CSRF для cookie-сессий; CORS `allowedOrigins("*")` вместе с credentials.
-- JWT: не проверяется подпись/алгоритм/срок, секрет в коде, `none`-алгоритм.
+## Authentication and authorization
+- A new endpoint is not covered by `SecurityFilterChain` rules or is opened by `permitAll` with too broad a pattern.
+- No resource ownership check (IDOR): `GET /orders/{id}` returns someone else's order, only authentication is checked.
+- `@PreAuthorize` on a method called via self-invocation (will not fire), or on an interface without method security enabled.
+- CSRF disabled for cookie sessions; CORS `allowedOrigins("*")` together with credentials.
+- JWT: the signature/algorithm/expiry is not checked, the secret is in code, the `none` algorithm.
 
-## Данные и секреты
-- Секреты, токены, пароли в коде, `application.yml`, тестах, логах.
-- PII или токены в логах, сообщениях исключений, ответах об ошибках (stacktrace наружу).
-- Пароли без `PasswordEncoder` (BCrypt/Argon2); `MessageDigest` MD5/SHA-1 для паролей; `Random` вместо `SecureRandom` для токенов.
-- Сравнение секретов через `equals` вместо `MessageDigest.isEqual` (timing).
+## Data and secrets
+- Secrets, tokens, passwords in code, `application.yml`, tests, logs.
+- PII or tokens in logs, exception messages, error responses (stack traces going out).
+- Passwords without a `PasswordEncoder` (BCrypt/Argon2); `MessageDigest` MD5/SHA-1 for passwords; `Random` instead of `SecureRandom` for tokens.
+- Comparing secrets with `equals` instead of `MessageDigest.isEqual` (timing).
 
-## Десериализация и парсинг
-- Jackson `enableDefaultTyping`/`@JsonTypeInfo(use = CLASS)` на недоверенном вводе.
-- Java-сериализация (`ObjectInputStream`) недоверенных данных.
-- XML-парсеры без отключения внешних сущностей (XXE): `DocumentBuilderFactory`, `SAXParserFactory`, `XMLInputFactory`.
-- Mass assignment: привязка запроса прямо к сущности, позволяющая выставить `role`, `isAdmin`, `ownerId`.
+## Deserialization and parsing
+- Jackson `enableDefaultTyping`/`@JsonTypeInfo(use = CLASS)` on untrusted input.
+- Java serialization (`ObjectInputStream`) of untrusted data.
+- XML parsers without external entities disabled (XXE): `DocumentBuilderFactory`, `SAXParserFactory`, `XMLInputFactory`.
+- Mass assignment: binding a request directly to an entity, allowing `role`, `isAdmin`, `ownerId` to be set.
 
-## Сеть
-- SSRF: HTTP-запрос по URL из ввода пользователя без белого списка хостов.
-- Отключённая проверка TLS-сертификатов (`TrustAllCerts`, `NoopHostnameVerifier`).
-- Открытый редирект: `redirect:` + параметр запроса.
+## Network
+- SSRF: an HTTP request to a URL from user input without a host allowlist.
+- Disabled TLS certificate checks (`TrustAllCerts`, `NoopHostnameVerifier`).
+- Open redirect: `redirect:` + a request parameter.
 
-## Зависимости
-- Новая зависимость с известными уязвимостями или из нестандартного репозитория; понижение версии библиотеки безопасности.
+## Dependencies
+- A new dependency with known vulnerabilities or from a non-standard repository; a downgrade of a security library.

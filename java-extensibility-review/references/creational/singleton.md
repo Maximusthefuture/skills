@@ -1,14 +1,14 @@
-# Singleton (Одиночка)
+# Singleton
 
-Группа: порождающий
+Group: creational
 
-## Суть
-Классический Singleton гарантирует один экземпляр класса и даёт глобальную точку доступа к нему (`getInstance()`). В Spring-приложении эту задачу уже решает контейнер: бины по умолчанию singleton-scope и внедряются через конструктор. Поэтому **рукописный Singleton в Spring-коде — почти всегда запах**, и в ревью его обычно нужно убрать, а не добавить.
+## Essence
+The classic Singleton guarantees one instance of a class and gives a global access point to it (`getInstance()`). In a Spring application the container already solves this: beans are singleton-scoped by default and injected through the constructor. So **a hand-written Singleton in Spring code is almost always a smell**, and in a review it usually needs to be removed, not added.
 
-## Структура (участники)
-Классический вариант:
-- **Singleton** — класс с приватным конструктором, статическим полем-экземпляром и статическим методом доступа `getInstance()`. Сам управляет своим жизненным циклом.
-- **Client** — получает экземпляр через глобальную точку доступа.
+## Structure (participants)
+The classic variant:
+- **Singleton** — a class with a private constructor, a static instance field and a static access method `getInstance()`. It manages its own lifecycle.
+- **Client** — gets the instance through the global access point.
 
 ```
 Singleton
@@ -17,29 +17,29 @@ Singleton
   + static getInstance(): Singleton
 ```
 
-В Spring ту же гарантию единственного экземпляра даёт контейнер, без глобальной точки доступа:
+In Spring the container gives the same single-instance guarantee, without a global access point:
 ```
-Spring Container ──(один экземпляр, scope singleton)──▶ Bean ──внедряется──▶ ClientA, ClientB
+Spring Container ──(one instance, singleton scope)──▶ Bean ──injected──▶ ClientA, ClientB
 ```
 
-## Признаки в Java/Spring коде (найти и убрать)
+## Signs in Java/Spring code (find and remove)
 - `public static X getInstance()`, `private static final X INSTANCE = new X()`.
-- Статические поля с изменяемым состоянием, клиентами, кэшами, конфигурацией (`static RestTemplate`, `static Map cache`).
-- Статический доступ к контейнеру: `SpringContext.getBean(…)`, `ApplicationContextHolder` (Service Locator).
-- Утилитные классы, которые читают конфигурацию или ходят в сеть статическими методами.
-- Тесты вынуждены сбрасывать глобальное состояние или не могут подменить зависимость.
+- Static fields with mutable state, clients, caches, configuration (`static RestTemplate`, `static Map cache`).
+- Static access to the container: `SpringContext.getBean(…)`, `ApplicationContextHolder` (a Service Locator).
+- Utility classes that read configuration or go to the network from static methods.
+- Tests are forced to reset global state or cannot replace a dependency.
 
-## Почему это мешает расширяемости
-- Зависимость скрыта: по конструктору не видно, что класс использует `PricingRules.getInstance()`.
-- Нельзя подменить реализацию (другая стратегия, фейк в тесте, другой конфиг на профиль).
-- Глобальное изменяемое состояние — источник гонок и флапающих тестов.
+## Why it hurts extensibility
+- The dependency is hidden: the constructor does not show that the class uses `PricingRules.getInstance()`.
+- The implementation cannot be replaced (another strategy, a fake in a test, another config per profile).
+- Global mutable state is a source of races and flaky tests.
 
-## Когда оставить
-- Код библиотеки без DI-контейнера.
-- Константы и stateless-утилиты со статическими методами (`StringUtils`, `Money.round`) — это нормально.
-- Enum-синглтон для действительно глобальной и неизменяемой вещи вне Spring.
+## When to keep it
+- Library code without a DI container.
+- Constants and stateless utilities with static methods (`StringUtils`, `Money.round`) — that is fine.
+- An enum singleton for a truly global and immutable thing outside Spring.
 
-## До
+## Before
 ```java
 public final class PricingRules {
     private static PricingRules instance;
@@ -50,11 +50,11 @@ public final class PricingRules {
         return instance;
     }
 }
-// где-то в сервисе:
+// somewhere in a service:
 var rate = PricingRules.getInstance().rateFor(country);
 ```
 
-## После
+## After
 ```java
 @ConfigurationProperties(prefix = "pricing")
 public record PricingProperties(Map<String, BigDecimal> rates) {}
@@ -69,32 +69,32 @@ class PricingRules {
 @Service
 @RequiredArgsConstructor
 class PriceService {
-    private final PricingRules rules;   // зависимость видна и подменяема
+    private final PricingRules rules;   // the dependency is visible and replaceable
 }
 ```
-Вне Spring: enum-синглтон (`enum Registry { INSTANCE; … }`) или holder-idiom (`private static class Holder { static final X I = new X(); }`), но лучше всё равно передавать зависимость явно.
+Outside Spring: an enum singleton (`enum Registry { INSTANCE; … }`) or the holder idiom (`private static class Holder { static final X I = new X(); }`), but passing the dependency explicitly is still better.
 
-## Шаги рефакторинга
+## Refactoring steps
 1. `grep -rn "getInstance()\|static .* INSTANCE\|getBean(" src/main/java`.
-2. Превратить класс в бин; состояние из файлов и констант — в `@ConfigurationProperties`.
-3. Заменить вызовы `getInstance()` внедрением через конструктор; удалить статический доступ.
+2. Turn the class into a bean; state from files and constants — into `@ConfigurationProperties`.
+3. Replace `getInstance()` calls with constructor injection; remove the static access.
 
-## Подводные камни
-- Spring-singleton ≠ потокобезопасный. Изменяемые поля в бине разделяются всеми запросами. Состояние запроса не должно храниться в полях бина.
-- Статический доступ к контексту иногда оставляют для не-Spring объектов (сущности JPA, enum). Лучше передавать зависимость параметром метода.
+## Pitfalls
+- A Spring singleton ≠ thread-safe. Mutable fields in a bean are shared by all requests. Request state must not live in bean fields.
+- Static context access is sometimes kept for non-Spring objects (JPA entities, enums). Passing the dependency as a method parameter is better.
 
-## Плюсы и минусы
-**Плюсы (классического варианта)**
-- Гарантированно один экземпляр.
-- Ленивая инициализация.
-- Доступ из любого места.
+## Pros and cons
+**Pros (of the classic variant)**
+- Guaranteed single instance.
+- Lazy initialization.
+- Access from anywhere.
 
-**Минусы**
-- Глобальное состояние и скрытые зависимости: по конструктору клиента их не видно.
-- Трудно тестировать и подменять реализацию.
-- Проблемы потокобезопасности при ленивой инициализации.
-- Нарушает SRP: класс управляет и логикой, и своим жизненным циклом.
-- В Spring все плюсы даёт контейнер без этих минусов, поэтому рукописный Singleton здесь почти всегда лишний.
+**Cons**
+- Global state and hidden dependencies: the client's constructor does not show them.
+- Hard to test and to replace the implementation.
+- Thread-safety problems with lazy initialization.
+- Breaks SRP: the class manages both logic and its own lifecycle.
+- In Spring the container gives all the pros without these cons, so a hand-written Singleton is almost always redundant here.
 
-## Связанные паттерны
-Factory Method и Abstract Factory (часто реализуются как бины-синглтоны) · Flyweight (много разделяемых экземпляров) · Facade (фасад-бин в единственном экземпляре).
+## Related patterns
+Factory Method and Abstract Factory (often implemented as singleton beans) · Flyweight (many shared instances) · Facade (a facade bean in a single instance).

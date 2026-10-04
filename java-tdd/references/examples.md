@@ -1,22 +1,22 @@
-# Примеры циклов TDD на Java / Spring
+# TDD cycle examples in Java / Spring
 
-Открывай пример под нужный уровень, не читай все подряд.
+Open the example for the level you need; do not read them all.
 
-1. [Бизнес-правило — чистый JUnit](#1-бизнес-правило--чистый-junit)
-2. [Багфикс в запросе — `@DataJpaTest` + Testcontainers](#2-багфикс-в-запросе--datajpatest--testcontainers)
-3. [Новый endpoint — `@WebMvcTest`](#3-новый-endpoint--webmvctest)
-4. [Код уже написан — доказательство падения через stash](#4-код-уже-написан--доказательство-падения-через-stash)
-5. [Новый `@KafkaListener` — Testcontainers или `@EmbeddedKafka`](#5-новый-kafkalistener--testcontainers-или-embeddedkafka)
+1. [Business rule — plain JUnit](#1-business-rule--plain-junit)
+2. [Query bugfix — `@DataJpaTest` + Testcontainers](#2-query-bugfix--datajpatest--testcontainers)
+3. [New endpoint — `@WebMvcTest`](#3-new-endpoint--webmvctest)
+4. [Code already written — proving the failure via stash](#4-code-already-written--proving-the-failure-via-stash)
+5. [New `@KafkaListener` — Testcontainers or `@EmbeddedKafka`](#5-new-kafkalistener--testcontainers-or-embeddedkafka)
 
-Примеры рассчитаны на Spring Boot 3.4+ (`@MockitoBean`, `@ServiceConnection`), JUnit 5, AssertJ.
+The examples assume Spring Boot 3.4+ (`@MockitoBean`, `@ServiceConnection`), JUnit 5, AssertJ.
 
 ---
 
-## 1. Бизнес-правило — чистый JUnit
+## 1. Business rule — plain JUnit
 
-**Задача:** скидка 5% на заказ от 1000, до 1000 — без скидки. Сумма скидки округляется до копеек вниз.
+**Task:** a 5% discount on orders from 1000; below 1000 — no discount. The discount amount is rounded down to cents.
 
-### RED — первое поведение: до порога скидки нет
+### RED — the first behavior: no discount below the threshold
 
 ```java
 class DiscountPolicyTest {
@@ -31,7 +31,7 @@ class DiscountPolicyTest {
 }
 ```
 
-Поломка, которую ловит тест: скидка применяется ниже порога (`>=` превратился в `>` не в ту сторону, порог 100 вместо 1000).
+The breakage the test catches: the discount applies below the threshold (`>=` turned into `>` the wrong way, a threshold of 100 instead of 1000).
 
 ### VERIFY RED
 
@@ -40,7 +40,7 @@ $ ./mvnw -q test -Dtest=DiscountPolicyTest -Dsurefire.failIfNoSpecifiedTests=fal
 [ERROR] cannot find symbol: class DiscountPolicy
 ```
 
-Это не RED — тест не запускался. Создаём заглушку, которая возвращает заведомо неверное значение, чтобы упал именно assertion:
+This is not RED — the test did not run. Create a stub that returns a clearly wrong value so that exactly the assertion fails:
 
 ```java
 public class DiscountPolicy {
@@ -56,7 +56,7 @@ $ ./mvnw -q test -Dtest=DiscountPolicyTest -Dsurefire.failIfNoSpecifiedTests=fal
 Expecting actual not to be null
 ```
 
-Падение на assertion, причина понятна — это RED.
+An assertion failure with a clear reason — this is RED.
 
 ### GREEN
 
@@ -66,16 +66,16 @@ public BigDecimal discountFor(BigDecimal total) {
 }
 ```
 
-Да, это «обман». Так и задумано: правило «от 1000 — 5%» ещё не требует ни один тест. Следующий тест заставит написать настоящую логику.
+Yes, this is "cheating". That is the point: no test requires the "5% from 1000" rule yet. The next test forces the real logic.
 
-### Следующее поведение — RED
+### The next behavior — RED
 
 ```java
 @ParameterizedTest
 @CsvSource({
     "999.99,  0.00",
     "1000,    50.00",
-    "1234.57, 61.72",   // 61.7285 → вниз до 61.72
+    "1234.57, 61.72",   // 61.7285 → down to 61.72
 })
 void discountIsFivePercentFromThresholdRoundedDown(BigDecimal total, BigDecimal expected) {
     assertThat(policy.discountFor(total)).isEqualByComparingTo(expected);
@@ -87,7 +87,7 @@ void discountIsFivePercentFromThresholdRoundedDown(BigDecimal total, BigDecimal 
 expected: 50.00  but was: 0
 ```
 
-Строка `999.99` прошла сразу — это нормально внутри параметризованного теста, где новое поведение покрывают остальные строки. Первый тест `noDiscountBelowThreshold` теперь дублирует строку таблицы — удалим его на REFACTOR.
+The `999.99` row passed right away — that is fine inside a parameterized test where the other rows cover the new behavior. The first test `noDiscountBelowThreshold` now duplicates a table row — we delete it in REFACTOR.
 
 ### GREEN
 
@@ -108,15 +108,15 @@ public class DiscountPolicy {
 
 ### VERIFY GREEN → REFACTOR
 
-Удаляем дублирующий `noDiscountBelowThreshold`. Mutation check: `< 0` → `<= 0` роняет строку `1000`; `RoundingMode.DOWN` → `HALF_UP` роняет строку `1234.57`; `RATE` 0.05 → 0.5 роняет все строки выше порога. Защищено.
+Delete the duplicating `noDiscountBelowThreshold`. Mutation check: `< 0` → `<= 0` breaks the `1000` row; `RoundingMode.DOWN` → `HALF_UP` breaks the `1234.57` row; `RATE` 0.05 → 0.5 breaks every row above the threshold. Protected.
 
-**Чего нет и не нужно:** теста на `THRESHOLD == 1000` (детектор изменений), `@SpringBootTest` (это чистая функция), моков.
+**What is absent and not needed:** a test for `THRESHOLD == 1000` (a change detector), `@SpringBootTest` (it is a pure function), mocks.
 
 ---
 
-## 2. Багфикс в запросе — `@DataJpaTest` + Testcontainers
+## 2. Query bugfix — `@DataJpaTest` + Testcontainers
 
-**Баг:** в списке активных заказов клиента показываются отменённые.
+**Bug:** the customer's active orders list shows cancelled ones.
 
 ```java
 public interface OrderRepository extends JpaRepository<Order, UUID> {
@@ -126,9 +126,9 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 }
 ```
 
-### RED — воспроизвести баг на настоящем Postgres
+### RED — reproduce the bug on real Postgres
 
-Мок репозитория тут бесполезен: баг — в JPQL. H2 тоже нельзя: прод на Postgres.
+A repository mock is useless here: the bug is in the JPQL. H2 is not allowed either: production runs on Postgres.
 
 ```java
 @DataJpaTest
@@ -149,7 +149,7 @@ class OrderRepositoryTest {
         Order paid      = orders.save(anOrder(customerId, OrderStatus.PAID));
         orders.save(anOrder(customerId, OrderStatus.CANCELLED));
         orders.save(anOrder(customerId, OrderStatus.DELIVERED));
-        orders.save(anOrder(UUID.randomUUID(), OrderStatus.PAID));   // чужой клиент
+        orders.save(anOrder(UUID.randomUUID(), OrderStatus.PAID));   // another customer
 
         assertThat(orders.findActiveByCustomer(customerId))
             .extracting(Order::getId)
@@ -158,7 +158,7 @@ class OrderRepositoryTest {
 }
 ```
 
-`anOrder(...)` — test data builder в `src/test`, а не конструктор, добавленный в entity ради теста.
+`anOrder(...)` is a test data builder in `src/test`, not a constructor added to the entity for the test.
 
 ### VERIFY RED
 
@@ -173,9 +173,9 @@ but some elements were not expected:
   [9a20...]
 ```
 
-Лишний элемент — отменённый заказ. Сообщение описывает именно этот баг, значит, воспроизвели правильно.
+The extra element is the cancelled order. The message describes exactly this bug, so the reproduction is right.
 
-Если бы увидели `Could not find a valid Docker environment` — это не RED. Сказать пользователю, что Docker недоступен, и не подменять Postgres на H2.
+Had we seen `Could not find a valid Docker environment` — that is not RED. Tell the user Docker is unavailable and do not replace Postgres with H2.
 
 ### GREEN
 
@@ -189,28 +189,28 @@ but some elements were not expected:
 List<Order> findActiveByCustomer(UUID customerId);
 ```
 
-### VERIFY GREEN → весь набор
+### VERIFY GREEN → the full suite
 
 ```
 $ ./mvnw -q test -Dtest=OrderRepositoryTest -Dsurefire.failIfNoSpecifiedTests=false
 $ ./mvnw verify
 ```
 
-Один регрессионный тест — на уровне репозитория, который владеет запросом. Сервис и контроллер этот же сценарий не повторяют.
+One regression test — at the level of the repository that owns the query. The service and controller do not repeat this scenario.
 
 ---
 
-## 3. Новый endpoint — `@WebMvcTest`
+## 3. New endpoint — `@WebMvcTest`
 
-**Задача:** `POST /accounts`. Если email занят — `409` с ProblemDetail и `code = EMAIL_TAKEN`. Анонимный запрос — `401`.
+**Task:** `POST /accounts`. If the email is taken — `409` with a ProblemDetail and `code = EMAIL_TAKEN`. An anonymous request — `401`.
 
-Предполагается stateless API (JWT или Basic): анонимный запрос получает `401`, а не редирект на форму логина.
+A stateless API (JWT or Basic) is assumed: an anonymous request gets `401`, not a redirect to a login form.
 
-Разделение ответственности:
-- **HTTP-контракт** (статус, ProblemDetail, валидация, security) — `@WebMvcTest`, сервис замокан: он внешний по отношению к контракту контроллера.
-- **Уникальность email** — constraint в БД, проверяется `@DataJpaTest` (по образцу примера 2). Не здесь.
+Separation of concerns:
+- **The HTTP contract** (status, ProblemDetail, validation, security) — `@WebMvcTest`, the service is mocked: it is external to the controller's contract.
+- **Email uniqueness** — a DB constraint, checked with `@DataJpaTest` (like example 2). Not here.
 
-### RED — первое поведение: занятый email → 409
+### RED — the first behavior: a taken email → 409
 
 ```java
 @WebMvcTest(AccountController.class)
@@ -238,13 +238,13 @@ class AccountControllerTest {
 }
 ```
 
-Здесь `thenThrow` — не «мок, реализующий проверяемое поведение»: проверяется маппинг исключения в HTTP-ответ, это работа контроллера/`@RestControllerAdvice`, а не сервиса.
+Here `thenThrow` is not "a mock implementing the behavior under test": what is checked is mapping the exception to an HTTP response, which is the job of the controller/`@RestControllerAdvice`, not the service.
 
-`.with(csrf())` и `@WithMockUser` нужны, чтобы запрос дошёл до проверяемой логики. Без них тест упал бы с `403`/`401` от security-цепочки — это ложный RED.
+`.with(csrf())` and `@WithMockUser` are needed for the request to reach the logic under test. Without them the test would fail with `403`/`401` from the security chain — a false RED.
 
 ### VERIFY RED
 
-Создаём `AccountController` с методом, который вызывает `accounts.register(...)` и возвращает `201`; `EmailTakenException` пока никто не обрабатывает.
+Create an `AccountController` with a method that calls `accounts.register(...)` and returns `201`; nobody handles `EmailTakenException` yet.
 
 ```
 [ERROR] AccountControllerTest.duplicateEmailReturns409WithStableCode
@@ -252,7 +252,7 @@ jakarta.servlet.ServletException: Request processing failed:
   com.example.account.EmailTakenException: a@b.io
 ```
 
-MockMvc не превращает необработанное исключение в 500, а пробрасывает его из `perform()`. Формально это не падение assertion'а, но причина ровно та, ради которой пишется тест: исключение никто не маппит в HTTP-ответ. Это допустимый RED. Недопустимым он был бы, если бы вылетело другое исключение — например, `HttpMessageNotReadableException` из-за кривого JSON в запросе.
+MockMvc does not turn an unhandled exception into a 500; it rethrows it from `perform()`. Formally this is not an assertion failure, but the reason is exactly the one the test is written for: nobody maps the exception to an HTTP response. This is an acceptable RED. It would be unacceptable if a different exception came out — e.g. `HttpMessageNotReadableException` because of broken JSON in the request.
 
 ### GREEN
 
@@ -269,7 +269,7 @@ class ApiExceptionHandler {
 }
 ```
 
-### Следующие поведения — по циклу каждое
+### The next behaviors — each through the cycle
 
 ```java
 @Test
@@ -296,15 +296,15 @@ void invalidEmailReturns400WithFieldError() throws Exception {
 }
 ```
 
-`verifyNoInteractions(accounts)` в тесте на 401 уместен: «сервис не вызван» и есть наблюдаемое поведение security-правила, другого способа его увидеть на этом уровне нет.
+`verifyNoInteractions(accounts)` in the 401 test fits: "the service was not called" is the observable behavior of the security rule, and there is no other way to see it at this level.
 
-Для `anonymousRequestIsRejected` сначала проверь, что тест падает, если временно открыть endpoint (`permitAll()`), — иначе неизвестно, проверяет ли он правило или просто отсутствие CSRF.
+For `anonymousRequestIsRejected` first check that the test fails if you temporarily open the endpoint (`permitAll()`) — otherwise you do not know whether it checks the rule or just the missing CSRF.
 
 ---
 
-## 4. Код уже написан — доказательство падения через stash
+## 4. Code already written — proving the failure via stash
 
-Ты (агент) в этой сессии сначала написал метод `Order.cancel()`, а тест — нет. Удалять код не нужно, нужно доказать, что тест умеет падать без него.
+You (the agent) wrote the `Order.cancel()` method first in this session, and no test. There is no need to delete the code; you need to prove the test can fail without it.
 
 ```java
 @Test
@@ -317,14 +317,14 @@ void cancellingShippedOrderIsRejected() {
 }
 ```
 
-Тест написан по требованию «отгруженный заказ нельзя отменить», а не по тому, как устроен `cancel()`.
+The test is written from the requirement "a shipped order cannot be cancelled", not from how `cancel()` works.
 
 ```
 $ git stash push -- src/main/java/com/example/order/Order.java
 $ ./mvnw -q test -Dtest=OrderTest -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
-Если без изменения метода `cancel` вообще нет — будет ошибка компиляции. Тогда вместо stash временно замени тело метода на `status = OrderStatus.CANCELLED;` (наивная версия без проверки) и убедись, что тест падает на assertion:
+If without the change there is no `cancel` method at all, you get a compilation error. Then instead of stash temporarily replace the method body with `status = OrderStatus.CANCELLED;` (a naive version without the check) and make sure the test fails on the assertion:
 
 ```
 Expecting code to raise a throwable.
@@ -335,28 +335,28 @@ $ git stash pop
 $ ./mvnw -q test -Dtest=OrderTest -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
-Зелёный. Тест доказал, что ловит отсутствие проверки перехода.
+Green. The test proved it catches the missing transition check.
 
-Stash'ить можно только свои изменения из этой сессии. Если в файле есть чужие незакоммиченные правки — не трогай его, используй временную замену тела метода и верни её руками.
+Stash only your own changes from this session. If the file has someone else's uncommitted edits — do not touch it; use the temporary body replacement and restore it by hand.
 
 ---
 
-## 5. Новый `@KafkaListener` — Testcontainers или `@EmbeddedKafka`
+## 5. New `@KafkaListener` — Testcontainers or `@EmbeddedKafka`
 
-**Задача:** событие `PaymentCaptured` из топика `payments.captured` переводит заказ из `AWAITING_PAYMENT` в `PAID`.
+**Task:** a `PaymentCaptured` event from the `payments.captured` topic moves an order from `AWAITING_PAYMENT` to `PAID`.
 
-### Выбор инфраструктуры
+### Choosing the infrastructure
 
 ```
 $ grep -rnE 'org\.testcontainers|spring-boot-testcontainers|spring-kafka-test' --include=pom.xml .
 ./pom.xml:55:            <groupId>org.testcontainers</groupId>
 ```
 
-Testcontainers в проекте есть — значит, Kafka тоже на Testcontainers. Модуля `org.testcontainers:kafka` в `pom.xml` нет: добавляем той же версии, что `postgresql`, и называем это в отчёте. Если бы grep не нашёл Testcontainers, тест был бы на `@EmbeddedKafka` (вариант ниже).
+The project has Testcontainers — so Kafka runs on Testcontainers too. There is no `org.testcontainers:kafka` module in `pom.xml`: add it with the same version as `postgresql` and name it in the report. Had grep found no Testcontainers, the test would use `@EmbeddedKafka` (the variant below).
 
-### Заглушка до RED
+### A stub before RED
 
-Без listener'а тест упадёт по таймауту, но такой таймаут ничего не говорит о причине: запись могла не дойти, топика могло не быть. Поэтому сначала заглушка, которая получает запись и ничего не делает:
+Without a listener the test fails on a timeout, but such a timeout says nothing about the cause: the record may not have arrived, the topic may not exist. So first a stub that receives the record and does nothing:
 
 ```java
 @Component
@@ -371,7 +371,7 @@ public class PaymentEventsListener {
 }
 ```
 
-### RED — проект на Testcontainers
+### RED — a project on Testcontainers
 
 ```java
 @SpringBootTest(properties = "spring.kafka.consumer.auto-offset-reset=earliest")
@@ -404,27 +404,27 @@ class PaymentEventsListenerTest {
 }
 ```
 
-- `KafkaContainer` — класс из той версии Testcontainers, что в проекте: в 1.20+ это `org.testcontainers.kafka.KafkaContainer` (образы `apache/kafka`, `apache/kafka-native`), раньше — `org.testcontainers.containers.KafkaContainer` с образом `confluentinc/cp-kafka`.
-- Сериализаторы и `groupId` берутся из конфигурации приложения, так что тест проверяет и их.
-- Таких классов несколько — вынеси контейнеры в общий базовый класс или `@TestConfiguration` с `@ServiceConnection`-бинами: один контейнер на прогон.
-- Суффикс имени выбирай по конвенции проекта: `*IT` запускается, только если настроен Failsafe или отдельный source set.
+- `KafkaContainer` is the class from the project's Testcontainers version: in 1.20+ it is `org.testcontainers.kafka.KafkaContainer` (images `apache/kafka`, `apache/kafka-native`), before that — `org.testcontainers.containers.KafkaContainer` with the `confluentinc/cp-kafka` image.
+- Serializers and `groupId` come from the application configuration, so the test checks them too.
+- Several such classes — move the containers into a shared base class or a `@TestConfiguration` with `@ServiceConnection` beans: one container per run.
+- Pick the name suffix by the project's convention: `*IT` runs only if Failsafe or a separate source set is configured.
 
-### RED — проект без Testcontainers: `@EmbeddedKafka`
+### RED — a project without Testcontainers: `@EmbeddedKafka`
 
-Меняется только заголовок класса, тело теста то же:
+Only the class header changes, the test body is the same:
 
 ```java
 @SpringBootTest(properties = "spring.kafka.consumer.auto-offset-reset=earliest")
 @EmbeddedKafka(partitions = 1, topics = "payments.captured",
                bootstrapServersProperty = "spring.kafka.bootstrap-servers")
 class PaymentEventsListenerTest {
-    // БД поднимается тем способом, который уже есть в проекте для тестов. Не H2.
-    // ... тот же тест capturedPaymentMarksOrderPaid
+    // The DB is started the way the project already does it for tests. Not H2.
+    // ... the same capturedPaymentMarksOrderPaid test
 }
 ```
 
-- `spring-kafka-test` — в test scope, без версии: её задаёт BOM Spring Boot.
-- Если Kafka-тестов несколько, вынеси `@SpringBootTest` + `@EmbeddedKafka` в мета-аннотацию или базовый класс. Каждый новый набор атрибутов `@EmbeddedKafka` — это новый контекст и новый брокер. `@DirtiesContext` из примеров в интернете не копируй.
+- `spring-kafka-test` — in test scope, no version: the Spring Boot BOM sets it.
+- If there are several Kafka tests, move `@SpringBootTest` + `@EmbeddedKafka` into a meta-annotation or a base class. Every new set of `@EmbeddedKafka` attributes is a new context and a new broker. Do not copy `@DirtiesContext` from examples on the internet.
 
 ### VERIFY RED
 
@@ -437,9 +437,9 @@ expected: PAID
  but was: AWAITING_PAYMENT within 10 seconds.
 ```
 
-Строка `received payment` в логе означает, что запись дошла до listener'а, а статус не поменялся. Это RED: не хватает именно проверяемого поведения.
+The `received payment` line in the log means the record reached the listener and the status did not change. This is RED: exactly the behavior under test is missing.
 
-Если строки в логе нет, это не RED. Проверь `auto-offset-reset`, имя топика и ошибки десериализации в логе (`DeserializationException`, `ListenerExecutionFailedException`).
+If the log has no such line, it is not RED. Check `auto-offset-reset`, the topic name and deserialization errors in the log (`DeserializationException`, `ListenerExecutionFailedException`).
 
 ### GREEN
 
@@ -453,9 +453,9 @@ public void on(PaymentCaptured event) {
 }
 ```
 
-### Следующие поведения — по циклу каждое
+### The next behaviors — each through the cycle
 
-- То же событие дважды (повторная доставка после rebalance) даёт один эффект: заказ `PAID`, платёж учтён один раз. См. `idempotency-and-side-effects`.
-- Событие для несуществующего заказа или poison message попадает в DLT и не блокирует partition. DLT читаем тестовым consumer'ом на том же брокере.
+- The same event twice (redelivery after a rebalance) gives one effect: the order is `PAID`, the payment is counted once. See `idempotency-and-side-effects`.
+- An event for a non-existent order or a poison message goes to the DLT and does not block the partition. Read the DLT with a test consumer on the same broker.
 
-Мок `KafkaTemplate` или прямой вызов `listener.on(event)` вместо этого теста не проверили бы ни сериализацию, ни конфигурацию listener'а, ни error handler.
+A `KafkaTemplate` mock or a direct `listener.on(event)` call instead of this test would check neither serialization, nor the listener configuration, nor the error handler.

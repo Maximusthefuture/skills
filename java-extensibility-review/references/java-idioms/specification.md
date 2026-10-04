@@ -1,21 +1,21 @@
-# Specification для динамических фильтров
+# Specification for dynamic filters
 
-Тип: паттерн DDD / Spring Data JPA, частный случай Composite для запросов
+Type: a DDD / Spring Data JPA pattern, a special case of Composite for queries
 
-## Суть
-Каждое условие фильтра — отдельный маленький объект-предикат. Условия комбинируются через AND/OR/NOT. Новый фильтр — новый метод-спецификация и одна строка в сборке, без переписывания запроса и без новых методов репозитория.
+## Essence
+Every filter condition is a separate small predicate object. Conditions combine through AND/OR/NOT. A new filter is a new specification method and one line in the assembly, without rewriting the query and without new repository methods.
 
-## Признаки в Java/Spring коде
-- Построение запроса через `if (filter.getX() != null) jpql += " and x = :x"` и параллельный `if` для параметров.
-- Взрыв методов репозитория: `findByStatusAndCreatedAfterAndCustomerId…`.
-- Одинаковые условия (активен, не удалён, принадлежит тенанту) копируются в разные запросы.
-- Фильтр из UI с 5–15 необязательными полями.
+## Signs in Java/Spring code
+- Building a query with `if (filter.getX() != null) jpql += " and x = :x"` and a parallel `if` for the parameters.
+- An explosion of repository methods: `findByStatusAndCreatedAfterAndCustomerId…`.
+- The same conditions (active, not deleted, belongs to the tenant) copied into different queries.
+- A UI filter with 5–15 optional fields.
 
-## Когда не применять
-- Запрос фиксированный — хватит derived query или `@Query`.
-- В проекте уже есть Querydsl или jOOQ — используй их механизм предикатов, а не второй.
+## When not to apply
+- The query is fixed — a derived query or `@Query` is enough.
+- The project already has Querydsl or jOOQ — use their predicate mechanism, not a second one.
 
-## После
+## After
 ```java
 final class OrderSpecs {
     private OrderSpecs() {}
@@ -33,25 +33,25 @@ final class OrderSpecs {
 
 public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecificationExecutor<Order> {}
 
-// сервис
-Specification<Order> spec = Specification.allOf(          // Spring Data JPA 3.x; в 2.x — where(a).and(b)
+// service
+Specification<Order> spec = Specification.allOf(          // Spring Data JPA 3.x; in 2.x — where(a).and(b)
         OrderSpecs.hasStatus(filter.status()),
         OrderSpecs.createdAfter(filter.from()),
         OrderSpecs.ofCustomer(filter.customerId()));
 Page<Order> page = orders.findAll(spec, pageable);
 ```
-`null`-предикат игнорируется. `Order_` — JPA Metamodel (`hibernate-jpamodelgen`): опечатки в именах полей ловит компилятор. Без метамодели — `root.get("status")`.
+A `null` predicate is ignored. `Order_` is the JPA Metamodel (`hibernate-jpamodelgen`): the compiler catches typos in field names. Without the metamodel — `root.get("status")`.
 
-## Шаги рефакторинга
-1. Тесты на текущий поиск (`@DataJpaTest` + Testcontainers) по основным комбинациям фильтров.
-2. Подключить `JpaSpecificationExecutor`, вынести условия по одному.
-3. Удалить ручную сборку JPQL и лишние derived-методы.
+## Refactoring steps
+1. Tests on the current search (`@DataJpaTest` + Testcontainers) for the main filter combinations.
+2. Add `JpaSpecificationExecutor`, move the conditions out one at a time.
+3. Remove the manual JPQL assembly and the extra derived methods.
 
-## Подводные камни
-- **Безопасность:** конкатенация пользовательского ввода в JPQL/SQL — уже уязвимость (инъекция), а не вопрос расширяемости. Отметь её отдельно как критичную.
-- `fetch join` внутри спецификации ломает count-запрос пагинации. Проверяй `q.getResultType()` или выноси fetch в `@EntityGraph`.
-- Join в нескольких спецификациях на одну связь даёт дубликаты join-ов и строк (`q.distinct(true)` или переиспользование join).
-- Сортировку по полю из пользовательского ввода ограничивай белым списком.
+## Pitfalls
+- **Security:** concatenating user input into JPQL/SQL is already a vulnerability (injection), not an extensibility question. Flag it separately as critical.
+- A `fetch join` inside a specification breaks the pagination count query. Check `q.getResultType()` or move the fetch into an `@EntityGraph`.
+- Joins on the same association in several specifications produce duplicate joins and rows (`q.distinct(true)` or reuse the join).
+- Limit sorting by a field from user input with an allowlist.
 
-## Связанные паттерны
-Composite (AND/OR/NOT-дерево) · Chain of Responsibility · Builder (сборка запроса).
+## Related patterns
+Composite (an AND/OR/NOT tree) · Chain of Responsibility · Builder (assembling the query).

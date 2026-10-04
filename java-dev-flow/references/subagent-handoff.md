@@ -1,174 +1,187 @@
-# Передача работы субагентам и агентам-ревьюерам
+# Handing work to subagents and reviewer agents
 
-**Открывай, когда:** в L-задаче хочешь отдать срез субагенту или запускаешь агента-ревьюера в фазе 5.
+**Open when:** in an L task you want to give a slice to a subagent, or you run a reviewer agent in phase 5.
 
-## Когда отдавать срез субагенту
+## When to give a slice to a subagent
 
-Отдавай, если выполнено всё сразу:
+Give it away only if all of these hold:
 
-- задача L, план утверждён;
-- срез самодостаточен: его стыки с другими срезами уже реализованы или зафиксированы в плане сигнатурами;
-- срез не делит файлы с другим срезом, который идёт параллельно;
-- в сессии есть инструмент субагентов, и пользователь не просил делать всё самому.
+- the task is L and the plan is approved;
+- the slice is self-contained: its seams with other slices are already implemented or pinned in the plan as signatures;
+- the slice shares no files with another slice running in parallel;
+- the session has a subagent tool and the user did not ask you to do everything yourself.
 
-Не отдавай S- и M-задачи: передача контекста стоит дороже самой работы. Не отдавай срезы, которые меняют общий код (базовые классы, общий конфиг, security chain), — их делай сам.
+Do not hand off S and M tasks: transferring the context costs more than the work. Do not hand off slices that change shared code (base classes, shared config, the security chain) — do them yourself.
 
-Срезы, которые зависят друг от друга, отдавай последовательно. Параллельно — только срезы с непересекающимися файлами.
+Dependent slices go one after another. In parallel — only slices with disjoint files.
 
-## Важно про скиллы
+## About skills
 
-Субагент **не наследует** загруженные у тебя скиллы и не видит этот разговор. Всё, что ему нужно, должно быть в промпте: дизайн-резюме, срез из плана, стыки, имена скиллов, которые он должен вызвать сам, команды проверки.
+A subagent **does not inherit** your loaded skills and does not see this conversation. Everything it needs must be in the prompt: the design summary, the slice from the plan, the seams, the names of skills it must call itself, the verification commands.
 
-В проекте с OpenSpec вместо дизайн-резюме передай пути к `proposal.md`, `design.md`, `specs/` и номер группы в `tasks.md`. Чекбоксы в `tasks.md` субагент не трогает — их ставит координатор после своей проверки.
+In an OpenSpec project, instead of the design summary pass the paths to `proposal.md`, `design.md`, `specs/` and the group number in `tasks.md`. The subagent does not touch the checkboxes in `tasks.md` — the coordinator ticks them after its own check.
 
-## Промпт для исполнителя среза
+## Prompt for a slice implementer
 
 ```
-Ты реализуешь срез <N> «<название>» в проекте <путь к репозиторию>.
+You implement slice <N> "<name>" in the project <repository path>.
 
-## Контекст
-<дизайн-резюме, 10–20 строк>
+## Context
+<design summary, 10–20 lines>
 
-Уже реализовано и используется этим срезом:
-<классы и сигнатуры из предыдущих срезов>
+Already implemented and used by this slice:
+<classes and signatures from previous slices>
 
-Инфраструктура интеграционных тестов: <из плана: Testcontainers | @EmbeddedKafka для Kafka>.
-Используй существующий базовый класс <путь>, если он есть; вторую настройку не заводи.
+Integration test infrastructure: <from the plan: Testcontainers | @EmbeddedKafka for Kafka>.
+Use the existing base class <path> if there is one; do not create a second setup.
 
-## Что сделать
-<поведения среза из плана, у каждого — уровень теста и поломка, которую он ловит>
+## What to do
+<the slice's behaviors from the plan, each with a test level and the breakage it catches>
 
-Границы тестов: <из плана>. Тесты пиши только на них. Понадобилась другая
-граница — остановись и сообщи (статус NEEDS_CONTEXT).
+Test boundaries: <from the plan>. Write tests only at them. Need another
+boundary — stop and report (status NEEDS_CONTEXT).
 
-## Обязательные скиллы
-Вызови через Skill tool до начала работы (имена могут быть с префиксом плагина,
-например backend-design-java:migration-safety):
-- java-tdd — каждое поведение через red → green → refactor, с проверкой,
-  что тест упал по правильной причине
-- <доменные скиллы по сигналам среза>
+## Required skills
+Call via the Skill tool before starting (names may carry a plugin prefix,
+e.g. backend-design-java:migration-safety):
+- java-tdd — every behavior via red → green → refactor, checking that
+  the test failed for the right reason
+- <domain skills by the slice's signals>
 
-## Ограничения
-- Меняй только файлы этого среза: <список или пакет>. Нужно тронуть что-то
-  ещё — остановись и сообщи (статус NEEDS_CONTEXT).
-- Не коммить и не пушь<, если пользователь не разрешил коммит на срез>.
-- Не запускай своих субагентов и ревьюеров — ревью сделает координатор.
-- Предупреждения хуков после записи файлов исправь или опиши в отчёте.
-- Нет Docker для Testcontainers — сообщи; не подменяй Postgres на H2, а Kafka-контейнер — на @EmbeddedKafka.
-- Архитектурное решение с несколькими разумными вариантами, которого нет
-  в плане, — не принимай сам, верни статус BLOCKED с вариантами.
+## Constraints
+- Change only this slice's files: <list or package>. Need to touch something
+  else — stop and report (status NEEDS_CONTEXT).
+- Do not commit or push<, unless the user allowed a commit per slice>.
+- Do not start your own subagents or reviewers — the coordinator reviews.
+- Fix hook warnings after file writes or describe them in the report.
+- No Docker for Testcontainers — report it; do not replace Postgres with H2 or the Kafka container with @EmbeddedKafka.
+- An architectural decision with several reasonable options that is not in the
+  plan — do not make it yourself, return BLOCKED with the options.
 
-## Проверка
-<команда для тестов среза>
-<команда для тестов модуля>
+## Verification
+<command for the slice's tests>
+<command for the module's tests>
 
-## Отчёт
-Статус: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
-- изменённые и созданные файлы
-- тесты: имя, уровень, сообщение, с которым тест падал на RED
-- запущенные команды и их результат
-- предупреждения хуков и что с ними сделано
-- сомнения, принятые решения, что осталось
+## Report
+Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
+- changed and created files
+- tests: name, level, the message the test failed with on RED
+- commands run and their results
+- hook warnings and what was done about them
+- doubts, decisions made, what is left
 ```
 
-## После отчёта субагента
+## After the subagent's report
 
-Отчёт — это заявление, а не доказательство.
+A report is a claim, not evidence.
 
-1. Посмотри diff: `git diff` / `git status`. Изменены только файлы среза? Есть ли то, о чём отчёт молчит?
-2. Перезапусти тесты среза и модуля сам.
-3. Сверь с планом: все поведения среза покрыты? Сигнатуры на стыках совпадают с планом?
-4. `DONE_WITH_CONCERNS` — разбери каждое сомнение, прежде чем идти дальше. `BLOCKED` или `NEEDS_CONTEXT` — дай контекст, раздели срез или сделай его сам. Не отправляй того же субагента повторно с тем же промптом.
-5. Отметь срез выполненным в плане или todo-листе.
+1. Look at the diff: `git diff` / `git status`. Only the slice's files changed? Anything the report is silent about?
+2. Rerun the slice and module tests yourself.
+3. Compare with the plan: are all the slice's behaviors covered? Do the seam signatures match the plan?
+4. `DONE_WITH_CONCERNS` — resolve every concern before moving on. `BLOCKED` or `NEEDS_CONTEXT` — give context, split the slice or do it yourself. Do not resend the same subagent with the same prompt.
+5. Mark the slice done in the plan or todo list.
 
-## Агенты-ревьюеры (фаза 5)
+## Reviewer agents (phase 5)
 
-`java-code-reviewer`, `critic`, `security-reviewer`, `schema-reviewer`, `incident-thinker` работают только на чтение и в свежем контексте. В этом их ценность: они не знают, что «и так понятно». Раз они ничего не меняют, запускай их параллельно, одним сообщением.
+`java-code-reviewer`, `critic`, `security-reviewer`, `schema-reviewer`, `incident-thinker` are read-only and run in a fresh context. That is their value: they do not know what is "obvious". Since they change nothing, run them in parallel, in one message. The answers of `java-code-reviewer` and `critic` are limited to 60 lines; longer means the agent duplicates findings across sections.
 
 ### java-code-reviewer
 
-Запускается для M и L всегда. Скилл `java-code-review` у него подгружается сам, поэтому в промпте нужно только то, чего агент не знает:
+Always runs for M and L. The `java-code-review` skill is preloaded, so the prompt needs only what the agent does not know:
 
 ```
-Проведи ревью изменений в проекте <путь>.
+Review the changes in the project <path>.
 
-Область: <main...HEAD | --staged | список файлов>; если не указано — режим
-скилла по умолчанию (ветка относительно базы плюс незакоммиченное).
+Scope: <main...HEAD | --staged | file list>; if not given — the skill's
+default mode (branch vs base plus uncommitted).
 
-Что делает изменение: <2–5 строк из дизайн-резюме>
-<или: намерение описано в openspec/changes/<имя>/ — proposal.md, design.md, specs/>
+What the change does: <2–5 lines from the design summary>
+<or: the intent is described in openspec/changes/<name>/ — proposal.md, design.md, specs/>
 
-Спека: <требования, по которым проверить соответствие: список поведений (M),
-путь к плану (L), openspec/changes/<имя>/specs/, ключ или текст тикета>
-<или: «спеки нет» — тогда ось соответствия спеке пропусти>
+Spec: <requirements to check conformance against: behavior list (M),
+plan path (L), openspec/changes/<name>/specs/, ticket key or text>
+<or: "no spec" — then skip the spec conformance axis>
 
-Фокус: <места, в которых есть сомнения; необязательно>
+Focus: <places you have doubts about; optional>
 
-Тесты: <«проверь новые и изменённые тесты по test-audit» — если в diff есть тесты>
+Tests: <"check new and changed tests against test-audit" — if the diff has tests>
 
-Верни отчёт в своём формате: первая строка — статус, дальше находки
-с файлом, строкой, уверенностью и типом (баг / улучшение). Ничего не исправляй.
+Return the report in your format: the first line is the status, then findings
+with file, line, confidence and type (bug / improvement). Do not fix anything.
 ```
 
-Как разбирать ответ:
-- `CLEAN` — запиши в отчёт как проверку с результатом, ничего не делай;
-- `FINDINGS` — каждую находку проверь по коду. Баг исправь по маршруту B: сначала тест. Улучшение — по желанию, если оно не раздувает задачу. Раздел «Соответствие спеке»: недостающее требование доделай циклом `java-tdd` (режим A), лишнее поведение убери или согласуй с пользователем, неверную реализацию исправь как баг. Раздел «Для java-extensibility-review» — материал для проверки по сигналу «выросло ветвление»;
-- `NOT_VERIFIED` — выясни, что не проверено и почему (не собирается проект, нет базы ветки). Почини причину и перезапусти ревью или проверь этот участок сам. Не выдавай частичное ревью за полное.
+How to read the answer:
+- `CLEAN` — record it in the report as a check with its result, do nothing;
+- `FINDINGS` — check every finding against the code. Fix a bug via route B: test first. An improvement — optional, if it does not bloat the task. The "Spec conformance" section: implement a missing requirement with a `java-tdd` cycle (mode A), remove extra behavior or agree it with the user, fix a wrong implementation as a bug. The "For java-extensibility-review" section is material for the "branching grew" signal check;
+- `NOT_VERIFIED` — find out what was not checked and why (the project does not build, no branch base). Fix the cause and rerun the review or check that part yourself. Do not pass a partial review off as a full one.
 
 ### critic
 
-Запускается для M и L всегда, одним сообщением с `java-code-reviewer`. Доменные скиллы критик подгружает сам по сигналам в diff, поэтому в промпте нужно только то, чего он не знает:
+Always runs for M and L, in one message with `java-code-reviewer`. The critic loads domain skills by diff signals itself, so the prompt needs only what it does not know:
 
 ```
-Проведи пре-мортем изменений в проекте <путь>: что сломается, когда это попадёт в прод.
+Do a pre-mortem of the changes in the project <path>: what breaks when this reaches production.
 
-Область: <main...HEAD | --staged | список файлов>.
+Scope: <main...HEAD | --staged | file list>.
 
-Что сделано: <2–5 строк из дизайн-резюме или путь к плану>
-Требования: <список поведений (M), путь к плану (L), openspec/changes/<имя>/specs/,
-ключ или текст тикета> <или: «спеки нет»>
-Размер и сигналы: <строка классификации из фазы 0>
+What was done: <2–5 lines from the design summary or the plan path>
+Requirements: <behavior list (M), plan path (L), openspec/changes/<name>/specs/,
+ticket key or text> <or: "no spec">
+Size and signals: <classification line from phase 0>
 
-Что известно о проде: <нагрузка, объёмы затронутых таблиц, потребители API
-и событий, способ деплоя, число реплик>
-<или: «неизвестно — поищи в репозитории, остальное вынеси в допущения и вопросы»>
+What is known about production: <load, sizes of affected tables, API and event
+consumers, deploy method, number of replicas>
+<or: "unknown — search the repository, put the rest into assumptions and questions">
 
-Фокус: <места, в которых есть сомнения; необязательно>
+Focus: <places you have doubts about; optional>
 
-Верни отчёт в своём формате: первая строка — статус, дальше пре-мортем, блокеры,
-риски, вопросы пользователю и недостающие тесты. Ничего не исправляй.
+Return the report in your format: the first line is the status, then the pre-mortem,
+blockers, risks, questions for the user and missing tests. Do not fix anything.
 ```
 
-Как разбирать ответ:
-- `CLEAN` — запиши в отчёт как проверку с результатом;
-- `BLOCKERS` и `RISKS` — каждую находку проверь по коду. Подтверждённый блокер исправь по маршруту B: сначала тест. Риск исправь, если правка не раздувает задачу; иначе вынеси в отчёт с решением и в follow-ups;
-- «Вопросы пользователю» — это решения пользователя. Не отвечай за него: вынеси их в отчёт вместе с рекомендуемым ответом критика. Если от ответа зависит, блокер это или нет (например, объём таблицы под миграцией), спроси до того, как писать «готово»;
-- «Тесты, которых не хватает» — сценарий в рамках задачи добавь циклом `java-tdd`, остальное — в follow-ups;
-- `NOT_VERIFIED` — выясни причину, почини её и перезапусти критика или проверь этот участок сам. Не выдавай частичный разбор за полный.
+How to read the answer:
+- `CLEAN` — record it in the report as a check with its result;
+- `BLOCKERS` and `RISKS` — check every finding against the code. Fix a confirmed blocker via route B: test first. Fix a risk if the fix does not bloat the task; otherwise put it in the report with a decision and into follow-ups;
+- "Questions for the user" are the user's decisions. Do not answer for them: put them in the report with the critic's recommended answer. If whether something is a blocker depends on the answer (e.g. the size of the table under migration), ask before writing "done";
+- "Missing tests" — add an in-scope scenario with a `java-tdd` cycle, the rest into follow-ups;
+- `NOT_VERIFIED` — find the cause, fix it and rerun the critic or check that part yourself. Do not pass a partial analysis off as a full one.
 
-Если `critic` и `java-code-reviewer` нашли одно и то же, это одна находка: исправляй её один раз.
+If `critic` and `java-code-reviewer` found the same thing, it is one finding: fix it once.
+
+### test-runner
+
+Runs tests and returns a summary instead of logs (model — Haiku, Bash only). Useful for the full run in M and L and for a class of integration tests: Maven and Spring logs stay out of the main context.
+
+```
+In the project <path> run: <command, e.g. ./mvnw verify>. Return the summary in your format.
+```
+
+How to read the answer:
+- `PASSED` — evidence for the report if the command ran after the last edit;
+- `FAILED` — the failed tests are named; analyze each yourself (that is not `test-runner`'s job) and name them in the report;
+- `NOT_RUN` — the reason (no Docker, compilation) goes into the report; you cannot write "tests are green".
 
 ### security-reviewer, schema-reviewer, incident-thinker
 
-Промпт:
+Prompt:
 
 ```
-Проверь <что: изменения ветки / конкретные файлы> в проекте <путь>.
+Check <what: the branch's changes / specific files> in the project <path>.
 
-Область: <команда, которой получить diff, например
+Scope: <the command to get the diff, e.g.
 git diff $(git merge-base HEAD origin/main) -- src/main>
-или список файлов.
+or a file list.
 
-Что делает изменение: <2–3 строки из дизайн-резюме>
+What the change does: <2–3 lines from the design summary>
 
-На чём сфокусироваться: <например: доступ к платежу по id из пути;
-новый changeset на таблице orders (~40M строк, горячая)>
+What to focus on: <e.g.: access to a payment by id from the path;
+a new changeset on the orders table (~40M rows, hot)>
 
-Верни список находок по своему формату с файлом и строкой.
-Ничего не исправляй.
+Return a list of findings in your format with file and line.
+Do not fix anything.
 ```
 
-С находками ревьюера обращайся так же, как в `java-code-review`:
-- каждую находку проверь по коду, прежде чем принимать;
-- подтверждённый баг исправь по маршруту B (сначала тест);
-- неподтверждённую находку не исправляй вслепую — упомяни в отчёте строкой «стоит перепроверить», если сомнение осталось.
+Treat reviewer findings the same way as in `java-code-review`:
+- check every finding against the code before accepting it;
+- fix a confirmed bug via route B (test first);
+- do not blindly fix an unconfirmed finding — mention it in the report as "worth rechecking" if doubt remains.

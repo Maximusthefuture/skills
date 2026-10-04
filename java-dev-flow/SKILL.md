@@ -1,281 +1,172 @@
 ---
 name: java-dev-flow
-description: Оркестратор разработки в Java / Spring Boot проекте — точка входа, которую вызывают ПЕРВОЙ, до think-before-coding, java-tdd и доменных скиллов. Определяет тип задачи (фича, изменение поведения, багфикс, рефакторинг, схема БД, производительность) и размер (S/M/L), выбирает маршрут и ведёт по фазам с проверяемым выходом — дизайн, план поведений, реализация через TDD, проверка, отчёт, — подключая скиллы, агенты и команды backend-design-java только по сигналам в задаче и коде. Use whenever the user asks to implement, add, change, fix or refactor something in a Java / Spring codebase — "реализуй", "сделай фичу", "добавь эндпоинт", "добавь поле/таблицу", "доработай", "почини баг", "поправь", "отрефактори", "интеграция с", "implement", "fix this bug", "/java-dev-flow". В проекте с OpenSpec работает внутри его команд /opsx. Не нужен для ревью diff (java-code-review), чистки тестов (test-audit), Jira (jira-tasks), инцидента в проде (debugging-discipline), вопросов о коде и дизайна без кода.
-compatibility: Claude Code. Опирается на backend-design-java (или оригинальный backend-design), java-tdd, java-diagnosing-bugs, java-code-review, java-extensibility-review, java-spec-review, test-audit, jira-tasks, grilling и агентов java-code-reviewer и critic (assets/agents); если какого-то нет — работает по кратким чеклистам из references/skill-map.md. Maven/Gradle, Docker для Testcontainers, git.
+description: "Development orchestrator for Java / Spring Boot — invoke it FIRST for any coding task, before think-before-coding, java-tdd and domain skills: implement, add an endpoint / field / table, change a business rule, limit or threshold, fix a bug, refactor, integrate with, «реализуй», «сделай фичу», «добавь эндпоинт», «доработай», «почини баг», «поправь», «бизнес просит», «поменяй порог / лимит», «отрефактори», /java-dev-flow. Sizes the task (S/M/L) and drives it through phases: design → plan → TDD → verification by the java-code-reviewer and critic agents → report, pulling in backend-design-java skills by signals. In an OpenSpec project it works inside /opsx. Not for diff review (java-code-review), test cleanup (test-audit), Jira, production incidents (debugging-discipline) or questions without code."
+compatibility: Claude Code. Relies on backend-design-java, java-tdd, java-diagnosing-bugs, java-code-review, java-extensibility-review, java-spec-review, test-audit, jira-tasks, grilling and the java-code-reviewer, critic and test-runner agents (assets/agents); without them it falls back to references/fallback-checklists.md. Maven/Gradle, Docker for Testcontainers, git.
 ---
 
-# Java Dev Flow — оркестратор разработки
+# Java Dev Flow — development orchestrator
 
-Этот скилл не учит писать changeset, тест или контроллер. Он решает три вещи: **что за задача, какие скиллы нужны и в каком порядке, когда фаза закончена.** Как выполнять каждый шаг, написано в профильных скиллах. Оркестратор их вызывает и не пересказывает.
+The orchestrator decides three things: **what the task is, whom to call and in what order, and when a phase is done.** How to do a step lives in the specialist skill: the orchestrator calls it and does not retell it. If a specialist skill says "call me first", the orchestrator still sets the order; the specialist skill sets the content of the step.
 
-**Правило разделения:** оркестратор решает, *когда* и *насколько глубоко*, профильный скилл — *как*. Если профильный скилл требует «вызови меня первым» или «до любого кода», порядок всё равно задаёт оркестратор, а содержание шага — профильный скилл.
+Talk to the user in their language. Announce phase transitions in one line.
 
-Общайся на языке пользователя. Переходы между фазами объявляй одной строкой, без пересказа.
+## Checklist before saying "done"
 
-## Имена скиллов
+1. The classification line (phase 0) came before the first line of code.
+2. M and L: a design summary exists. L: design and plan were approved by the user before code.
+3. Every behavior is covered by a test you saw fail for the right reason (`java-tdd`).
+4. The full test suite ran in this session after the last edit. Failed and not-run tests are named in the report; no Docker — the report says so.
+5. M and L: the `java-code-reviewer` and `critic` agents ran on the diff in one message, in parallel. Their findings were checked against the code: fixed test-first or listed in the report.
+6. The report follows `references/templates.md`: size, changed files, checks and their results, whether `critic` ran.
 
-Ниже везде базовые имена. В сессии у них может быть префикс плагина: `backend-design-java:think-before-coding`, `backend-design:think-before-coding`, `anthropic-skills:test-audit`. Вызывай тот вариант, который есть в списке доступных скиллов. Если установлены и форк `backend-design-java`, и оригинальный `backend-design`, бери форк. Если скилла нет вовсе, выполни шаг по краткому чеклисту из [references/skill-map.md](references/skill-map.md) и упомяни это в отчёте.
+An item is not met — go back to it instead of writing "done".
 
-В `references/skill-map.md` — полная карта: что покрыто каким скиллом, агентом, командой и хуком, где они пересекаются и как разрешены конфликты. Открывай её, когда не ясно, кого звать.
+## Skill names
 
-## Проект с OpenSpec
+Base names are used below. In a session they may carry a prefix: `backend-design-java:migration-safety`, `anthropic-skills:test-audit`. Call the variant from the available list; if both the `backend-design-java` fork and the original `backend-design` are present, take the fork. A skill is missing — do the step with the checklist in [references/fallback-checklists.md](references/fallback-checklists.md) and mention it in the report. Whom to call when unclear and how overlaps are resolved — [references/skill-map.md](references/skill-map.md).
 
-Если в репозитории есть каталог `openspec/` или пользователь запускает `/opsx:*`, открой [references/openspec.md](references/openspec.md) и работай в режиме OpenSpec. Коротко:
+## OpenSpec project
 
-- задачи S, баги, возвращающие уже описанное в specs поведение, и рефакторинг делаются без change;
-- M и L идут через change. Классификация — в Impact `proposal.md`, дизайн — в `design.md`, план — в `tasks.md`: срезы, один сценарий — один тест, финальная группа «Проверка». Файл в `docs/plans/` не создаётся;
-- после `/opsx:propose` нужна пауза на ревью артефактов человеком — для M и для L. Для разбора с вопросами предложи `java-spec-review <имя change>`;
-- `/opsx:apply` ведёт чекбоксы, а каждая задача внутри него проходит через `java-tdd`.
+There is an `openspec/` directory or an `/opsx:*` command — follow [references/openspec.md](references/openspec.md): M and L go through a change, after `/opsx:propose` there is a pause for human review (`java-spec-review <name>`), inside `/opsx:apply` every task goes through `java-tdd`, and the "Verification" group runs `java-code-reviewer` and `critic`.
 
-## Если задача — не разработка
+## If the task is not development
 
-Оркестратор не нужен, сразу вызови профильный скилл:
+No orchestrator — call the specialist skill directly: diff or PR review — `java-code-review` (not the built-in `/code-review`); "which pattern fits" — `java-extensibility-review`; test cleanup — `test-audit`; Jira — `jira-tasks`; design only — `think-before-coding`; interview about an idea — `grilling`; OpenSpec change before code — `java-spec-review`; bug cause without a fix — `java-diagnosing-bugs`; a query, N+1, component audit — commands `explain-this-query`, `hunt-n-plus-one`, `audit`; production is on fire — agent `incident-investigator`.
 
-| Запрос | Куда |
-|---|---|
-| Ревью diff, ветки, PR | `java-code-review` |
-| Ревью на расширяемость, «какой паттерн подходит», без реализации | `java-extensibility-review` |
-| Аудит или чистка тестов, флаки-тест | `test-audit` |
-| Создать задачи в Jira | `jira-tasks` |
-| Спроектировать, код не писать | `think-before-coding` (или команда `design`, агент `component-architect`) |
-| Разобрать идею, план или решение интервью, без кода | `grilling` (пользователь вызывает его как `/grill-me`) |
-| Разобрать OpenSpec change или его `spec.md` до кода, с вопросами | `java-spec-review` |
-| Найти причину бага, не исправляя | `java-diagnosing-bugs`, фазы 1–4 |
-| Разобрать запрос, найти N+1, аудит готового компонента | команды `explain-this-query`, `hunt-n-plus-one`, `audit` |
-| В проде горит прямо сейчас | агент `incident-investigator`: сначала смягчение, код потом |
+## Phase 0. Classification — always
 
-## Фаза 0. Классификация — всегда
-
-До того как писать что-либо, определи тип, размер и сигналы и **скажи одной строкой**:
-
-> Маршрут: фича · M · сигналы: новая таблица, `@KafkaListener` → data-modeling-discipline, migration-safety, idempotency-and-side-effects
-
-Для этого хватит беглого взгляда на затрагиваемые классы (Grep/Glob по именам из задачи). Весь проект читать не нужно.
-
-### Тип → маршрут
-
-| Тип | Маршрут |
-|---|---|
-| Новая фича, новый компонент (endpoint, consumer, job, клиент) | [A](#маршрут-a--фича-или-изменение-поведения) |
-| Изменение существующего поведения | A; если на затрагиваемый код нет тестов — сначала `java-tdd`, режим D |
-| Изменение схемы БД | A, сигналы схемы обязательны |
-| Баг, который воспроизводится локально, в тестах или по понятному описанию | [B](#маршрут-b--багфикс) |
-| Симптом в проде или на стенде: тормозит, 500, пул, OOM, лаг Kafka, Liquibase lock | `debugging-discipline` → когда причина найдена, B |
-| Рефакторинг без изменения поведения | [C](#маршрут-c--рефакторинг) |
-| «Тормозит», нужна производительность | [P](#маршрут-p--производительность) |
-| Предлагают новую технологию, зависимость, инфраструктуру | `boring-by-default` до дизайна; если спорно — агент `boring-tech-advisor` |
-
-### Размер → глубина
-
-| Размер | Признаки | Что делаешь |
-|---|---|---|
-| **S** | правка внутри существующего компонента, 1–3 production-файла, 1–3 поведения. **Не меняются** схема БД, публичный контракт API или событий, авторизация, границы транзакций, внешние вызовы и сообщения | фазы 1–3 пропускаешь (дизайн — это строка классификации), сразу фаза 4; проверка сокращённая |
-| **M** | новый компонент или любое из «не меняются» выше; один модуль или bounded context; до ~10 поведений | все фазы; дизайн — 10–20 строк в чате; план — список поведений в todo-листе сессии |
-| **L** | несколько модулей или сервисов; схема + API + интеграция вместе; backfill данных; размытые требования; больше ~10 поведений или больше дня работы | уточнение требований; дизайн и план в файле; **до кода ждёшь подтверждения пользователя**; предлагаешь разбить на независимые PR |
-
-Размер пересматривается по ходу. Если S-задача задела схему, авторизацию или внешний вызов, объяви «повышаю до M» и пройди пропущенные фазы. Больше 4–5 сигналов в одной задаче — почти всегда L.
-
-### Сигналы → профильные скиллы
-
-Сигнал — это признак в тексте задачи или в коде, который будешь трогать. Скилл подключается на той фазе и в том срезе, где сигнал проявился, а не все сразу в начале. `think-before-coding` в своих шагах ссылается на эти же скиллы — загружай только те, на которые есть сигнал.
-
-| Сигнал | Скилл | Фаза |
-|---|---|---|
-| новая или изменённая таблица, колонка, индекс; новый `@Entity` | `data-modeling-discipline` | 2 (шаг «данные») |
-| changeset, changelog, любое изменение схемы | `migration-safety` | 4, срез схемы |
-| `@Entity`, репозиторий, `@Transactional`, lazy-связи, блокировки | `jpa-and-transactions` | 4 |
-| `@Query`, derived query, список, пагинация, отчёт | `query-discipline` | 4 |
-| запись в БД + сообщение или HTTP-вызов, `@KafkaListener`, webhook, платёж, ретраи, `@Scheduled` | `idempotency-and-side-effects` | 2 (шаг «повторы») |
-| новый endpoint, обработка исключений, коды ошибок, валидация | `error-handling-as-design` | 2 (шаг «ошибки») |
-| роли, права, tenant, Spring Security, доступ к ресурсу по id | `auth-and-authorization` | 2 (шаг «авторизация») |
-| новый компонент любого вида | `observability-by-default` | 2 (шаг «наблюдаемость»), 4 |
-| нагрузка, пулы, кэш, async, виртуальные потоки | `performance-and-scaling` | 2 (шаг «контекст») |
-| контроллер, security config, `application*.yml`, секреты, десериализация | `security-discipline` | 4 |
-| пишешь или меняешь тесты | `testing-with-discernment` — уровень; `test-audit` — ценность | 4 |
-| задача добавляет ещё один вариант к существующему набору (способ оплаты, провайдер, канал, тип документа, статус), а код уже ветвится по этому набору | `java-extensibility-review` по затрагиваемым классам | 2 |
-| в diff появилось или выросло ветвление по типу, статусу или строке: 3+ варианта или тот же `switch` во втором месте | `java-extensibility-review` по изменённым классам | 5 |
-
-## Маршрут A — фича или изменение поведения
-
-### Фаза 1. Уточнение — L; для M только если не хватает ответа, от которого зависит дизайн
-
-Спрашивай только то, без чего дизайн получится другим: ожидаемая нагрузка, кто потребитель API или события, объём данных, нужна ли обратная совместимость, что делать при отказе внешней системы. Факты, которые есть в коде, конфигурации и истории git, ищи сам; у пользователя спрашивай только решения.
-
-- **L** — вызови `grilling`: вопросы раундами, в каждом раунде все вопросы, предпосылки которых уже решены, и рекомендуемый ответ к каждому. Фаза закончена, когда открытых вопросов не осталось и пользователь подтвердил, что понимание общее.
-- **M** — не больше трёх вопросов за раз, к каждому твой рекомендуемый ответ.
-
-Если на вопрос нет ответа, запиши своё предположение как допущение в дизайн.
-
-**Выход:** вопросы закрыты или допущения записаны.
-
-### Фаза 2. Дизайн → `think-before-coding`
-
-Шесть шагов скилла, глубина зависит от размера. Доменные скиллы подключай по сигналам.
-
-**Расширяемость.** Шесть шагов `think-before-coding` не отвечают на вопрос, как код переживёт следующий вариант. Если задача добавляет вариант к набору, по которому код уже ветвится, вызови `java-extensibility-review` по затрагиваемым классам до плана. Его вердикт идёт в дизайн-резюме:
-- «оставить как есть» — правило трёх не выполнено, вариант добавляется в существующую структуру;
-- «рекомендую» — в фазе 3 первым идёт срез подготовительного рефакторинга, а новый вариант добавляется уже в готовую структуру.
-
-**Выход:** дизайн-резюме по шаблону из [references/templates.md](references/templates.md). Для M — в чате, для L — в файле плана. **L: покажи дизайн пользователю и дождись подтверждения.** Если для L нужен широкий обзор кода, а основной контекст жалко тратить, отдай дизайн агенту `component-architect` и проверь его blueprint сам.
-
-### Фаза 3. План поведений
-
-Разбей работу на **срезы** в порядке сборки из `think-before-coding`: changeset → entity и репозиторий → сервис с границей транзакции → controller или listener → маппинг ошибок → метрики. Внутри среза перечисли наблюдаемые поведения: каждое станет одним циклом `java-tdd`. Для каждого поведения укажи уровень теста. Если в плане есть интеграционные тесты, один раз на задачу определи по сборке инфраструктуру (`testing-with-discernment`: есть Testcontainers — они, нет — Kafka на `@EmbeddedKafka`) и запиши её в план.
-
-**Границы тестов.** Для каждого среза назови границы, через которые тесты наблюдают поведение: endpoint, публичный метод сервиса, `@KafkaListener`, метод репозитория. Предпочитай существующие границы; новая граница — только если поведение иначе не наблюдаемо. Тесты пишутся только на этих границах, а уровень на границе — самый дешёвый, на котором поведение видно (`java-tdd`). Для L границы подтверждаются вместе с планом; для M они видны в todo-листе и отдельной остановки не требуют. Понадобилась в фазе 4 новая граница — это изменение плана: в L спроси пользователя, в M запиши в отчёт.
-
-Если на дизайне решено сначала рефакторить, первый срез — **подготовительный рефакторинг**. Поведение в нём не меняется: `java-tdd` в режиме C, а если тестов нет — в режиме D. Новый вариант появляется только в следующих срезах.
-
-**Порядок сборки — это порядок срезов, а не «тесты в конце».** У `think-before-coding` список заканчивается словом «tests», но здесь внутри каждого среза тест пишется первым. В конце остаётся только сквозной интеграционный тест сценария, если он нужен.
-
-**Выход:** для M — границы тестов и список поведений в todo-листе сессии. Для L — план в файле по шаблону из `references/templates.md`: `docs/plans/YYYY-MM-DD-<slug>.md`, если в проекте нет своего места для таких документов. В проекте с OpenSpec план и для M, и для L — это `specs/` и `tasks.md` change. Если сессия в plan mode, этот план и есть план для выхода из него.
-
-**L: переход к реализации.** Когда пользователь утвердил план, предложи два варианта: продолжить в этой сессии или начать фазу 4 в новой. Новая лучше для длинной реализации: обсуждение дизайна там уже не нужно и только занимает контекст. План L самодостаточен, дизайн-резюме лежит в нём, поэтому новой сессии хватает ссылки на файл. Пересказ плана в промпт не копируй. Промпт — одним блоком, чтобы его можно было скопировать целиком:
+Before any code, determine type, size and signals and **write one line in exactly this format:**
 
 ```
-Используй скилл java-dev-flow. Задача L, план утверждён — начни с фазы 4, срез 1.
-@docs/plans/YYYY-MM-DD-<slug>.md
+Route: <feature | change | bugfix | refactoring | schema | performance> · <S | M | L> · signals: <evidence> → <skills>
 ```
 
-В проекте с OpenSpec вместо ссылки на план — `/opsx:apply <имя change>`. Выбор за пользователем: сам новую сессию не начинай и не продолжай, пока он не ответил.
+A quick look at the affected classes is enough; do not read the whole project.
 
-### Фаза 4. Реализация → `java-tdd` на каждое поведение
-
-Для каждого среза:
-
-1. Подключи доменные скиллы, сигналы которых относятся к этому срезу.
-2. Каждое поведение проходит цикл `java-tdd`: RED с проверкой, что тест упал по правильной причине, → GREEN → REFACTOR.
-3. **Обработай предупреждения хуков** `backend-design-java`: после Write/Edit они приходят как дополнительный контекст (миграции, Spring/JPA, безопасность). Исправь в этом же цикле или запиши обоснование для отчёта. Молча не пропускай.
-4. Срез закончен, когда все его поведения прошли red → green и тесты модуля зелёные.
-
-Между срезами не спрашивай «продолжать?». Останавливайся только по поводам из раздела [«Когда остановиться и спросить»](#когда-остановиться-и-спросить).
-
-Независимые срезы L-задачи можно отдать субагентам по [references/subagent-handoff.md](references/subagent-handoff.md). Результат субагента проверяешь сам: смотришь diff и перезапускаешь тесты.
-
-L-задача не помещается в одну сессию — в конце сессии предложи пользователю набрать `/handoff` (этот скилл вызывается только вручную). Попроси указать в документе путь к плану, следующий срез и что уже проверено.
-
-**Выход:** все поведения из плана реализованы, и у каждого есть тест, который ты видел красным.
-
-### Фаза 5. Проверка
-
-| Размер | Что обязательно |
+| Type | Route |
 |---|---|
-| S | полный прогон тестов проекта; перечитать свой diff |
-| M | то же + агенты `java-code-reviewer` и `critic` по diff, параллельно, + проверки по сигналам ниже. Если `java-code-reviewer` нет — скилл `java-code-review` в основном контексте, и в отчёте пометка, что это самопроверка; если нет `critic` — пройди его вопросы сам по чеклисту из `references/skill-map.md` |
-| L | то же + агенты по сигналам ниже. Ревьюеры работают только на чтение, поэтому запускай их параллельно |
+| New feature, new component (endpoint, consumer, job, client) | A |
+| Change of existing behavior | A; no tests on the affected code — first `java-tdd`, mode D |
+| DB schema change | A, schema signals are mandatory |
+| Bug reproducible locally, in tests or from a clear description | B |
+| Symptom in production or staging: slow, 500s, pool, OOM, Kafka lag, Liquibase lock | `debugging-discipline` → once the cause is found, B |
+| Refactoring without behavior change | C |
+| "It's slow", performance needed | P |
+| New technology, dependency, infrastructure | `boring-by-default` before design; contested — agent `boring-tech-advisor` |
 
-**Независимое ревью.** `java-code-reviewer` — агент со свежим контекстом: он прогоняет скилл `java-code-review` по diff и ничего не правит. Автор кода пропускает то, что ему «и так понятно», а ревьюер этого контекста не знает и проверяет только то, что написано. Агенту передай:
-- область diff;
-- 2–5 строк о том, что делает изменение (или пути к артефактам OpenSpec change);
-- спеку — требования, по которым агент проверяет соответствие: для M список поведений из todo-листа, для L путь к плану, для OpenSpec `specs/` change, для задачи из трекера ключ или текст тикета. Спеки нет — так и скажи, агент пропустит эту ось;
-- фокус, если он есть;
-- флаг «проверить тесты», если в diff есть новые тесты.
+| Size | Evidence | Depth |
+|---|---|---|
+| **S** | an edit inside an existing component, 1–3 production files, 1–3 behaviors. **Unchanged:** DB schema, public API or event contract (parameters, pagination, response format, error codes), authorization, transaction boundaries, external calls | skip phases 1–3, go to phase 4; short verification |
+| **M** | a new component or any of the "unchanged" items above; one module; up to ~10 behaviors | all phases; design — 10–20 lines in chat; plan — behaviors in the todo list |
+| **L** | several modules or services; schema + API + integration together; backfill; vague requirements; more than ~10 behaviors or a day of work | clarification via `grilling`; design and plan in a file; **wait for approval before code**; propose splitting into PRs |
 
-Шаблон промпта — в [references/subagent-handoff.md](references/subagent-handoff.md). Его находки — гипотезы: каждую проверь по коду. При статусе `NOT_VERIFIED` выясни, что осталось непроверенным, и при необходимости доделай ревью сам.
+A public contract change is no longer S, even in one file. Size is revisited as you go: an S task touched the schema, a contract or an external call — announce "upgrading to M" and do the skipped phases. More than 4–5 signals is almost always L.
 
-**Критик.** `critic` — второй агент со свежим контекстом, для M и L всегда. Ревьюер ищет, что сломано в diff сейчас, а критик — что случится, когда изменение встретится с продом: старые данные, деплой и откат, потребители API и событий, повторы и гонки, частичные отказы, нагрузка, наблюдаемость. Каждую гипотезу он проверяет по коду и сам подгружает доменные скиллы по сигналам. Передай ему то же, что ревьюеру, плюс строку классификации и что известно о проде: нагрузку, объёмы таблиц, потребителей, способ деплоя. Шаблон промпта и разбор ответа — в `references/subagent-handoff.md`. Блокеры критика — тоже гипотезы: подтверждённый исправляй по маршруту B. Его «Вопросы пользователю» — решения пользователя: вынеси их в отчёт, а не отвечай за него.
+### Signals → skills
 
-Если ход заканчивается без критика, а изменение большое, о нём напомнит Stop-хук `critic-gate`: модель читает твоё итоговое сообщение и решает, было ли это M или L. Поэтому в отчёте называй размер и пиши, запускался ли critic, а если нет — почему. Установка — в `references/skill-map.md`.
+A skill is loaded in the phase and slice where its signal shows up.
 
-Проверки по сигналам, для M и L:
+| Signal | Skill | Phase |
+|---|---|---|
+| new or changed table, column, index; new `@Entity` | `data-modeling-discipline` | 2 |
+| changeset, changelog, any schema change | `migration-safety` | 4, schema slice |
+| `@Entity`, repository, `@Transactional`, lazy associations, locks | `jpa-and-transactions` | 4 |
+| `@Query`, derived query, list, pagination, report | `query-discipline` | 4 |
+| DB write + message or HTTP call, `@KafkaListener`, webhook, payment, retries, `@Scheduled` | `idempotency-and-side-effects` | 2 |
+| new endpoint, exception handling, error codes, validation | `error-handling-as-design` | 2 |
+| roles, permissions, tenant, Spring Security, access to a resource by id | `auth-and-authorization` | 2 |
+| a new component of any kind | `observability-by-default` | 2, 4 |
+| load, pools, cache, async, virtual threads | `performance-and-scaling` | 2 |
+| controller, security config, `application*.yml`, secrets, deserialization | `security-discipline` | 4 |
+| the task adds a variant to a set the code already branches on (payment method, provider, channel, status) | `java-extensibility-review` | 2 |
+| the diff added or grew branching on type, status or string: 3+ variants or the same `switch` in a second place | `java-extensibility-review` | 5 |
 
-| Что изменилось | Проверка |
+## Route A — feature or behavior change
+
+| Phase | When | Whom to call | Exit |
+|---|---|---|---|
+| 1. Clarification | L; M — only if the design depends on the answer | L: `grilling`; M: up to three questions, each with a recommended answer | questions closed or assumptions recorded |
+| 2. Design | M, L | `think-before-coding` + domain skills by signals; a variant for a set the code branches on → `java-extensibility-review` | design summary per `references/templates.md`; L — user approval |
+| 3. Plan | M, L | — | M: test boundaries and behaviors in the todo list; L: plan file and approval; OpenSpec: `tasks.md` |
+| 4. Implementation | always | `java-tdd` for every behavior | every behavior has a test you saw fail |
+| 5. Verification | always | by size, see below | full run; reviewer and critic findings resolved |
+| 6. Report | always | template `references/templates.md` | report to the user |
+
+Phases 1–3 in detail, including moving an L task to a new session — [references/design-and-plan.md](references/design-and-plan.md).
+
+### Phase 4. Implementation
+
+For every slice:
+
+1. Load the domain skills whose signals belong to this slice.
+2. Every behavior is one `java-tdd` cycle: RED, checking the test failed for the right reason → GREEN → REFACTOR.
+3. Test skills only where needed, not all at once: for S `java-tdd` is enough; `testing-with-discernment` — at the first integration test or when the level is unclear; `test-audit` — in phase 5, as the "check tests" flag for `java-code-reviewer`.
+4. **Handle hook warnings** from `backend-design-java` and `tdd-guard`: they arrive as additional context after Write/Edit. Fix them in the same cycle or record a justification for the report. Never skip them silently.
+5. A slice is done when all its behaviors went red → green and the module tests are green.
+
+Do not ask "continue?" between slices. L slices may go to subagents ([references/subagent-handoff.md](references/subagent-handoff.md)); you check their diff and tests yourself. An L task does not fit in one session — suggest `/handoff` to the user.
+
+### Phase 5. Verification
+
+| Size | Mandatory |
 |---|---|
-| новые или изменённые тесты | `test-audit`, authoring gate: нет мусорных паттернов. Можно поручить `java-code-reviewer` флагом «проверить тесты» |
-| changeset, `@Entity` | команда `review-migration`; для L или большой и горячей таблицы — агент `schema-reviewer` |
-| endpoint, security config, роли, tenant | агент `security-reviewer` |
-| consumer, job, внешняя интеграция, деньги | агент `incident-thinker`: в L всегда, в M — если есть внешние побочные эффекты |
-| новые запросы на горячем пути | команда `explain-this-query` по этим запросам |
-| появилось или выросло ветвление по типу, статусу или строке (3+ варианта или тот же `switch` во втором месте) | `java-extensibility-review` по изменённым классам. «Рекомендую» в коде этой задачи — исправить по маршруту C до сдачи; в старом коде — в follow-ups |
+| S | full project test run; reread your diff |
+| M | the same + the `java-code-reviewer` and `critic` agents on the diff, **in one message, in parallel** + checks by signals |
+| L | as M + agents by signals (`security-reviewer`, `schema-reviewer`, `incident-thinker`) |
 
-Если ревью нашло баг с уверенностью 80 и выше, исправляй по маршруту B: сначала тест, потом правка. Не через `--fix` без теста.
+- Give both agents the diff scope, 2–5 lines on what was done, the spec (behaviors, plan or OpenSpec change; none — "no spec"). Give the critic also the classification line and what is known about production. Prompts — `references/subagent-handoff.md`.
+- Agent findings are hypotheses: check them against the code. A bug at confidence 80+ and a confirmed critic blocker go through route B, test first. The critic's questions go to the report.
+- No agent: `java-code-review` in the main context ("self-review"); the critic's questions from `references/fallback-checklists.md`.
+- The full run in M and L goes to the `test-runner` agent if it exists: a summary comes back instead of logs.
+- Checks by signals and resolving findings — [references/verify.md](references/verify.md).
 
-`java-code-review` и `java-extensibility-review` смотрят на один diff с разными вопросами: «что сломано сейчас» и «что дорого менять потом». Как развести их находки:
-- предложение паттерна из раздела «Улучшения» `java-code-review` само по себе не исполняй — передай вопрос `java-extensibility-review` с его правилом трёх;
-- если в одном коде есть и баг, и «Рекомендую», сначала исправь баг (маршрут B, тест фиксирует правильное поведение), потом рефактори (маршрут C) под зелёными тестами. Обратный порядок закрепит баг в characterization-тестах.
+**Evidence rule.** "Done", "tests are green", "bug fixed" are written only after a command run in this session after the last edit, with its output read. "Should work" is not a status. If at least one test failed or some tests did not run, the report names them instead of "all green". To show a failure existed before your change, do not touch git state (`stash`, `checkout`, `reset`): name the failing tests and say whether they touch the changed code; if proof is needed, run the base in a separate `git worktree`. A subagent's report is not evidence until you have looked at the diff and rerun the tests.
 
-**Правило доказательств.** «Готово», «тесты зелёные», «баг исправлен» пишутся только после команды, запущенной в этой сессии после последней правки, и прочитанного вывода. «Должно работать» — это не статус. Отчёт субагента или агента-ревьюера — не доказательство, пока ты не посмотрел diff и не перезапустил тесты.
+The `critic-gate` and `evidence-guard` Stop hooks remind you about a skipped critic and about a failed run the report keeps quiet about.
 
-**Выход:** полный прогон выполнен; красные и незапущенные тесты названы; находки ревью и критика исправлены или вынесены в отчёт.
+### Phase 6. Report and handover
 
-### Фаза 6. Отчёт и сдача
+Report per the template in `references/templates.md`. Commit, push, PR — only with the user's permission; propose one commit per slice (test and implementation together). Follow-ups — as a list in the report; Jira tickets via `jira-tasks` — only on request.
 
-Отчёт по шаблону из `references/templates.md`: что сделано по поведениям, какие тесты на каком уровне, какие проверки запускались и с каким результатом, что не запускалось и почему, решения и допущения, follow-ups.
+## Routes B, C, P
 
-- Коммит, push, PR — только с разрешения пользователя. Предлагай коммит на срез: тест и реализация вместе.
-- Follow-ups — списком в отчёте. Создать по ним задачи в Jira через `jira-tasks` — только по просьбе пользователя.
+Details — [references/routes.md](references/routes.md).
 
-## Маршрут B — багфикс
+- **B, bugfix:** `java-diagnosing-bugs` → `java-tdd`, mode B (the test fails with a message about this bug, then the fix) → phase 5. Production — `debugging-discipline` first.
+- **C, refactoring:** extensibility — `java-extensibility-review` first; `java-tdd`, mode C (no coverage — D); steps with a green run after each; phase 5.
+- **P, performance:** `performance-and-scaling`: measure → fix → same measurement → phase 5.
 
-Для бага, который воспроизводится локально, в тестах или по понятному описанию:
+## When to stop and ask
 
-1. **Диагностика → `java-diagnosing-bugs`.** Команда, которая краснеет именно на этом баге, минимальное воспроизведение, гипотезы, замеры. Глубина — по размеру: если причина видна из stacktrace и подтверждается одной строкой (обычно S), гипотезы и замеры сводятся к одной фразе. Цикл обратной связи и регрессионный тест нужны всегда.
-2. **Исправление → `java-tdd`, режим B.** Минимальное воспроизведение становится тестом на правильной границе, тест падает с сообщением об этом баге, правка устраняет причину, а не симптом. Правильной границы нет — это находка для отчёта и follow-ups, а не повод писать тест для галочки.
-3. **Проверка** — фаза 5 по размеру. Регрессионный тест остаётся в наборе, подтвердившаяся гипотеза идёт в отчёт.
+Only in these cases:
 
-Две-три опровергнутые гипотезы или третья неудачная правка — повод остановиться и спросить (см. ниже).
+- the requirements allow different designs and the answer does not follow from the code;
+- L: approval of design and plan before code;
+- a characterization test pins behavior that looks like a bug;
+- the third failed bug fix or 2–3 refuted hypotheses;
+- no Docker, integration tests do not run (H2 or `@EmbeddedKafka` instead of containers is not allowed);
+- a test needs a DB and the project does not start one in tests — ask about Testcontainers;
+- an irreversible or external action: commit, push, PR, Jira, deleting data, shared configuration.
 
-Симптом в проде или на стенде: сначала `debugging-discipline`. Если клиенты страдают прямо сейчас — агент `incident-investigator`, и смягчение идёт раньше поиска причины. Когда баг воспроизведён локально, продолжай с шага 1; если причина уже найдена и подтверждена — с шага 2.
+Decide everything else yourself and record the decision with its reason in the report.
 
-## Маршрут C — рефакторинг
+## Priorities in a conflict
 
-1. Если цель — расширяемость («убрать switch», «вынести в стратегию»), сначала вызови `java-extensibility-review` по классу: он скажет, окупится ли паттерн и как он будет выглядеть.
-2. `java-tdd`, режим C: тесты зелёные до и после. Если покрытия нет — режим D.
-3. Маленькие шаги, после каждого — зелёный прогон. Поведение не меняется; если хочется его поменять, это отдельная задача по маршруту A.
-4. Проверка — фаза 5 по размеру. Для M `java-code-review` обязателен.
+1. Explicit user instructions and the project's `CLAUDE.md` / `AGENTS.md`.
+2. This orchestrator: phase order, depth, whom to call.
+3. The specialist skill: how to do the step.
 
-## Маршрут P — производительность
+Resolved skill overlaps — `references/skill-map.md`, section 2.
 
-1. `performance-and-scaling`: при какой нагрузке и что узкое место. Сначала измерение, потом правка.
-2. Если узкое место — БД, подключи `query-discipline` и команды `explain-this-query` / `hunt-n-plus-one`.
-3. Где возможно, зафиксируй проблему тестом. Например, assertion на число SQL-запросов (подход из `testing-with-discernment`) падает до правки и потом защищает от регрессии.
-4. Правка → повторное измерение тем же способом → фаза 5.
+## Red flags
 
-## Когда остановиться и спросить
+Stop and go back to the right phase if you notice that:
 
-Только в этих случаях:
-
-- требования допускают разные дизайны, и ответ не выводится из кода и контекста (фаза 1);
-- L-задача: подтверждение дизайна и плана до кода;
-- поведение, зафиксированное characterization-тестом, похоже на баг (`java-tdd`, режим D);
-- третья неудачная попытка исправить баг;
-- нет Docker и интеграционные тесты не запускаются. Не подменяй Postgres на H2, а Kafka-контейнер — на `@EmbeddedKafka`;
-- в проекте нет Testcontainers, а тесту нужна БД, и проект не поднимает её в тестах никаким способом. Спроси, добавлять ли Testcontainers;
-- необратимое или внешнее действие: коммит, push, PR, запись в Jira, удаление данных, правка общей конфигурации.
-
-Остальное решай сам и записывай решение с причиной в отчёт.
-
-## Приоритеты при конфликте
-
-1. Явные указания пользователя и `CLAUDE.md` / `AGENTS.md` проекта.
-2. Этот оркестратор: порядок фаз, глубина, кого вызывать.
-3. Профильный скилл: как выполнить шаг.
-
-Известные пересечения уже разрешены:
-
-- уровень теста выбирает `testing-with-discernment`, ценность теста оценивает `test-audit`, порядок и доказательство падения — `java-tdd`;
-- причину локального бага ищет `java-diagnosing-bugs`, регрессионный тест пишет `java-tdd` в режиме B, прод и стенд — `debugging-discipline`;
-- вопросы пользователю в фазе 1: в L — `grilling` раундами, в M — до трёх за раз;
-- баги и безопасность в diff — `java-code-review` (для M и L — через агента `java-code-reviewer`), расширяемость — `java-extensibility-review`, глубокая проверка безопасности — агент `security-reviewer`, схема — команда `review-migration` или агент `schema-reviewer`;
-- «что сломано сейчас» — `java-code-reviewer`, «что случится в проде» — `critic`, детекция и восстановление для consumer, job и интеграций — `incident-thinker`;
-- дизайн делается в основном контексте через `think-before-coding`, агент `component-architect` — только для L.
-
-Остальные пересечения и их разбор — в `references/skill-map.md`.
-
-## Красные флаги
-
-Остановись и вернись к нужной фазе, если заметил за собой:
-
-- пишешь production-код, а строки классификации ещё не было;
-- задача M или L, а дизайн-резюме нет;
-- задача L, а код пишется до подтверждения плана;
-- загрузил все доменные скиллы «на всякий случай» вместо подключения по сигналам;
-- поведение реализовано без теста, который ты видел красным;
-- правишь код ради бага, а команды, которая краснеет именно на нём, ещё нет;
-- в M или L тест написан на границе, которой нет в плане;
-- предупреждение хука пропущено, и в отчёте о нём ни слова;
-- пишешь «готово» без полного прогона тестов в этой сессии;
-- исправляешь находку ревью без теста;
-- в M-задаче спрашиваешь у пользователя «продолжать?» между срезами;
-- в M- или L-задаче ревьюишь свой diff сам, хотя агент `java-code-reviewer` доступен;
-- в M- или L-задаче пишешь отчёт, не запустив `critic`, хотя он доступен.
+- any item of the checklist at the top is violated;
+- you loaded all domain or all test skills "just in case";
+- you are changing code for a bug while there is no command that fails on exactly this bug;
+- in M or L a test is written at a boundary that is not in the plan;
+- a hook warning was skipped and the report says nothing about it;
+- you are fixing a review finding without a test;
+- in M you ask "continue?" between slices;
+- in M or L you review your own diff although the `java-code-reviewer` agent is available.

@@ -1,135 +1,135 @@
-# Режим OpenSpec
+# OpenSpec mode
 
-**Открывай, когда:** в репозитории есть OpenSpec — каталог `openspec/` в корне или `openspec list --json` возвращает `root` не `null` — или пользователь запустил команду `/opsx:*`.
+**Open when:** the repository has OpenSpec — an `openspec/` directory at the root or `openspec list --json` returns a non-`null` `root` — or the user ran an `/opsx:*` command.
 
-Проверено на OpenSpec 1.14 (OPSX-workflow, схема `spec-driven`). В старом workflow (`/openspec:proposal`, `/openspec:apply`) логика та же, отличаются только имена команд.
+Checked on OpenSpec 1.14 (OPSX workflow, `spec-driven` schema). In the old workflow (`/openspec:proposal`, `/openspec:apply`) the logic is the same, only the command names differ.
 
-## Кто за что отвечает
+## Who owns what
 
-OpenSpec и оркестратор не конкурируют: OpenSpec хранит договорённости, оркестратор задаёт инженерную дисциплину.
+OpenSpec and the orchestrator do not compete: OpenSpec stores the agreements, the orchestrator sets the engineering discipline.
 
-| Что | Владелец |
+| What | Owner |
 |---|---|
-| Выбор change, файлы артефактов, статусы, чекбоксы в `tasks.md`, sync и archive | OpenSpec (его скиллы `openspec-*` и CLI `openspec`) |
-| ЧТО должна делать система: требования и сценарии | OpenSpec, `specs/**/spec.md` |
-| Классификация: тип, размер, сигналы | оркестратор → записывается в `proposal.md`, раздел Impact |
-| КАК делать: дизайн | файл — `design.md`; содержание — `think-before-coding` + доменные скиллы по сигналам |
-| План | файл — `tasks.md`; структура — срезы, поведения, уровни тестов, группа «Проверка» |
-| Реализация каждой задачи | цикл `/opsx:apply` (выбор задачи, чекбокс) + `java-tdd` (сам цикл red → green → refactor) |
-| Проверка | группа «Проверка» в `tasks.md` (тесты, ревью, агенты) + `/opsx:verify`, если включён расширенный профиль |
-| Итоговый отчёт | шаблон оркестратора, перед `/opsx:archive` |
+| Choosing a change, artifact files, statuses, checkboxes in `tasks.md`, sync and archive | OpenSpec (its `openspec-*` skills and the `openspec` CLI) |
+| WHAT the system must do: requirements and scenarios | OpenSpec, `specs/**/spec.md` |
+| Classification: type, size, signals | orchestrator → written into `proposal.md`, Impact section |
+| HOW to do it: design | file — `design.md`; content — `think-before-coding` + domain skills by signals |
+| Plan | file — `tasks.md`; structure — slices, behaviors, test levels, the "Verification" group |
+| Implementing each task | the `/opsx:apply` loop (picking a task, the checkbox) + `java-tdd` (the red → green → refactor cycle itself) |
+| Verification | the "Verification" group in `tasks.md` (tests, review, agents) + `/opsx:verify` if the extended profile is on |
+| Final report | the orchestrator's template, before `/opsx:archive` |
 
-Если инструкция OpenSpec и правило оркестратора расходятся по поводу файлов, путей, статусов или чекбоксов, прав OpenSpec. Если по поводу того, как писать код, тесты и проверять результат, прав оркестратор.
+If an OpenSpec instruction and an orchestrator rule disagree about files, paths, statuses or checkboxes, OpenSpec is right. If they disagree about how to write code and tests and verify the result, the orchestrator is right.
 
-## Нужен ли change
+## Is a change needed
 
-| Ситуация | Что делать |
+| Situation | What to do |
 |---|---|
-| S: правка без изменения схемы, контракта, авторизации, транзакций, внешних эффектов | change не нужен — обычный маршрут оркестратора |
-| Баг, который возвращает поведение, уже описанное в `openspec/specs/` | change не нужен — маршрут B. Спек уже говорит, как должно быть |
-| Баг, при котором выяснилось, что спек неверен или поведение в нём не описано | change: требование в `## MODIFIED` или `## ADDED`, потом маршрут B внутри `/opsx:apply` |
-| Рефакторинг без изменения поведения | change не нужен. Если команда хочет след в истории — change с `skip_specs: true` в `.openspec.yaml` |
-| M | `/opsx:propose <имя>` |
-| L | сначала `/opsx:explore` (это фаза 1, уточнение), потом `/opsx:propose <имя>` |
-| Инцидент в проде | change не нужен — `debugging-discipline`. Если по итогам нужно изменить поведение — отдельный change |
+| S: an edit without changes to schema, contract, authorization, transactions, external effects | no change — the orchestrator's usual route |
+| A bug that restores behavior already described in `openspec/specs/` | no change — route B. The spec already says how it should be |
+| A bug that revealed the spec is wrong or does not describe the behavior | a change: the requirement under `## MODIFIED` or `## ADDED`, then route B inside `/opsx:apply` |
+| Refactoring without behavior change | no change. If the team wants a trace in history — a change with `skip_specs: true` in `.openspec.yaml` |
+| M | `/opsx:propose <name>` |
+| L | first `/opsx:explore` (that is phase 1, clarification), then `/opsx:propose <name>` |
+| A production incident | no change — `debugging-discipline`. If behavior must change afterwards — a separate change |
 
-Если пользователь сам запустил `/opsx:propose` для задачи размера S, его выбор важнее. Делай короткий change: `design.md` не нужен, если сигналов нет.
+If the user ran `/opsx:propose` for an S task, their choice wins. Make a short change: `design.md` is not needed if there are no signals.
 
-Пользователь просит M или L-задачу без `/opsx`? Скажи строкой классификации, что это change, и вызови скилл `openspec-propose` (или предложи команду, если в проекте принято запускать её вручную).
+The user asks for an M or L task without `/opsx`? Say in the classification line that it is a change and call the `openspec-propose` skill (or suggest the command, if the project runs it by hand).
 
-## Фазы оркестратора в OpenSpec
+## Orchestrator phases in OpenSpec
 
-| Фаза | Где в OpenSpec | Где результат |
+| Phase | Where in OpenSpec | Where the result goes |
 |---|---|---|
-| 0. Классификация | начало `/opsx:propose` | `proposal.md` → Impact, первая строка: «Маршрут: …» |
-| 1. Уточнение | `/opsx:explore` (L) или шаг уточнения в `/opsx:propose` | Why и What Changes в `proposal.md`; ответы, меняющие дизайн, — в Decisions `design.md` |
-| 2. Дизайн | артефакт `design` | `design.md`. Если change добавляет вариант к набору, по которому код уже ветвится, до `tasks` вызывается `java-extensibility-review`, и его вердикт записывается в Decisions |
-| 3. План | артефакты `specs` и `tasks` | сценарии в `specs/**/spec.md`, срезы в `tasks.md` |
-| 4. Реализация | `/opsx:apply` | код и тесты; отмеченные чекбоксы |
-| 5. Проверка | группа «Проверка» в `tasks.md`; затем `/opsx:verify`, если он есть | отмеченные чекбоксы группы; отчёт verify |
-| 6. Отчёт | конец `/opsx:apply` или перед `/opsx:archive` | сообщение в чате по шаблону `references/templates.md`; follow-ups |
+| 0. Classification | start of `/opsx:propose` | `proposal.md` → Impact, first line: "Route: …" |
+| 1. Clarification | `/opsx:explore` (L) or the clarification step in `/opsx:propose` | Why and What Changes in `proposal.md`; answers that change the design — in Decisions of `design.md` |
+| 2. Design | the `design` artifact | `design.md`. If the change adds a variant to a set the code already branches on, `java-extensibility-review` is called before `tasks` and its verdict goes into Decisions |
+| 3. Plan | the `specs` and `tasks` artifacts | scenarios in `specs/**/spec.md`, slices in `tasks.md` |
+| 4. Implementation | `/opsx:apply` | code and tests; ticked checkboxes |
+| 5. Verification | the "Verification" group in `tasks.md`; then `/opsx:verify` if available | ticked group checkboxes; the verify report |
+| 6. Report | end of `/opsx:apply` or before `/opsx:archive` | a chat message per the `references/templates.md` template; follow-ups |
 
-Файл плана в `docs/plans/` в этом режиме не создаётся: план — это сам change, `openspec/changes/<имя>/`.
+No plan file in `docs/plans/` in this mode: the plan is the change itself, `openspec/changes/<name>/`.
 
-### Подтверждение после propose
+### Approval after propose
 
-Без OpenSpec подтверждения до кода требует только L. В проекте с OpenSpec пауза после `/opsx:propose` нужна **для M и L**: OpenSpec для того и введён, чтобы человек посмотрел договорённость до кода. Исключение — пользователь прямо сказал не ждать («сделай целиком», «сразу реализуй»).
+Without OpenSpec only L requires approval before code. In an OpenSpec project the pause after `/opsx:propose` is needed **for M and L**: OpenSpec exists precisely so that a human looks at the agreement before code. The exception — the user said explicitly not to wait ("do it all", "implement right away").
 
-Для этой паузы есть скилл `java-spec-review`. Он принимает `spec.md`, каталог или имя change и собирает proposal, design, tasks, дельты и главные спеки. Скрипт проверяет форму и трассировку «сценарий ↔ задача». Доменные скиллы задают вопросы к артефактам, факты проверяются по коду, решения пользователь принимает раундами, и только после этого правятся артефакты. Предложи его одной строкой после `/opsx:propose`: «Разобрать change вопросами перед apply? — `/java-spec-review <имя>`». Change писал ты в этой же сессии — скилл сам предложит отдать разбор субагенту со свежим контекстом.
+The `java-spec-review` skill is made for this pause. It accepts a `spec.md`, a directory or a change name and collects the proposal, design, tasks, deltas and main specs. A script checks form and "scenario ↔ task" traceability. Domain skills ask questions about the artifacts, facts are checked against the code, the user decides in rounds, and only then are the artifacts edited. Suggest it in one line after `/opsx:propose`: "Review the change with questions before apply? — `/java-spec-review <name>`". The fact gathering runs in a fresh-context subagent by default.
 
-## Сценарий = поведение = тест
+## Scenario = behavior = test
 
-Каждый `#### Scenario` с WHEN/THEN — это одно наблюдаемое поведение, то есть один цикл `java-tdd`:
+Every `#### Scenario` with WHEN/THEN is one observable behavior, i.e. one `java-tdd` cycle:
 
-- задача в `tasks.md` ссылается на сценарий;
-- имя теста или `@DisplayName` узнаваемо повторяет имя сценария;
-- значения из THEN — это литералы в assertion'е: статус, код ошибки, поле, состояние строки в БД.
+- a task in `tasks.md` refers to the scenario;
+- the test name or `@DisplayName` recognizably repeats the scenario name;
+- the values from THEN are literals in the assertion: status, error code, field, row state in the DB.
 
-Сценарий, который нельзя превратить в тест, — сигнал, что он описан нечётко. Предложи уточнить его через `/opsx:update`.
+A scenario that cannot be turned into a test is a sign it is vague. Suggest clarifying it via `/opsx:update`.
 
-## Формат `tasks.md`
+## The `tasks.md` format
 
-OpenSpec разбирает только строки вида `- [ ] X.Y ...` и требует, чтобы каждая задача говорила, как проверить её выполнение. Группы — это срезы в порядке сборки. Тесты не собираются в отдельную группу в конце.
+OpenSpec parses only lines like `- [ ] X.Y ...` and requires every task to say how to verify it. Groups are slices in build order. Tests are not collected into a separate group at the end.
 
 ```markdown
 # Tasks
 
-## 1. Схема и репозиторий
+## 1. Schema and repository
 
-- [ ] 1.1 Changeset: колонка `orders.archived_at` (nullable) и маппинг в `Order` — проверка: `OrderRepositoryTest` поднимается на Testcontainers, Liquibase применяет changeset
-- [ ] 1.2 Сценарий «Фильтр archived=false скрывает архивные заказы» — `@DataJpaTest` + Testcontainers, тест сначала красный — проверка: `OrderRepositoryTest#excludesArchivedOrders`
+- [ ] 1.1 Changeset: column `orders.archived_at` (nullable) and mapping in `Order` — verify: `OrderRepositoryTest` starts on Testcontainers, Liquibase applies the changeset
+- [ ] 1.2 Scenario "Filter archived=false hides archived orders" — `@DataJpaTest` + Testcontainers, the test is red first — verify: `OrderRepositoryTest#excludesArchivedOrders`
 
 ## 2. API
 
-- [ ] 2.1 Сценарий «Параметр archived=true возвращает только архивные» — `@WebMvcTest` — проверка: `OrderControllerTest#returnsOnlyArchived`
-- [ ] 2.2 Сценарий «Некорректное значение archived → 400 с кодом INVALID_FILTER» — `@WebMvcTest` — проверка: `OrderControllerTest#rejectsInvalidArchivedValue`
+- [ ] 2.1 Scenario "Parameter archived=true returns only archived orders" — `@WebMvcTest` — verify: `OrderControllerTest#returnsOnlyArchived`
+- [ ] 2.2 Scenario "Invalid archived value → 400 with code INVALID_FILTER" — `@WebMvcTest` — verify: `OrderControllerTest#rejectsInvalidArchivedValue`
 
-## 3. Проверка
+## 3. Verification
 
-- [ ] 3.1 Полный прогон `./mvnw verify` — 0 упавших; что не запускалось, названо
-- [ ] 3.2 Агент `java-code-reviewer` по diff с путём к change — находки с уверенностью ≥ 80 исправлены через тест или вынесены в отчёт
-- [ ] 3.3 `review-migration` по новым changeset'ам — блокирующих находок нет
+- [ ] 3.1 Full run `./mvnw verify` — 0 failed; whatever did not run is named
+- [ ] 3.2 Agents `java-code-reviewer` and `critic` on the diff with the change path, in one message — review findings ≥ 80 and confirmed critic blockers fixed test-first or listed in the report; critic questions — to the user
+- [ ] 3.3 `review-migration` on the new changesets — no blocking findings
 ```
 
-Состав группы «Проверка» зависит от размера и сигналов (фаза 5 в `SKILL.md`). Агенту `java-code-reviewer` вместо пересказа передай путь к `openspec/changes/<имя>/`: proposal, design и specs — готовое описание намерения, и расхождение кода со сценариями он тоже найдёт. Сюда же добавляются агенты для L (`security-reviewer`, `schema-reviewer`, `incident-thinker`) и `java-extensibility-review`, если в diff выросло ветвление по типу или статусу.
+The contents of the "Verification" group depend on size and signals (phase 5 in `SKILL.md`). For M and L it always has two agents: `java-code-reviewer` and `critic`, in one message. Instead of a retelling give both the path to `openspec/changes/<name>/`: proposal, design and specs are a ready description of the intent; give the critic also the size and what is known about production. The L agents (`security-reviewer`, `schema-reviewer`, `incident-thinker`) and `java-extensibility-review` go here too if branching on type or status grew in the diff.
 
-Если в `design.md` решено сначала рефакторить, первая группа — «Подготовительный рефакторинг». Поведение в ней не меняется: тесты зелёные до и после (`java-tdd`, режим C; если тестов нет — characterization-тесты, режим D). Сценариев в specs для этой группы обычно нет, и это нормально: раз поведение не меняется, спек тоже не меняется. Новый вариант добавляется в следующих группах.
+If `design.md` decided to refactor first, the first group is "Preparatory refactoring". Behavior does not change in it: tests green before and after (`java-tdd`, mode C; no tests — characterization tests, mode D). There are usually no scenarios in specs for this group, and that is fine: if behavior does not change, the spec does not change either. The new variant is added in the following groups.
 
-## Во время `/opsx:apply`
+## During `/opsx:apply`
 
-Скилл `openspec-apply-change` ведёт цикл по задачам: показывает задачу, после выполнения ставит `[x]` и перечитывает прогресс. Внутри каждой задачи работает оркестратор:
+The `openspec-apply-change` skill runs the task loop: shows a task, ticks `[x]` after it is done and rereads progress. Inside every task the orchestrator works:
 
-1. Найди сценарии, на которые ссылается задача, и сигналы, которые она затрагивает. Подключи доменные скиллы по этим сигналам.
-2. Реализуй задачу через `java-tdd`: тест → запуск и правильное падение → минимальный код → рефакторинг.
-3. Обработай предупреждения хуков `backend-design-java`.
-4. Ставь `[x]` только после того, как видел тест задачи красным, а потом зелёным вместе с тестами модуля. OpenSpec и сам требует отмечать задачу только тогда, когда описанное поведение реализовано полностью.
-5. Реализация разошлась с `design.md` или со спеком? Остановись и предложи `/opsx:update`. Молча не отклоняйся. Это правило есть и у OpenSpec, и у оркестратора.
-6. Ревью нашло баг в рамках change — исправь по маршруту B в текущей группе. Если это работа за пределами change — назови её и спроси. OpenSpec запрещает молча расширять объём.
+1. Find the scenarios the task refers to and the signals it touches. Load domain skills by those signals.
+2. Implement the task via `java-tdd`: test → run and the right failure → minimal code → refactoring.
+3. Handle the `backend-design-java` hook warnings.
+4. Tick `[x]` only after you saw the task's test red and then green together with the module tests. OpenSpec itself requires ticking a task only when the described behavior is fully implemented.
+5. The implementation diverged from `design.md` or the spec? Stop and suggest `/opsx:update`. Do not deviate silently. Both OpenSpec and the orchestrator have this rule.
+6. A review found a bug within the change — fix it via route B in the current group. If it is work outside the change — name it and ask. OpenSpec forbids silently widening the scope.
 
-Пауз между задачами без причины нет. Останавливаться можно по поводам OpenSpec (блокер, неясная задача, расхождение с дизайном) и по поводам из раздела «Когда остановиться и спросить» в `SKILL.md`.
+No pauses between tasks without a reason. You may stop for OpenSpec's reasons (a blocker, an unclear task, a divergence from the design) and for the reasons in "When to stop and ask" in `SKILL.md`.
 
-Срезы L-задачи можно отдать субагентам (`references/subagent-handoff.md`). Вместо дизайн-резюме передай пути к `proposal.md`, `design.md`, `specs/` и номер группы в `tasks.md`. **Чекбоксы ставит только координатор**, после своей проверки: параллельные правки одного `tasks.md` ломают трекинг.
+Slices of an L task can go to subagents (`references/subagent-handoff.md`). Instead of the design summary give the paths to `proposal.md`, `design.md`, `specs/` and the group number in `tasks.md`. **Only the coordinator ticks checkboxes**, after its own check: parallel edits of one `tasks.md` break tracking.
 
-## Перед `/opsx:archive`
+## Before `/opsx:archive`
 
-- Все задачи отмечены, включая группу «Проверка».
-- Полный прогон тестов выполнен в этой сессии после последней правки.
-- Если доступен `/opsx:verify` (расширенный профиль), его отчёт без CRITICAL. Verify проверяет соответствие артефактам: задачи, сценарии, дизайн. Тесты и ревью он не заменяет, а проверка оркестратора не заменяет его.
-- Отчёт по шаблону `references/templates.md` отдан пользователю.
+- All tasks are ticked, including the "Verification" group.
+- The full test run happened in this session after the last edit.
+- If `/opsx:verify` is available (extended profile), its report has no CRITICAL. Verify checks conformance with the artifacts: tasks, scenarios, design. It does not replace tests and review, and the orchestrator's verification does not replace it.
+- The report per the `references/templates.md` template was given to the user.
 
-Архив переносит дельты спеков в `openspec/specs/`. После этого описанное поведение становится эталоном, к которому будущие багфиксы возвращают систему без нового change.
+Archiving moves the spec deltas into `openspec/specs/`. After that the described behavior becomes the reference that future bugfixes restore without a new change.
 
-## Подключение в проекте
+## Setting it up in a project
 
-Готовые файлы лежат в `assets/openspec/` этого скилла:
+Ready files are in this skill's `assets/openspec/`:
 
-| Файл | Куда | Что даёт |
+| File | Where | What it gives |
 |---|---|---|
-| `config.yaml` | `openspec/config.yaml` проекта; если файл уже есть — перенести разделы вручную | `context` для всех артефактов; `rules` для proposal, specs, design, tasks; `operations.apply/archive.guidance`, которые велят `/opsx:apply` работать через оркестратор и `java-tdd` |
-| `CLAUDE.md.fragment.md` | дописать в `CLAUDE.md` проекта | маршрутизация: когда change, когда без него, какая команда на каком шаге |
-| `../agents/java-code-reviewer.md` | `~/.claude/agents/` или `.claude/agents/` проекта | агент для независимого ревью в группе «Проверка» |
-| `schemas/java-flow/` | `openspec/schemas/java-flow/` проекта и `schema: java-flow` в `config.yaml` | необязательно. Шаблоны `design.md` и `tasks.md` под оркестратор и обязательная инструкция для `apply` вместо рекомендательной `guidance` |
+| `config.yaml` | the project's `openspec/config.yaml`; if the file exists — move the sections by hand | `context` for all artifacts; `rules` for proposal, specs, design, tasks; `operations.apply/archive.guidance` that make `/opsx:apply` work through the orchestrator and `java-tdd` |
+| `CLAUDE.md.fragment.md` | append to the project's `CLAUDE.md` | routing: when a change, when not, which command at which step |
+| `../agents/java-code-reviewer.md`, `../agents/critic.md`, `../agents/test-runner.md` | `~/.claude/agents/` or the project's `.claude/agents/` | the "Verification" group agents: independent review, pre-mortem, test run with a summary |
+| `schemas/java-flow/` | the project's `openspec/schemas/java-flow/` and `schema: java-flow` in `config.yaml` | optional. `design.md` and `tasks.md` templates for the orchestrator and a mandatory `apply` instruction instead of the advisory `guidance` |
 
-Копировать файлы в проект — только по просьбе пользователя: это изменение его репозитория.
+Copy files into the project only at the user's request: it changes their repository.
 
-`operations.*.guidance` в OpenSpec — рекомендация: скилл apply следует ей, если она совместима со встроенным workflow. Если в проекте заметно, что guidance игнорируется, переходи на схему `java-flow`. В ней те же правила — часть инструкции самой схемы.
+`operations.*.guidance` in OpenSpec is a recommendation: the apply skill follows it if it is compatible with the built-in workflow. If you notice the project ignores the guidance, switch to the `java-flow` schema. It has the same rules as part of the schema's own instruction.

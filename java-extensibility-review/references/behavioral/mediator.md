@@ -1,37 +1,37 @@
-# Mediator (Посредник)
+# Mediator
 
-Группа: поведенческий
+Group: behavioral
 
-## Суть
-Компоненты не вызывают друг друга напрямую. Они общаются через посредника, который знает участников и координирует процесс. Сеть связей «каждый с каждым» превращается в звезду. В бэкенде посредник — это сервис-оркестратор (process manager, saga orchestrator) или, в более слабой форме, шина событий.
+## Essence
+Components do not call each other directly. They communicate through a mediator that knows the participants and coordinates the process. A network of "everyone with everyone" links turns into a star. In a backend the mediator is an orchestrator service (a process manager, a saga orchestrator) or, in a weaker form, an event bus.
 
-## Структура (участники)
-- **Mediator** — интерфейс или класс-посредник, через который общаются компоненты.
-- **ConcreteMediator** — знает всех участников и координирует их: порядок шагов, компенсации (`CheckoutProcess`).
-- **Components** — участники (`InventoryService`, `PaymentService`). Знают только свою работу и, при необходимости, посредника, но не друг друга.
+## Structure (participants)
+- **Mediator** — the mediator interface or class through which components communicate.
+- **ConcreteMediator** — knows all participants and coordinates them: step order, compensations (`CheckoutProcess`).
+- **Components** — the participants (`InventoryService`, `PaymentService`). They know only their own work and, if needed, the mediator, but not each other.
 
 ```
    CompA ──┐                 ┌──▶ CompA
    CompB ──┼──▶ Mediator ────┼──▶ CompB
    CompC ──┘                 └──▶ CompC
- (вместо связей «каждый с каждым» — звезда)
+ (a star instead of "everyone with everyone" links)
 ```
 
-## Признаки в Java/Spring коде
-- Сервисы вызывают друг друга по кругу: `OrderService → PaymentService → OrderService`. Циклы разрывают через `@Lazy`, setter-инъекцию или `spring.main.allow-circular-references=true`.
-- Каждый сервис знает о многих других: в конструкторе 6–10 сервисов-«соседей».
-- Многошаговый процесс (заказ → резерв → оплата → доставка) размазан по сервисам, и нет единого места, где виден весь поток и его компенсации.
-- Изменение порядка шагов требует правок в нескольких классах.
+## Signs in Java/Spring code
+- Services call each other in a circle: `OrderService → PaymentService → OrderService`. The cycles are broken with `@Lazy`, setter injection or `spring.main.allow-circular-references=true`.
+- Every service knows about many others: 6–10 "neighbor" services in the constructor.
+- A multi-step process (order → reservation → payment → shipping) is smeared across services, and there is no single place where the whole flow and its compensations are visible.
+- Changing the step order requires edits in several classes.
 
-## Когда не применять
-- 2–3 участника с простыми связями.
-- Участникам не нужна координация, достаточно уведомить подписчиков → `observer.md`.
+## When not to apply
+- 2–3 participants with simple links.
+- The participants need no coordination, notifying subscribers is enough → `observer.md`.
 
-## После — оркестратор процесса
+## After — a process orchestrator
 ```java
 @Service
 @RequiredArgsConstructor
-class CheckoutProcess {                       // посредник: единственный, кто знает порядок шагов
+class CheckoutProcess {                       // the mediator: the only one who knows the step order
     private final InventoryService inventory;
     private final PaymentService payments;
     private final ShippingService shipping;
@@ -43,41 +43,41 @@ class CheckoutProcess {                       // посредник: единс�
         try {
             payments.charge(order);
         } catch (PaymentDeclinedException e) {
-            inventory.release(reservation);   // компенсация видна рядом с шагом
+            inventory.release(reservation);   // the compensation is visible next to the step
             throw e;
         }
         shipping.schedule(order);
     }
 }
 ```
-`InventoryService`, `PaymentService` и `ShippingService` больше не знают друг о друге. Новый шаг или изменение порядка — правка в одном месте.
+`InventoryService`, `PaymentService` and `ShippingService` no longer know about each other. A new step or a changed order is an edit in one place.
 
-Для асинхронных процессов посредник хранит состояние процесса в БД (process manager) и реагирует на события шагов. Это уже сага-оркестратор.
+For asynchronous processes the mediator stores the process state in the DB (a process manager) and reacts to step events. That is already a saga orchestrator.
 
-## Посредник против событий
-- Оркестратор (Mediator): поток явный и читается в одном классе, но оркестратор знает всех участников.
-- События (Observer): участники полностью развязаны, но поток неявный и собирается по слушателям.
-Для процессов с компенсациями и важным порядком обычно лучше оркестратор. Для независимых реакций — события.
+## Mediator vs events
+- An orchestrator (Mediator): the flow is explicit and readable in one class, but the orchestrator knows all participants.
+- Events (Observer): participants are fully decoupled, but the flow is implicit and has to be pieced together from the listeners.
+For processes with compensations and an important order an orchestrator is usually better. For independent reactions — events.
 
-## Шаги рефакторинга
-1. Нарисовать текущий граф вызовов между сервисами (по конструкторам).
-2. Выделить процесс в класс-оркестратор, оставить участникам только их локальные операции.
-3. Убрать обратные зависимости и `@Lazy`.
+## Refactoring steps
+1. Draw the current call graph between services (from the constructors).
+2. Extract the process into an orchestrator class, leave the participants only their local operations.
+3. Remove the reverse dependencies and `@Lazy`.
 
-## Подводные камни
-- Оркестратор, который растёт до God-класса: делай один посредник на процесс, а не один на всю систему.
-- Транзакционные границы: шаги с внешними вызовами не должны держать одну длинную транзакцию БД.
+## Pitfalls
+- An orchestrator growing into a God class: make one mediator per process, not one for the whole system.
+- Transaction boundaries: steps with external calls must not hold one long DB transaction.
 
-## Плюсы и минусы
-**Плюсы**
-- Связи «многие ко многим» превращаются в «один ко многим».
-- Компоненты проще переиспользовать и тестировать: они не знают друг о друге.
-- Весь процесс виден в одном классе; порядок шагов меняется в одном месте.
+## Pros and cons
+**Pros**
+- Many-to-many links become one-to-many.
+- Components are easier to reuse and test: they do not know about each other.
+- The whole process is visible in one class; the step order changes in one place.
 
-**Минусы**
-- Посредник рискует превратиться в God-объект.
-- Сложность не исчезает, а концентрируется в одном месте.
-- Если через посредника идёт всё подряд, получается лишняя косвенность для простых связей.
+**Cons**
+- The mediator risks becoming a God object.
+- The complexity does not disappear; it concentrates in one place.
+- If everything goes through the mediator, simple links get needless indirection.
 
-## Связанные паттерны
-Observer (развязка через события) · Facade (упрощает доступ к подсистемам, но не координирует их между собой) · Command (шаги процесса как команды).
+## Related patterns
+Observer (decoupling through events) · Facade (simplifies access to subsystems but does not coordinate them with each other) · Command (process steps as commands).
