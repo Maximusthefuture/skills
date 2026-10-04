@@ -61,8 +61,9 @@ async function setup() {
   const tasks = new TaskStore(fs);
   const task = await tasks.create({ title: "t", description: "d", agents: ["backend", "reviewer"], createdBy: "operator", git: null });
   const messages = new MessageStore(fs);
-  const deps: HookDeps = { selfPid: 211, processTable: () => table, isProcessAlive: alive };
-  return { networkDir, tasks, task, messages, deps };
+  const clock = { t: Date.now() };
+  const deps: HookDeps = { selfPid: 211, processTable: () => table, isProcessAlive: alive, now: () => new Date(clock.t) };
+  return { networkDir, tasks, task, messages, deps, clock };
 }
 
 describe("runHook post-tool", () => {
@@ -106,6 +107,40 @@ describe("runHook post-tool", () => {
   });
 });
 
+describe("runHook open file requests", () => {
+  type Out = { hookSpecificOutput: { additionalContext: string } } | null;
+
+  it("repeats a read but unanswered FILE_REQUEST once a minute until the owner answers", async () => {
+    const { networkDir, task, messages, deps, clock } = await setup();
+    const req = await messages.create({ taskId: task.id, from: "reviewer", to: "backend", type: "FILE_REQUEST", content: "need pom.xml", files: ["pom.xml"] });
+    expect(await runHook("post-tool", { tool_name: "Edit" }, { networkDir }, deps)).not.toBeNull(); // new message
+    await messages.markRead(req); // the agent read it in swarm_context but did not answer
+
+    clock.t += 30_000;
+    expect(await runHook("post-tool", { tool_name: "Edit" }, { networkDir }, deps)).toBeNull(); // not every tool call
+
+    clock.t += 31_000;
+    const reminder = (await runHook("post-tool", { tool_name: "Edit" }, { networkDir }, deps)) as Out;
+    expect(reminder!.hookSpecificOutput.additionalContext).toContain("Still unanswered file requests");
+    expect(reminder!.hookSpecificOutput.additionalContext).toMatch(/- reviewer asked 6[12]s ago to change: pom.xml/);
+    expect(reminder!.hookSpecificOutput.additionalContext).toContain("grantFiles");
+    expect(await runHook("post-tool", { tool_name: "Edit" }, { networkDir }, deps)).toBeNull();
+
+    await messages.create({ taskId: task.id, from: "backend", to: "reviewer", type: "FILE_GRANT", content: "ok", files: ["pom.xml"] });
+    clock.t += 120_000;
+    expect(await runHook("post-tool", { tool_name: "Edit" }, { networkDir }, deps)).toBeNull(); // answered: closed
+  });
+
+  it("does not remind about other agents' requests or requests the agent made itself", async () => {
+    const { networkDir, task, messages, deps, clock } = await setup();
+    const mine = await messages.create({ taskId: task.id, from: "backend", to: "reviewer", type: "FILE_REQUEST", content: "need DTO", files: ["Dto.java"] });
+    await messages.markRead(mine);
+    clock.t += 300_000;
+    expect(await runHook("post-tool", { tool_name: "Edit" }, { networkDir }, deps)).toBeNull();
+    expect(await runHook("post-tool", { tool_name: "Edit" }, { networkDir, agent: "reviewer" }, deps)).not.toBeNull(); // the owner is reminded
+  });
+});
+
 describe("runHook stop", () => {
   it("blocks the stop once while the task is active", async () => {
     const { networkDir, task, messages, deps } = await setup();
@@ -114,6 +149,9 @@ describe("runHook stop", () => {
     expect(out.decision).toBe("block");
     expect(out.reason).toContain(`${task.id} (phase DISCUSS)`);
     expect(out.reason).toContain("1 unread message(s): reviewer");
+    await messages.create({ taskId: task.id, from: "reviewer", to: "backend", type: "FILE_REQUEST", content: "pom", files: ["pom.xml"] });
+    const withRequest = (await runHook("stop", {}, { networkDir }, deps)) as { reason: string };
+    expect(withRequest.reason).toContain("reviewer wait(s) for your answer to a file request");
     expect(await runHook("stop", { stop_hook_active: true }, { networkDir }, deps)).toBeNull();
   });
 
