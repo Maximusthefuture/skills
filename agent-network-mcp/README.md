@@ -512,7 +512,13 @@ node dist/index.js ui --runners runners.json [--port 4777]
 - в карточке задачи — **подзадачи** каждого агента (`2/3`, ✓ ▶ · ✕) и **цепочка follow-up**: «follow-up от task-001»,
   «follow-up задачи: …», бюджет.
 
-`runners.json` (относительные пути — от папки конфига; любое поле агента можно вынести в `defaults`):
+Готовые примеры для проекта в git (три агента, у каждого свой worktree, пути условные `/abs/path/...`):
+[runners.qwen.example.json](examples/runner/runners.qwen.example.json) и
+[runners.claude.example.json](examples/runner/runners.claude.example.json). Скопируйте нужный в `runners.json` (он в
+`.gitignore`: там ваши пути), замените `/abs/path` и создайте worktree — команда записана в `_comment` примера.
+
+`runners.json` (относительные пути — от папки конфига; любое поле агента можно вынести в `defaults`; поля `_comment`
+игнорируются):
 
 ```json
 {
@@ -665,7 +671,7 @@ npm run test:integration
 npm run typecheck
 ```
 
-265 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
+267 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
 
 - **unit**: `FileStore` (атомарная запись, конкурентные создания, path traversal, lock), сторы, `PhaseManager` (все пары
   переходов, сбор раунда, ревью исправленного, лимит раундов), точное пересечение масок (с fuzz-проверкой), `EventHub`,

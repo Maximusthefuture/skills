@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "Example for `agent-network-mcp ui --runners runners.json`: three Qwen Code agents on a project in git, one worktree each.",
+    "Copy it (e.g. to agent-network-mcp/runners.json, which is gitignored) and replace every /abs/path with your paths.",
+    "Worktrees: cd /abs/path/project && git worktree add ../project-backend -b swarm-backend && git worktree add ../project-reviewer -b swarm-reviewer && git worktree add ../project-tester -b swarm-tester",
+    "networkDir is shared by all agents; relative paths here (promptFile) are resolved against this file's folder.",
+    "qwen does not expand ${AGENT_ID} in --mcp-config but passes its environment to MCP servers: the runner sets AGENT_ID and NETWORK_DIR.",
+    "Prompt first, right after qwen: --allowed-tools takes several values and would swallow it.",
+    "autostart: false = start that agent with the button on the page."
+  ],
+  "networkDir": "/abs/path/project/.agent-network",
+  "defaults": {
+    "command": [
+      "qwen", "{prompt}",
+      "-m", "qwen/qwen3.5-9b",
+      "--auth-type", "openai", "--openai-base-url", "http://127.0.0.1:1234/v1", "--openai-api-key", "lm-studio",
+      "--mcp-config", "/abs/path/agent-network-mcp/examples/runner/qwen-mcp.json",
+      "--approval-mode", "auto-edit",
+      "--allowed-tools", "mcp__agent-network", "run_shell_command(git)", "run_shell_command(./mvnw)",
+      "--max-session-turns", "300", "--max-wall-time", "1h"
+    ],
+    "promptFile": "qwen-prompt.md",
+    "maxRestarts": 2
+  },
+  "agents": [
+    { "id": "backend", "cwd": "/abs/path/project-backend" },
+    { "id": "reviewer", "cwd": "/abs/path/project-reviewer" },
+    { "id": "tester", "cwd": "/abs/path/project-tester", "autostart": false }
+  ]
+}
