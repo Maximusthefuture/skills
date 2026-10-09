@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agent-network": {
+      "command": "node",
+      "args": ["/abs/path/agent-network-mcp/dist/index.js"],
+      "env": {
+        "AGENT_TYPE": "qwen"
+      }
+    }
+  }
+}

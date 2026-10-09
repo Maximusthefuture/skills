@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "agent-network": {
+      "command": "node",
+      "args": ["/abs/path/agent-network-mcp/dist/index.js"],
+      "env": {
+        "AGENT_ID": "${AGENT_ID}",
+        "AGENT_TYPE": "claude",
+        "NETWORK_DIR": "${NETWORK_DIR}"
+      }
+    }
+  }
+}

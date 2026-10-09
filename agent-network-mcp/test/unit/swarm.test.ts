@@ -239,7 +239,7 @@ describe("tool misuse (state is never corrupted, errors are actionable)", () => 
     const { s, task } = await setup();
     await task();
     await toImplement(s);
-    expect(await failure(s.backend, s.backend.propose({ summary: "x", assignments }))).toMatchObject({ error: "INVALID_PHASE", currentPhase: "IMPLEMENT", nextAction: "implement", allowedActions: ["send_message", "complete", "wait"] });
+    expect(await failure(s.backend, s.backend.propose({ summary: "x", assignments }))).toMatchObject({ error: "INVALID_PHASE", currentPhase: "IMPLEMENT", nextAction: "implement", allowedActions: ["send_message", "subtasks", "complete", "wait"] });
     await s.backend.complete({ result: "a" });
     await s.reviewer.complete({ result: "b" });
     expect(await failure(s.backend, s.backend.propose({ summary: "x", assignments }))).toMatchObject({ error: "INVALID_PHASE", currentPhase: "SYNC", nextAction: "sync" });

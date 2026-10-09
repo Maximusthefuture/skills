@@ -7,6 +7,12 @@ import type { Swarm } from "./swarm.js";
 // Fields every call needs are declared required, so the model sees them in the JSON schema (weak models
 // emit "{}" when everything is optional). Phase-dependent arguments of complete() stay optional and are
 // validated by the Swarm with an actionable error (message + nextAction).
+const followUp = z.object({
+  title: z.string().describe("Short title, e.g. 'Validate currency on PUT /orders'"),
+  description: z.string().describe("Concrete: what is wrong or missing, where (files), expected behaviour, who does what"),
+  agents: z.array(z.string()).optional().describe("Agent ids, the first one leads; omit to keep this task's agents"),
+});
+
 const finding = z.object({
   severity: z.string().describe("INFO, WARNING or ERROR"),
   description: z.string().describe("What is wrong, concretely"),
@@ -14,7 +20,7 @@ const finding = z.object({
   files: z.array(z.string()).optional().describe("Project-relative paths, e.g. ['src/main/java/A.java']"),
 });
 
-/** The tools an agent sees: swarm_context, create_task, send_message, propose, complete, wait. */
+/** The tools an agent sees: swarm_context, create_task, send_message, propose, subtasks, complete, wait. */
 export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   const onError = async (e: unknown) => errorResult(await swarm.errorBody(e));
   const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, handler: (args: z.infer<z.ZodObject<S>>, signal: AbortSignal) => Promise<unknown>) =>
@@ -58,7 +64,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
           z.object({
             agentId: z.string().describe("Agent id, e.g. 'backend'"),
             responsibility: z.string().describe("What this agent implements"),
-            files: z.array(z.string()).describe("Files or globs this agent will change, e.g. ['src/main/java/A.java', 'src/test/**']. Must not overlap with other agents"),
+            files: z.array(z.string()).describe("Files or globs this agent will change, e.g. ['src/main/java/A.java', 'src/test/**']. Must not overlap with other agents. [] for an agent that changes nothing and only reviews the others' work (never invent a file for it)"),
           }),
         )
         .describe("One entry for EVERY agent of the task, including yourself"),
@@ -68,14 +74,26 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
     async (a) => swarm.propose(a),
   );
   tool(
+    "subtasks",
+    "Your own checklist for your part of the task (mainly IMPLEMENT): split a big assignment into steps, start one, mark them done as you finish, drop the ones that turn out unnecessary (with a reason). The list is kept by the server, so a restarted session and the other agents see your progress. complete() in IMPLEMENT is refused while subtasks are open. Ids are s1, s2, ...",
+    {
+      add: z.array(z.string()).optional().describe("New steps, one concrete action each, e.g. ['Add currency column + changeset', 'Validate currency in OrderService']"),
+      start: z.string().optional().describe("Id of the step you work on now, e.g. 's2' (only one step is in progress)"),
+      done: z.array(z.string()).optional().describe("Ids of finished steps, e.g. ['s1']"),
+      drop: z.array(z.object({ id: z.string(), reason: z.string() })).optional().describe("Steps that are not needed, each with the reason"),
+    },
+    async (a) => swarm.subtasks(a),
+  );
+  tool(
     "complete",
-    "Finish your step; meaning depends on the phase. DISCUSS: no arguments, approves the current agreement. IMPLEMENT: {result, filesChanged?, commits} marks your part ready (in a git project commit first and pass the hashes). SYNC: {status: PASS|NEEDS_FIX, findings?} submits your review (NEEDS_FIX needs an ERROR finding naming the agent to fix in relatedAgent; WARNING/INFO go with PASS). INTEGRATE (lead): {status, result, commits, findings?} after merging everything and running the build and tests.",
+    "Finish your step; meaning depends on the phase. DISCUSS: no arguments, approves the current agreement. IMPLEMENT: {result, filesChanged?, commits?} marks your part ready (commits are optional). SYNC: {status: PASS|NEEDS_FIX, findings?} submits your review (NEEDS_FIX needs an ERROR finding naming the agent to fix in relatedAgent; WARNING/INFO go with PASS). INTEGRATE (lead): {status, result, commits?, findings?, followUps?} after bringing everything together and running the build and tests; with PASS, followUps (when the task allows them) creates new tasks for work that is left.",
     {
       result: z.string().optional().describe("IMPLEMENT: short summary of what you implemented. INTEGRATE: what was merged, where, build/test outcome"),
       filesChanged: z.array(z.string()).optional().describe("IMPLEMENT only: project-relative paths you changed"),
-      commits: z.array(z.string()).optional().describe("IMPLEMENT: hashes of your commits. INTEGRATE: HEAD of the merged result"),
+      commits: z.array(z.string()).optional().describe("Optional. IMPLEMENT: hashes of your commits, if you committed. INTEGRATE: HEAD of the merged result, if you merged with git"),
       status: z.string().optional().describe("SYNC / INTEGRATE: PASS or NEEDS_FIX"),
       findings: z.array(finding).optional().describe("SYNC / INTEGRATE, required for NEEDS_FIX (at least one ERROR)"),
+      followUps: z.array(followUp).optional().describe("INTEGRATE with PASS, lead only, when swarm_context shows followUps.remaining > 0: new tasks for work that is left; the agents start them after this task is DONE"),
     },
     async (a) => swarm.complete(a),
   );

@@ -1,7 +1,7 @@
 import { AppError, isAppError } from "../errors.js";
 import { normalizePath, ownersOf } from "../ownership.js";
-import { MAX_WAIT_MS, DEFAULT_WAIT_MS, type NetworkService } from "../service.js";
-import type { Agent, Agreement, Implementation, IntegrationReport, Message, SyncFinding, SyncReport, Task } from "../types.js";
+import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, type NetworkService } from "../service.js";
+import type { Agent, Agreement, FollowUpRequest, Implementation, IntegrationReport, Message, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
 
 /** What the agent should do next, computed by the server so the agent never reasons about the state machine. */
 export type NextAction = "respond" | "propose" | "approve" | "implement" | "fix" | "sync" | "integrate" | "wait" | "done";
@@ -27,13 +27,24 @@ interface Snapshot {
   openToMe: Message[];
   /** FILE_REQUESTs this agent sent that the owner has not answered yet. */
   openFromMe: Message[];
+  /** Every task agent's own checklist. */
+  subtasks: SubtaskList[];
+  /** INTEGRATE only: what the follow-up budget of the task chain still allows. */
+  followUpBudget?: { max: number; used: number; remaining: number };
+}
+
+/** "2/5 done, s3 in progress" */
+function progress(list: SubtaskList | undefined): string | null {
+  const items = (list?.items ?? []).filter((i) => i.status !== "DROPPED");
+  if (!items.length) return null;
+  const doing = items.find((i) => i.status === "DOING");
+  return `${items.filter((i) => i.status === "DONE").length}/${items.length} done${doing ? `, ${doing.id} in progress` : ""}`;
 }
 
 export type SwarmContext = Record<string, unknown> & { nextAction: NextAction; allowedActions: string[] };
 
 type RawFinding = Omit<SyncFinding, "severity"> & { severity: string };
 
-const MIN_DESCRIPTION = 40;
 
 const seq = (m: Message): number => Number(m.id.slice(4));
 
@@ -54,7 +65,7 @@ function invalid(message: string, details?: Record<string, unknown>): AppError {
 }
 
 /**
- * The agent-facing layer: five operations (context, send_message, propose, complete, wait) on top of
+ * The agent-facing layer: seven operations (context, create_task, send_message, propose, subtasks, complete, wait) on top of
  * NetworkService. The "current task" is the oldest ACTIVE task of this agent, so no tool takes a taskId.
  */
 export interface SwarmOptions {
@@ -115,6 +126,29 @@ export class Swarm {
     return { ...(await this.contextNow()), ok: true, action: "TASK_CREATED", taskId: task.id } as SwarmContext;
   }
 
+  /** The agent's own checklist for its part. Compact answer: it is called after every step. */
+  async subtasks(input: { add?: string[]; start?: string; done?: string[]; drop?: { id: string; reason: string }[] }): Promise<SwarmContext> {
+    await this.begin(false); // a checklist update does not count as reading the messages shown earlier
+    const task = await this.requireTask();
+    const list = await this.service.updateSubtasks({ taskId: task.id, ...input });
+    const snap = await this.snapshot(task);
+    const d = this.decide(snap);
+    const open = list.items.filter((i) => i.status === "TODO" || i.status === "DOING");
+    return {
+      ok: true,
+      action: "SUBTASKS_UPDATED",
+      subtasks: list.items.map((i) => ({ id: i.id, title: i.title, status: i.status, ...(i.note ? { note: i.note } : {}) })),
+      progress: progress(list) ?? "no subtasks",
+      ...(snap.unread.length ? { unreadMessages: snap.unread.length } : {}),
+      nextAction: d.nextAction,
+      allowedActions: d.allowedActions,
+      hint:
+        (open.length ? `Open: ${open.map((i) => `${i.id}${i.status === "DOING" ? " (doing)" : ""}`).join(", ")}. ` : "All subtasks are closed. ") +
+        (snap.unread.length ? `You have ${snap.unread.length} unread message(s): call swarm_context. ` : "") +
+        d.hint,
+    };
+  }
+
   async sendMessage(input: { to?: string; message?: string; requestFiles?: string[]; grantFiles?: string[] }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
@@ -159,9 +193,12 @@ export class Swarm {
     if (!input.assignments?.length) {
       throw invalid(`'assignments' is required: one entry {agentId, responsibility} for every agent: ${task.agents.join(", ")}`, { taskAgents: task.agents });
     }
-    const noFiles = input.assignments.filter((a) => !a.files?.length).map((a) => a.agentId);
+    const noFiles = input.assignments.filter((a) => !Array.isArray(a.files)).map((a) => a.agentId);
     if (noFiles.length) {
-      throw invalid(`Every assignment needs 'files': the files (paths or globs like src/main/**) that agent will change. Missing for: ${noFiles.join(", ")}. Agree on this with the other agents first (send_message); every file must have exactly one owner.`, { taskAgents: task.agents });
+      throw invalid(`Every assignment needs 'files': the files (paths or globs like src/main/**) that agent will change. Missing for: ${noFiles.join(", ")}. Agree on this with the other agents first (send_message); every file must have exactly one owner. Use 'files: []' for an agent that changes nothing and only reviews the others' work; never invent a file for it.`, { taskAgents: task.agents });
+    }
+    if (input.assignments.every((a) => a.files!.length === 0)) {
+      throw invalid("At least one agent must own files: someone has to make the change. 'files: []' is only for agents that review the others' work.", { taskAgents: task.agents });
     }
     const res = await this.service.proposeAgreement({
       taskId: task.id,
@@ -173,22 +210,23 @@ export class Swarm {
     return { ...(await this.contextNow()), ok: true, action: "AGREEMENT_PROPOSED", agreementVersion: res.agreement.version } as SwarmContext;
   }
 
-  async complete(input: { result?: string; filesChanged?: string[]; commits?: string[]; status?: string; findings?: RawFinding[] }): Promise<SwarmContext> {
+  async complete(input: { result?: string; filesChanged?: string[]; commits?: string[]; status?: string; findings?: RawFinding[]; followUps?: FollowUpRequest[] }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
     const given = (keys: (keyof typeof input)[]) => keys.filter((k) => input[k] !== undefined);
     let action: string;
     let warnings: string[] | undefined;
+    let followUpsCreated: { id: string; title: string; agents: string[] }[] | undefined;
 
     switch (task.phase) {
       case "DISCUSS": {
-        const extra = given(["result", "filesChanged", "commits", "status", "findings"]);
+        const extra = given(["result", "filesChanged", "commits", "status", "findings", "followUps"]);
         if (extra.length) throw invalid(`During DISCUSS complete() takes no arguments (it approves the agreement); got: ${extra.join(", ")}`);
         action = await this.approve(task);
         break;
       }
       case "IMPLEMENT": {
-        const extra = given(["status", "findings"]);
+        const extra = given(["status", "findings", "followUps"]);
         if (extra.length) throw invalid(`During IMPLEMENT complete() takes {result, filesChanged?, commits?}; got unexpected: ${extra.join(", ")}`);
         if (!input.result?.trim()) throw invalid("complete() during IMPLEMENT requires 'result': a short summary of what you implemented");
         const existing = await this.service.implementations.find(task.id, this.me);
@@ -199,7 +237,7 @@ export class Swarm {
         break;
       }
       case "SYNC": {
-        const extra = given(["result", "filesChanged", "commits"]);
+        const extra = given(["result", "filesChanged", "commits", "followUps"]);
         if (extra.length) throw invalid(`During SYNC complete() takes {status, findings?}; got unexpected: ${extra.join(", ")}`);
         if (input.status !== "PASS" && input.status !== "NEEDS_FIX") {
           throw invalid("complete() during SYNC requires 'status': \"PASS\" or \"NEEDS_FIX\" (with 'findings')");
@@ -210,13 +248,14 @@ export class Swarm {
       }
       case "INTEGRATE": {
         const extra = given(["filesChanged"]);
-        if (extra.length) throw invalid(`During INTEGRATE complete() takes {status, result, commits?, findings?}; got unexpected: ${extra.join(", ")}`);
+        if (extra.length) throw invalid(`During INTEGRATE complete() takes {status, result, commits?, findings?, followUps?}; got unexpected: ${extra.join(", ")}`);
         if (input.status !== "PASS" && input.status !== "NEEDS_FIX") {
           throw invalid("complete() during INTEGRATE requires 'status': \"PASS\" (merged, build and tests green) or \"NEEDS_FIX\" (with 'findings')");
         }
         if (!input.result?.trim()) throw invalid("complete() during INTEGRATE requires 'result': what you merged, where the result is, and the build/test outcome");
-        await this.service.submitIntegration({ taskId: task.id, status: input.status, result: input.result, commits: input.commits, findings: this.findings(input.findings) });
+        const res = await this.service.submitIntegration({ taskId: task.id, status: input.status, result: input.result, commits: input.commits, findings: this.findings(input.findings), followUps: input.followUps });
         action = input.status === "PASS" ? "INTEGRATION_PASS" : "INTEGRATION_NEEDS_FIX";
+        if (res.followUps.length) followUpsCreated = res.followUps.map((t) => ({ id: t.id, title: t.title, agents: t.agents }));
         break;
       }
       case "DONE":
@@ -224,7 +263,7 @@ export class Swarm {
     }
     const after = await this.contextNow();
     const phaseChanged = (after.task as { phase: string } | null)?.phase !== task.phase ? { from: task.phase, to: (after.task as { phase: string }).phase } : undefined;
-    return { ...after, ok: true, action, ...(phaseChanged ? { phaseChanged } : {}), ...(warnings?.length ? { warnings } : {}) } as SwarmContext;
+    return { ...after, ok: true, action, ...(phaseChanged ? { phaseChanged } : {}), ...(warnings?.length ? { warnings } : {}), ...(followUpsCreated ? { followUpsCreated } : {}) } as SwarmContext;
   }
 
   private findings(raw: RawFinding[] | undefined): SyncFinding[] {
@@ -350,11 +389,13 @@ export class Swarm {
       this.service.messages.list(task.id),
     ]);
     const open = openFileRequests(messages);
+    const subtasks = await Promise.all(task.agents.map((a) => this.service.subtasks.get(task.id, a)));
     return {
-      task, agreement, impls, reports, integrations, agents,
+      task, agreement, impls, reports, integrations, agents, subtasks,
       unread: messages.filter((m) => m.to === this.me && !m.readAt),
       openToMe: open.filter((m) => m.to === this.me),
       openFromMe: open.filter((m) => m.from === this.me),
+      ...(task.phase === "INTEGRATE" ? { followUpBudget: await this.service.followUpBudget(task) } : {}),
     };
   }
 
@@ -378,7 +419,9 @@ export class Swarm {
     }
     const snap = await this.snapshot(task);
     const d = this.decide(snap);
-    const { agreement, impls, reports, integrations, agents, unread, openToMe, openFromMe } = snap;
+    const { agreement, impls, reports, integrations, agents, unread, openToMe, openFromMe, subtasks } = snap;
+    const listOf = (id: string) => subtasks.find((l) => l.agentId === id);
+    const mySubtasks = listOf(this.me)?.items ?? [];
     const phases = this.service.phases;
 
     // remember what the agent has actually seen
@@ -400,8 +443,9 @@ export class Swarm {
         id: task.id, title: task.title, description: task.description, phase: task.phase, status: task.status, syncRound: task.syncRound, agents: task.agents,
         maxFixRounds: phases.maxFixRounds(task), lead: phases.integrator(task),
         ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
-        ...(task.requireCommits ? { requireCommits: true } : {}),
         ...(task.blockedReason ? { blockedReason: task.blockedReason } : {}),
+        ...(task.parentTaskId ? { parentTaskId: task.parentTaskId } : {}),
+        ...(task.baseCommit ? { baseCommit: task.baseCommit } : {}),
       },
       agent,
       assignment: agreement?.assignments.find((a) => a.agentId === this.me) ? { responsibility: agreement.assignments.find((a) => a.agentId === this.me)!.responsibility } : null,
@@ -409,7 +453,8 @@ export class Swarm {
         .filter((id) => id !== this.me)
         .map((id) => {
           const a = agents.find((x) => x.id === id);
-          return { id, role: a?.role ?? null, status: a?.status ?? "NOT_REGISTERED" };
+          const p = progress(listOf(id));
+          return { id, role: a?.role ?? null, status: a?.status ?? "NOT_REGISTERED", ...(p ? { subtasks: p } : {}) };
         }),
       pendingMessages: unread.map((m) => ({ id: m.id, from: m.from, type: m.type, ...(m.files ? { files: m.files } : {}), content: m.content, createdAt: m.createdAt })),
       agreement: agreement
@@ -418,11 +463,23 @@ export class Swarm {
       ...(openToMe.length ? { openFileRequests: openToMe.map((m) => ({ messageId: m.id, from: m.from, files: m.files ?? [], reason: m.content })) } : {}),
       ...(openFromMe.length ? { yourOpenRequests: openFromMe.map((m) => ({ messageId: m.id, to: m.to, files: m.files ?? [], note: `waiting for ${m.to} to grant or refuse; continue with your own work meanwhile` })) } : {}),
       ...(await this.ownershipView(task.id)),
+      subtasks: mySubtasks.map((i) => ({ id: i.id, title: i.title, status: i.status, ...(i.note ? { note: i.note } : {}) })),
       implementation: mine ? { status: mine.status, summary: mine.summary, filesChanged: mine.filesChanged, commits: mine.commits } : null,
-      teamImplementations: impls.filter((i) => i.agentId !== this.me).map((i) => ({ agentId: i.agentId, status: i.status, summary: i.summary, filesChanged: i.filesChanged, commits: i.commits })),
+      teamImplementations: impls.filter((i) => i.agentId !== this.me).map((i) => {
+        const steps = listOf(i.agentId)?.items ?? [];
+        return { agentId: i.agentId, status: i.status, summary: i.summary, filesChanged: i.filesChanged, commits: i.commits, ...(steps.length ? { subtasks: steps.map((s) => `${s.id} [${s.status}] ${s.title}${s.note ? ` (${s.note})` : ""}`) } : {}) };
+      }),
       ...(task.phase === "SYNC" ? { reviewTargets: phases.reviewees(task).filter((a) => a !== this.me), syncReports: reports.map((r) => ({ agentId: r.agentId, status: r.status, findings: r.findings })) } : {}),
       ...(integration ? { integration: { status: integration.status, result: integration.result, commits: integration.commits, findings: integration.findings } } : {}),
       ...(fixRequests.length ? { fixRequests } : {}),
+      ...(task.phase === "INTEGRATE" && snap.followUpBudget && phases.integrator(task) === this.me
+        ? {
+            followUps: {
+              ...snap.followUpBudget,
+              notes: reports.flatMap((r) => r.findings.filter((f) => f.severity !== "ERROR").map((f) => ({ ...f, reportedBy: r.agentId }))),
+            },
+          }
+        : {}),
       waitingOn: d.waitingOn,
       allowedActions: d.allowedActions,
       nextAction: d.nextAction,
@@ -437,10 +494,13 @@ export class Swarm {
     return {
       ownership: {
         yourFiles: own.yours,
+        ...(own.reviewOnly ? { reviewOnly: true } : {}),
         othersFiles: own.assignments.filter((a) => a.agentId !== this.me).map((a) => ({ agentId: a.agentId, files: a.files ?? [] })),
         grantedToYou: own.grantedToYou,
         grantedByYou: own.grantedByYou,
-        rule: "Change only yourFiles and grantedToYou. To change another agent's file: send_message(to=owner, message=why, requestFiles=[...]); the owner answers with grantFiles.",
+        rule: own.reviewOnly
+          ? "You own no files: you change nothing. Read any file you like (no permission needed) and review the others' work."
+          : "Change only yourFiles and grantedToYou. To change another agent's file: send_message(to=owner, message=why, requestFiles=[...]); the owner answers with grantFiles.",
       },
     };
   }
@@ -477,11 +537,11 @@ export class Swarm {
         return { tool: "complete", args: {} };
       case "implement":
       case "fix":
-        return { tool: "complete", args: { result: "<what you implemented>", filesChanged: ["<path/File.java>"], commits: [] } };
+        return { tool: "complete", args: { result: "<what you implemented>", filesChanged: ["<path/File.java>"] } };
       case "sync":
         return { tool: "complete", args: { status: "PASS" } };
       case "integrate":
-        return { tool: "complete", args: { status: "PASS", result: "<branch/commit with everyone's work merged; build and test output summary>", commits: ["<HEAD of the merged result>"] } };
+        return { tool: "complete", args: { status: "PASS", result: "<where everyone's work is now together; build and test output summary>" } };
       case "wait":
         return { tool: "wait", args: {} };
       default:
@@ -504,8 +564,8 @@ export class Swarm {
         if (!agreement) {
           const base = ["send_message", "propose", "wait"];
           return this.me === lead
-            ? done("propose", base, "Tell the other agents which files you will change and ask which files they will change (send_message). Then call propose() with one assignment per agent, each with its own `files`; every file has exactly ONE owner.", [...task.agents])
-            : done("wait", base, `Tell ${lead} which files you will change (send_message) and wait for the proposal, or propose() yourself. Every file must have exactly ONE owner.`, [...task.agents]);
+            ? done("propose", base, "Tell the other agents which files you will change and ask which files they will change (send_message). Then call propose() with one assignment per agent, each with its own `files`; every file has exactly ONE owner. An agent that has no files of its own to change gets `files: []`: it only reviews the others' work (never invent a file for it).", [...task.agents])
+            : done("wait", base, `Tell ${lead} which files you will change (send_message) and wait for the proposal, or propose() yourself. Every file must have exactly ONE owner. If you have nothing of your own to change, say so: you get \`files: []\` and review the others' work.`, [...task.agents]);
         }
         const pending = agreement.assignments.map((a) => a.agentId).filter((id) => !agreement.approvedBy.includes(id));
         if (!agreement.approvedBy.includes(this.me)) {
@@ -518,9 +578,29 @@ export class Swarm {
         if (mine?.status === "READY_FOR_SYNC") {
           return done("wait", ["send_message", "wait"], `Your part is ready. Waiting for: ${pending.join(", ")}.`, pending);
         }
+        const myAssignment = agreement?.assignments.find((a) => a.agentId === this.me);
+        if (task.syncRound === 0 && myAssignment && Array.isArray(myAssignment.files) && myAssignment.files.length === 0) {
+          return done(
+            "implement",
+            ["send_message", "complete", "wait"],
+            "Your assignment has no files: you change nothing in this task, you review the others' work. You may already read their files as they land (reading needs no permission) and answer their questions with send_message. " +
+              "Mark your part ready now: complete({result: \"review only: nothing to change\"}). Your real work comes in SYNC.",
+            pending,
+          );
+        }
+        const base = task.baseCommit
+          ? `This task is a follow-up of ${task.parentTaskId}. If you work in your own git branch, first bring its result in (git merge ${task.baseCommit}). `
+          : "";
+        const steps = s.subtasks.find((l) => l.agentId === this.me)?.items ?? [];
+        const open = steps.filter((i) => i.status === "TODO" || i.status === "DOING");
+        const plan = open.length
+          ? `Your open subtasks: ${open.map((i) => `${i.id} "${i.title}"${i.status === "DOING" ? " (doing)" : ""}`).join(", ")}; mark each done with subtasks({done: [id]}) as you finish it (or drop it with a reason). complete() is refused while subtasks are open. `
+          : steps.length
+            ? "All your subtasks are closed. "
+            : `If your part has several steps, plan them first: subtasks({add: ["<step>", ...]}); then subtasks({start: id}) and subtasks({done: [id]}) as you go. `;
         return task.syncRound > 0
-          ? done("fix", ["send_message", "complete", "wait"], "A sync review requested fixes (see 'fixRequests'). Fix your part, then complete({result, filesChanged, commits}). " + BETWEEN_STEPS, pending)
-          : done("implement", ["send_message", "complete", "wait"], "Implement ONLY your assignment and change only your own files (see 'ownership'). Reading any file needs no permission; to CHANGE another agent's file send_message(requestFiles) to its owner and continue with your own work until they answer. Reviewing the other agents' code is for SYNC, not now. Then complete({result, filesChanged, commits}). " + BETWEEN_STEPS, pending);
+          ? done("fix", ["send_message", "subtasks", "complete", "wait"], base + "A sync review requested fixes (see 'fixRequests'). Add a subtask per fix if there are several. " + plan + "Fix your part, then complete({result, filesChanged}). " + BETWEEN_STEPS, pending)
+          : done("implement", ["send_message", "subtasks", "complete", "wait"], base + "Implement ONLY your assignment and change only your own files (see 'ownership'). " + plan + "Reading any file needs no permission; to CHANGE another agent's file send_message(requestFiles) to its owner and continue with your own work until they answer. Reviewing the other agents' code is for SYNC, not now. Then complete({result, filesChanged}). " + BETWEEN_STEPS, pending);
       }
       case "SYNC": {
         const pending = phases.reviewers(task).filter((id) => !reports.some((r) => r.agentId === id));
@@ -543,11 +623,17 @@ export class Swarm {
         const lead = phases.integrator(task);
         if (this.me !== lead) return done("wait", ["send_message", "wait"], `${lead} is merging everyone's work and running the build/tests. Waiting for: ${lead}.`, [lead]);
         const verify = task.verifyCommand ? ` with \`${task.verifyCommand}\`` : "";
+        const left = s.followUpBudget?.remaining ?? 0;
+        const followUps = left
+          ? ` Work that is left but does not block this task (the WARNING/INFO notes in 'followUps.notes', changes you noticed while merging) can become follow-up tasks: add followUps: [{title, description, agents?}] to the PASS call, at most ${left}. ` +
+            "Each description must be concrete (what, where, expected behaviour, who does what); the agents pick them up as soon as this task is DONE. Do not invent work nobody needs; anything else goes into 'result'."
+          : "";
         return done(
           "integrate",
           ["send_message", "complete", "wait"],
-          `Merge everyone's commits into one branch (yours and 'teamImplementations'[].commits; in separate worktrees merge their branches), run the build and ALL tests${verify} on the result. ` +
-            `Then complete({status: "PASS", result, commits: [<merged HEAD>]}) or complete({status: "NEEDS_FIX", result, findings: [{severity: "ERROR", description, relatedAgent}]}) for conflicts or failures.`,
+          `Bring everyone's work together (if the agents work in separate git branches or worktrees, merge them; their commits are in 'teamImplementations'), run the build and ALL tests${verify} on the result. ` +
+            `Then complete({status: "PASS", result}) (add commits: [<merged HEAD>] if you merged with git) or complete({status: "NEEDS_FIX", result, findings: [{severity: "ERROR", description, relatedAgent}]}) for conflicts or failures.` +
+            followUps,
           [lead],
         );
       }

@@ -18,6 +18,8 @@ export type ErrorCode =
   | "FILE_NOT_OWNED"
   | "AGREEMENT_NOT_REVIEWED"
   | "TASK_BLOCKED"
+  | "OPEN_SUBTASKS"
+  | "FOLLOW_UP_LIMIT"
   | "LOCK_TIMEOUT"
   | "INTERNAL_ERROR";
 

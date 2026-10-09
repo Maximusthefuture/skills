@@ -3,3 +3,5 @@ dist/
 .agent-network/
 *.log
 .DS_Store
+# machine-local runner config for `ui --runners`
+runners.json

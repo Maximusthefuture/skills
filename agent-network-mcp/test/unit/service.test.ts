@@ -435,9 +435,9 @@ describe("integration step", () => {
   });
 });
 
-describe("commits in a git repository", () => {
+describe("tasks in a git repository", () => {
   /** The network lives inside a git repository, as in a real project; returns a git runner for it. */
-  async function repoNetwork(opts: { requireCommits?: boolean } = {}) {
+  async function repoNetwork() {
     const repo = await tmpDir();
     const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" }).toString().trim();
     git("init", "-q", "-b", "main");
@@ -460,7 +460,7 @@ describe("commits in a git repository", () => {
       git("commit", "-q", "-m", file);
       return git("rev-parse", "HEAD");
     };
-    const task = await s.backend!.createTask({ title: "t", description: "d", agents: ["backend", "reviewer"], ...opts });
+    const task = await s.backend!.createTask({ title: "t", description: "d", agents: ["backend", "reviewer"] });
     await s.backend!.proposeAgreement({
       taskId: task.id,
       summary: "s",
@@ -473,39 +473,22 @@ describe("commits in a git repository", () => {
     return { s: s as Record<string, NetworkService> & { backend: NetworkService; reviewer: NetworkService }, task, commit, before };
   }
 
-  it("requires commits, verifies them and takes the changed files from git", async () => {
+  it("commits are optional and recorded as given; nothing is checked with git", async () => {
     const { s, task, commit, before } = await repoNetwork();
-    expect(task).toMatchObject({ requireCommits: true, git: { commit: before } });
-    await expect(s.backend.completeImplementation({ taskId: task.id, summary: "api", filesChanged: ["src/main/Api.java"] })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("Commit your changes") });
-    await expect(s.backend.completeImplementation({ taskId: task.id, summary: "api", commits: ["deadbeef"] })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("does not exist") });
-    await expect(s.backend.completeImplementation({ taskId: task.id, summary: "api", commits: [before] })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("base commit") });
-
-    const sha = commit("src/main/Api.java");
-    const done = await s.backend.completeImplementation({ taskId: task.id, summary: "api", filesChanged: ["src/main/Api.java", "src/main/Forgotten.java"], commits: [sha.slice(0, 10)] });
-    expect(done.implementation).toMatchObject({ commits: [sha], filesChanged: ["src/main/Api.java", "src/main/Forgotten.java"] });
-    expect(done.warnings).toEqual([expect.stringContaining("Not in your commits")]);
+    expect(task).toMatchObject({ git: { commit: before } });
+    expect(task.requireCommits).toBeUndefined();
+    const api = await s.backend.completeImplementation({ taskId: task.id, summary: "api", filesChanged: ["src/main/Api.java"] });
+    expect(api.implementation).toMatchObject({ filesChanged: ["src/main/Api.java"], commits: [] });
+    const sha = commit("src/test/ApiTest.java");
+    const tests = await s.reviewer.completeImplementation({ taskId: task.id, summary: "tests", filesChanged: ["src/test/ApiTest.java"], commits: [sha.slice(0, 10)] });
+    expect(tests.implementation.commits).toEqual([sha.slice(0, 10)]);
+    await s.backend.submitSync({ taskId: task.id, status: "PASS" });
+    await s.reviewer.submitSync({ taskId: task.id, status: "PASS" });
+    expect((await s.backend.submitIntegration({ taskId: task.id, status: "PASS", result: "merged in the main checkout" })).phase).toBe("DONE");
   });
 
-  it("a committed file of another agent is refused even when it is not reported", async () => {
-    const { s, task, commit } = await repoNetwork();
-    commit("src/test/ApiTest.java");
-    const sneaky = commit("src/main/Api.java", "reviewer edits backend code");
-    await expect(s.reviewer.completeImplementation({ taskId: task.id, summary: "tests", filesChanged: ["src/test/ApiTest.java"], commits: [sneaky] })).rejects.toMatchObject({ code: "FILE_NOT_OWNED" });
-  });
-
-  it("commits are optional with requireCommits: false, and the integration must name the merged result", async () => {
-    const { s, task } = await repoNetwork({ requireCommits: false });
-    expect(task.requireCommits).toBe(false);
-    await s.backend.completeImplementation({ taskId: task.id, summary: "api" });
-    await s.reviewer.completeImplementation({ taskId: task.id, summary: "tests" });
-
-    const { s: s2, task: t2, commit: commit2 } = await repoNetwork();
-    await s2.backend.completeImplementation({ taskId: t2.id, summary: "api", commits: [commit2("src/main/A.java")] });
-    await s2.reviewer.completeImplementation({ taskId: t2.id, summary: "tests", commits: [commit2("src/test/ATest.java")] });
-    await s2.backend.submitSync({ taskId: t2.id, status: "PASS" });
-    await s2.reviewer.submitSync({ taskId: t2.id, status: "PASS" });
-    await expect(s2.backend.submitIntegration({ taskId: t2.id, status: "PASS", result: "merged" })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("merged result") });
-    const head = commit2("MERGED.md");
-    expect((await s2.backend.submitIntegration({ taskId: t2.id, status: "PASS", result: "merged", commits: [head] })).phase).toBe("DONE");
+  it("ownership still applies to the reported files", async () => {
+    const { s, task } = await repoNetwork();
+    await expect(s.reviewer.completeImplementation({ taskId: task.id, summary: "tests", filesChanged: ["src/test/ApiTest.java", "src/main/Api.java"] })).rejects.toMatchObject({ code: "FILE_NOT_OWNED" });
   });
 });

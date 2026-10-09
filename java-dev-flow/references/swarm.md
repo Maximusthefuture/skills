@@ -21,7 +21,7 @@ If an `agent-network` rule and an orchestrator rule disagree about phases, owner
 | Swarm phase (`nextAction`) | Orchestrator phases | What you do |
 |---|---|---|
 | DISCUSS (`propose`, `approve`) | 0–3 | Classification line for the whole task (lead) or your part. Design and plan only, **no code, no files written**. Results go into the agreement, see below |
-| IMPLEMENT (`implement`) | 4, 5 for your part | `java-tdd` for every behavior of your assignment, full test run, `critic` on your diff for M and L, commit your files, `complete` |
+| IMPLEMENT (`implement`) | 4, 5 for your part | `java-tdd` for every behavior of your assignment, full test run, `critic` on your diff for M and L, `complete` |
 | IMPLEMENT (`fix`) | route B | Every `fixRequests` item with `forYou: true` is a bug: a test that fails on exactly it first, then the fix |
 | SYNC (`sync`) | 5 for another agent's part | Review `reviewTargets`, see below |
 | INTEGRATE (`integrate`, lead) | 5, 6 | Merge, full run of `task.verifyCommand`, evidence rule, report in `result` |
@@ -39,20 +39,22 @@ L: the "user approves design and plan" gate becomes "all agents approve the agre
 ### IMPLEMENT
 
 - Only your assignment and your files (`ownership.yourFiles`, granted files). Another agent's file: `send_message({to, message, requestFiles})` and `wait()`. Never edit it "just this once".
+- The plan of your part (the behaviors from `responsibility`, one `java-tdd` cycle each) goes into `subtasks({add: [...]})`; mark each behavior `done` after its test went red → green. A restarted session continues from the first open subtask, and `complete` is refused while any is open.
+- In a follow-up task (`task.baseCommit` is set) working in your own git branch, merge the parent's result first: `git merge <baseCommit>`.
 - Phase 4 as usual: domain skills of the slice, `java-tdd` per behavior, hook warnings handled.
 - Phase 5 for your part: full test run of the project (or at least of your module, named in `result`), then the `critic` agent on your diff for M and L. **Do not run `java-code-reviewer` here**: the SYNC reviewer is the fresh-context reviewer. Critic blockers are fixed test-first before `complete`; critic questions go into `result`.
-- Commits of your own files to your branch are part of the protocol (`complete` needs their hashes) and need no extra permission. Push, PR, Jira still need the user.
+- Commits are optional in the swarm (pass their hashes to `complete` if you made them; they help the lead merge separate worktrees). Committing to your own branch needs no extra permission; push, PR, Jira still need the user.
 - `result` is the short report from `references/templates.md`: size, files, test command and outcome, critic status and open questions. Under 20 lines.
 
 ### SYNC
 
-- Review the code of `reviewTargets` (their commits, not their `result` text) against `interfaces` and their `responsibility`. Use the `java-code-reviewer` agent on their commits if it exists, otherwise the `java-code-review` checklist in the main context.
+- Review the code of `reviewTargets` (their files and commits, not their `result` text) against `interfaces` and their `responsibility`. Use the `java-code-reviewer` agent on their commits if it exists, otherwise the `java-code-review` checklist in the main context.
 - Map the findings: a confirmed bug or a broken agreed interface → `ERROR` (NEEDS_FIX); a risk or a critic-style question → `WARNING`; style → `INFO` or nothing. NEEDS_FIX only with an `ERROR`; name the agent in `relatedAgent`.
 - Findings are hypotheses: check each against the code before you submit it. Do not fix their code yourself.
 
 ### INTEGRATE (lead)
 
-Merge everyone's commits, run `task.verifyCommand` (through `test-runner` if it exists). The evidence rule applies unchanged: `PASS` only after a run after the last merge with its output read. A failure: `NEEDS_FIX` with an `ERROR` finding naming the agent whose part breaks. `result` is the final report.
+Bring everyone's work together (merge their branches when they use worktrees), run `task.verifyCommand` (through `test-runner` if it exists). The evidence rule applies unchanged: `PASS` only after a run after the last merge with its output read. A failure: `NEEDS_FIX` with an `ERROR` finding naming the agent whose part breaks. `result` is the final report.
 
 ## Swarm on top of an OpenSpec change
 

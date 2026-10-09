@@ -11,8 +11,11 @@ export interface NewTask {
   createdBy: string;
   git: GitContext | null;
   maxFixRounds?: number;
-  requireCommits?: boolean;
   verifyCommand?: string;
+  maxFollowUps?: number;
+  parentTaskId?: string;
+  rootTaskId?: string;
+  baseCommit?: string;
 }
 
 export class TaskStore {
@@ -38,8 +41,11 @@ export class TaskStore {
       git: input.git,
       syncRound: 0,
       maxFixRounds: input.maxFixRounds ?? DEFAULT_MAX_FIX_ROUNDS,
-      requireCommits: input.requireCommits ?? false,
       ...(input.verifyCommand ? { verifyCommand: input.verifyCommand } : {}),
+      ...(input.maxFollowUps ? { maxFollowUps: input.maxFollowUps, followUpsUsed: 0 } : {}),
+      ...(input.parentTaskId ? { parentTaskId: input.parentTaskId } : {}),
+      ...(input.rootTaskId ? { rootTaskId: input.rootTaskId } : {}),
+      ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
     };
     await this.fs.writeJson([...this.taskDir(id), "task.json"], task);
     return task;

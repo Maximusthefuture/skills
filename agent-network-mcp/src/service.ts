@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
 import { AppError } from "./errors.js";
 import { EventHub } from "./events/eventHub.js";
-import { inspectCommits, readGitContext } from "./git.js";
+import { readGitContext } from "./git.js";
 import { anyDeclared, covers, findOverlaps, matches, normalizePath, ownersOf } from "./ownership.js";
 import { DEFAULT_MAX_FIX_ROUNDS, isHalt, PhaseManager, type Halt, type Transition } from "./phase/phaseManager.js";
 import { FileStore } from "./storage/fileStore.js";
@@ -12,6 +12,7 @@ import { GrantStore } from "./stores/grantStore.js";
 import { ImplementationStore } from "./stores/implementationStore.js";
 import { IntegrationStore } from "./stores/integrationStore.js";
 import { MessageStore } from "./stores/messageStore.js";
+import { SubtaskStore } from "./stores/subtaskStore.js";
 import { SyncStore } from "./stores/syncStore.js";
 import { TaskStore } from "./stores/taskStore.js";
 import type {
@@ -19,12 +20,14 @@ import type {
   AgentIdentity,
   AgentStatus,
   Agreement,
+  FollowUpRequest,
   Assignment,
   Implementation,
   IntegrationReport,
   Message,
   MessageType,
   NetworkEvent,
+  SubtaskList,
   SyncFinding,
   SyncReport,
   SyncStatus,
@@ -40,6 +43,9 @@ import {
 
 export const DEFAULT_WAIT_MS = 120_000;
 export const MAX_WAIT_MS = 300_000;
+/** A task description must say concretely what to build. */
+export const MIN_DESCRIPTION = 40;
+export const MAX_SUBTASKS = 50;
 
 export interface ServiceOptions {
   hub?: EventHub;
@@ -53,8 +59,13 @@ export interface NewTaskInput {
   /** Default 3. */
   maxFixRounds?: number;
   verifyCommand?: string;
-  /** Default true; ignored (false) outside a git repository with a base commit. */
-  requireCommits?: boolean;
+  /** How many follow-up tasks the leads of this chain may create when they integrate. Default 0 (none). */
+  maxFollowUps?: number;
+}
+
+/** An assignment that declares an empty file list: the agent changes nothing and reviews the others' work. */
+export function isReviewOnly(a: Assignment | undefined): boolean {
+  return !!a && Array.isArray(a.files) && a.files.length === 0;
 }
 
 /** NEEDS_FIX means "an ERROR must be fixed"; WARNING / INFO findings travel with PASS as notes. */
@@ -84,6 +95,7 @@ export class NetworkService {
   readonly syncs: SyncStore;
   readonly grants: GrantStore;
   readonly integrations: IntegrationStore;
+  readonly subtasks: SubtaskStore;
   readonly phases = new PhaseManager();
   readonly hub: EventHub;
   private pollQueue: Promise<unknown> = Promise.resolve();
@@ -102,6 +114,7 @@ export class NetworkService {
     this.syncs = new SyncStore(fs);
     this.grants = new GrantStore(fs);
     this.integrations = new IntegrationStore(fs);
+    this.subtasks = new SubtaskStore(fs);
     this.hub = opts.hub ?? new EventHub(fs.root, { log: opts.log });
   }
 
@@ -173,11 +186,11 @@ export class NetworkService {
     const maxFixRounds = input.maxFixRounds ?? DEFAULT_MAX_FIX_ROUNDS;
     if (!Number.isInteger(maxFixRounds) || maxFixRounds < 0 || maxFixRounds > 20) throw new AppError("INVALID_INPUT", "maxFixRounds must be an integer 0..20");
     const verifyCommand = input.verifyCommand?.trim() || undefined;
+    const maxFollowUps = input.maxFollowUps ?? 0;
+    if (!Number.isInteger(maxFollowUps) || maxFollowUps < 0 || maxFollowUps > 20) throw new AppError("INVALID_INPUT", "maxFollowUps must be an integer 0..20");
 
     const git = await readGitContext(dirname(this.fs.root));
-    // commits can only be verified in a repository that already has a base commit
-    const requireCommits = (input.requireCommits ?? true) && !!git?.commit;
-    const task = await this.tasks.create({ title, description: input.description, agents, createdBy, git, maxFixRounds, requireCommits, verifyCommand });
+    const task = await this.tasks.create({ title, description: input.description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps });
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
   }
@@ -331,10 +344,13 @@ export class NetworkService {
   async ownership(taskId: string, agentId = this.me) {
     const [agreement, grants] = await Promise.all([this.agreements.find(taskId), this.grants.list(taskId)]);
     const assignments = agreement?.assignments ?? [];
+    const mine = assignments.find((a) => a.agentId === agentId);
     return {
       declared: anyDeclared(assignments),
       assignments,
-      yours: assignments.find((a) => a.agentId === agentId)?.files ?? [],
+      yours: mine?.files ?? [],
+      /** The agreement gives this agent no files: it changes nothing and reviews the others' work. */
+      reviewOnly: isReviewOnly(mine),
       grantedToYou: grants.filter((g) => g.to === agentId).flatMap((g) => g.files.map((f) => ({ file: f, from: g.from }))),
       grantedByYou: grants.filter((g) => g.from === agentId).map((g) => ({ to: g.to, files: g.files })),
     };
@@ -434,21 +450,26 @@ export class NetworkService {
   }
 
   async completeImplementation(input: { taskId: string; summary: string; filesChanged?: string[]; commits?: string[] }): Promise<{ implementation: Implementation; phase: Task["phase"]; warnings?: string[] }> {
-    const reported = (input.filesChanged ?? []).map(assertRelativeFilePath);
-    // git runs outside the task lock: it can take seconds and the commits do not depend on task state
-    const checked = await this.checkCommits(input.taskId, (input.commits ?? []).map(assertCommit), "IMPLEMENT");
-    const filesChanged = [...new Set([...reported.map(normalizePath), ...checked.files])].sort();
-    const notCommitted = checked.verified ? reported.filter((f) => !checked.files.includes(normalizePath(f))) : [];
+    const filesChanged = [...new Set((input.filesChanged ?? []).map((f) => normalizePath(assertRelativeFilePath(f))))].sort();
+    // commits are optional and recorded as given (they help the lead merge separate branches); nothing checks them
+    const commits = (input.commits ?? []).map(assertCommit);
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "IMPLEMENT");
       const existing = await this.implementations.find(task.id, this.me);
       if (!existing) throw new AppError("NOT_STARTED", "Call implementation_start before implementation_complete");
       if (existing.status === "READY_FOR_SYNC") throw new AppError("ALREADY_COMPLETED", "Your implementation is already READY_FOR_SYNC");
+      const open = (await this.subtasks.get(task.id, this.me)).items.filter((i) => i.status === "TODO" || i.status === "DOING");
+      if (open.length) {
+        throw new AppError(
+          "OPEN_SUBTASKS",
+          `You still have open subtasks: ${open.map((i) => `${i.id} "${i.title}"`).join(", ")}. Finish them and mark them done with subtasks({done: [...]}), or drop the ones that are not needed: subtasks({drop: [{id, reason}]}). Then complete again.`,
+          { openSubtasks: open },
+        );
+      }
       const warnings = await this.checkOwnership(task.id, filesChanged);
-      if (notCommitted.length) warnings.push(`Not in your commits (uncommitted? the others cannot see them): ${notCommitted.join(", ")}`);
-      const implementation: Implementation = { ...existing, status: "READY_FOR_SYNC", summary: input.summary, filesChanged, commits: checked.commits, completedAt: new Date().toISOString() };
+      const implementation: Implementation = { ...existing, status: "READY_FOR_SYNC", summary: input.summary, filesChanged, commits, completedAt: new Date().toISOString() };
       await this.implementations.save(implementation);
-      await this.emit({ type: "IMPLEMENTATION_COMPLETED", taskId: task.id, sourceAgent: this.me, payload: { agentId: this.me, filesChanged, commits: checked.commits } });
+      await this.emit({ type: "IMPLEMENTATION_COMPLETED", taskId: task.id, sourceAgent: this.me, payload: { agentId: this.me, filesChanged, commits } });
       return { implementation, ...(warnings.length ? { warnings } : {}) };
     });
   }
@@ -479,26 +500,6 @@ export class NetworkService {
       );
     }
     return warnings;
-  }
-
-  /**
-   * Commits are the only way the others (in their own worktrees) can see your work, so a task in a git repository
-   * requires them; they are verified with git and the files they touch count as changed, whatever was reported.
-   */
-  private async checkCommits(taskId: string, commits: string[], phase: "IMPLEMENT" | "INTEGRATE"): Promise<{ commits: string[]; files: string[]; verified: boolean }> {
-    const task = await this.requireMember(taskId);
-    if (task.phase !== phase) return { commits, files: [], verified: false }; // the phase check under the lock reports it
-    if (task.requireCommits && commits.length === 0) {
-      throw new AppError(
-        "INVALID_INPUT",
-        phase === "IMPLEMENT"
-          ? "Commit your changes (only your own files) and pass the hashes in 'commits': the other agents review and merge your work from these commits."
-          : "Pass the merged result in 'commits' (the HEAD commit of the integrated branch).",
-      );
-    }
-    if (!task.git || commits.length === 0) return { commits, files: [], verified: false };
-    const inspected = await inspectCommits(task.git.repositoryRoot, task.git.commit, commits);
-    return { ...inspected, verified: true };
   }
 
   async listImplementations(taskId: string): Promise<Implementation[]> {
@@ -541,7 +542,8 @@ export class NetworkService {
   // ---------------------------------------------------------------- integration
 
   /** INTEGRATE: the lead reports the merged result and the outcome of the build/tests on it. */
-  async submitIntegration(input: { taskId: string; status: SyncStatus; result: string; commits?: string[]; findings?: SyncFinding[] }): Promise<{ report: IntegrationReport; phase: Task["phase"] }> {
+  async submitIntegration(input: { taskId: string; status: SyncStatus; result: string; commits?: string[]; findings?: SyncFinding[]; followUps?: FollowUpRequest[] }): Promise<{ report: IntegrationReport; followUps: Task[]; phase: Task["phase"] }> {
+    const followUps = await this.checkFollowUps(input.followUps ?? [], input.status);
     const findings = (input.findings ?? []).map((f) => ({
       ...f,
       ...(f.files ? { files: f.files.map(assertRelativeFilePath) } : {}),
@@ -550,8 +552,6 @@ export class NetworkService {
     checkVerdict(input.status, findings);
     if (!input.result.trim()) throw new AppError("INVALID_INPUT", "result must say what was merged, where, and how the build/tests went");
     const commits = (input.commits ?? []).map(assertCommit);
-    this.requireIntegrator(await this.requireMember(input.taskId)); // before the commit check, so others get the real reason
-    const checked = input.status === "PASS" ? await this.checkCommits(input.taskId, commits, "INTEGRATE") : { commits };
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "INTEGRATE");
       this.requireIntegrator(task);
@@ -559,10 +559,123 @@ export class NetworkService {
         if (f.relatedAgent && !task.agents.includes(f.relatedAgent)) throw new AppError("NOT_ASSIGNED", `relatedAgent '${f.relatedAgent}' is not part of ${task.id}`);
       }
       if ((await this.integrations.list(task.id, task.syncRound)).length) throw new AppError("ALREADY_COMPLETED", `Integration for round ${task.syncRound} is already reported`);
-      const report = await this.integrations.create({ taskId: task.id, agentId: this.me, status: input.status, result: input.result, commits: checked.commits, findings, round: task.syncRound });
+      // the budget is taken before anything is written, so a refusal leaves the task untouched
+      const rootId = followUps.length ? await this.reserveFollowUps(task, followUps.length) : task.id;
+      const report = await this.integrations.create({ taskId: task.id, agentId: this.me, status: input.status, result: input.result, commits, findings, round: task.syncRound });
       await this.emit({ type: "INTEGRATION_REPORT_CREATED", taskId: task.id, sourceAgent: this.me, payload: { reportId: report.id, status: report.status, round: report.round } });
-      return { report };
+      const base = commits[0]; // the merged HEAD, if the lead named one: a hint where the follow-up starts
+      const created: Task[] = [];
+      for (const f of followUps) {
+        const child = await this.tasks.create({
+          title: f.title,
+          description: f.description,
+          agents: f.agents ?? task.agents,
+          createdBy: this.me,
+          git: task.git && base ? { ...task.git, commit: base } : task.git,
+          maxFixRounds: this.phases.maxFixRounds(task),
+          ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+          parentTaskId: task.id,
+          rootTaskId: rootId,
+          ...(base ? { baseCommit: base } : {}),
+        });
+        created.push(child);
+        await this.emit({ type: "TASK_CREATED", taskId: child.id, sourceAgent: this.me, payload: { title: child.title, agents: child.agents, parentTaskId: task.id } });
+      }
+      return { report, followUps: created };
     });
+  }
+
+  /** Follow-ups come only with PASS (defects are fixed in this task), each concrete, for at least two registered agents. */
+  private async checkFollowUps(raw: FollowUpRequest[], status: SyncStatus): Promise<FollowUpRequest[]> {
+    if (!raw.length) return [];
+    if (status !== "PASS") throw new AppError("INVALID_INPUT", "followUps go only with status PASS. A defect found while integrating is fixed in this task: NEEDS_FIX with an ERROR finding.");
+    const out: FollowUpRequest[] = [];
+    for (const f of raw) {
+      const title = (f.title ?? "").trim();
+      const description = (f.description ?? "").trim();
+      if (!title) throw new AppError("INVALID_INPUT", "every follow-up needs a 'title'");
+      if (description.length < MIN_DESCRIPTION) {
+        throw new AppError("INVALID_INPUT", `follow-up '${title}': 'description' must say concretely what to change (at least ${MIN_DESCRIPTION} characters): what is wrong or missing, where (files), expected behaviour, who does what.`);
+      }
+      let agents: string[] | undefined;
+      if (f.agents?.length) {
+        agents = [...new Set(f.agents.map((a) => assertAgentId(a.trim())))];
+        if (agents.length < 2) throw new AppError("INVALID_INPUT", `follow-up '${title}': 'agents' needs at least two distinct agents (the first one leads); omit it to keep this task's agents`);
+        for (const a of agents) await this.agents.require(a);
+      }
+      out.push({ title, description, ...(agents ? { agents } : {}) });
+    }
+    return out;
+  }
+
+  /** Take n follow-ups from the chain budget kept on the root task (under the root's lock when it is another task). */
+  private async reserveFollowUps(task: Task, n: number): Promise<string> {
+    const rootId = task.rootTaskId ?? task.id;
+    const reserve = async (): Promise<void> => {
+      const root = await this.tasks.get(rootId);
+      const max = root.maxFollowUps ?? 0;
+      const used = root.followUpsUsed ?? 0;
+      if (used + n > max) {
+        throw new AppError(
+          "FOLLOW_UP_LIMIT",
+          max === 0
+            ? "Follow-up tasks are not enabled for this task chain (the operator enables them with 'task create --follow-ups N'). List the remaining work in 'result' instead."
+            : `This task chain may create ${max - used} more follow-up task(s) (limit ${max}, used ${used}); you asked for ${n}. Merge related items into fewer tasks or list the rest in 'result'.`,
+          { maxFollowUps: max, followUpsUsed: used },
+        );
+      }
+      await this.tasks.save({ ...root, followUpsUsed: used + n });
+    };
+    if (rootId === task.id) await reserve();
+    else await this.fs.withLock(this.tasks.lockPath(rootId), reserve);
+    return rootId;
+  }
+
+  /** How many follow-up tasks the chain of this task may still create. */
+  async followUpBudget(task: Task): Promise<{ max: number; used: number; remaining: number }> {
+    const root = task.rootTaskId ? await this.tasks.get(task.rootTaskId) : task;
+    const max = root.maxFollowUps ?? 0;
+    const used = root.followUpsUsed ?? 0;
+    return { max, used, remaining: Math.max(0, max - used) };
+  }
+
+  // ---------------------------------------------------------------- subtasks
+
+  /**
+   * The agent's own checklist for its part: add steps, start one (only one is DOING), mark them done or drop them
+   * with a reason. Only the agent changes its list; the others read it. complete() in IMPLEMENT refuses while
+   * steps are open, so a restarted session sees exactly what is left.
+   */
+  async updateSubtasks(input: { taskId: string; add?: string[]; start?: string; done?: string[]; drop?: { id: string; reason: string }[] }): Promise<SubtaskList> {
+    const task = await this.requireMember(input.taskId);
+    if (task.status === "BLOCKED") throw new AppError("TASK_BLOCKED", `Task ${task.id} is blocked; wait for the operator.`);
+    if (task.status !== "ACTIVE") throw new AppError("ALREADY_COMPLETED", `Task ${task.id} is ${task.status}`);
+    const list = await this.subtasks.get(task.id, this.me);
+    const now = new Date().toISOString();
+    const find = (raw: string) => {
+      const id = raw.trim();
+      const item = list.items.find((i) => i.id === id);
+      if (!item) throw new AppError("INVALID_INPUT", `No subtask '${id}'. Yours: ${list.items.map((i) => i.id).join(", ") || "(none yet; add some with 'add')"}`);
+      return item;
+    };
+    for (const raw of input.add ?? []) {
+      const title = raw.trim();
+      if (!title) throw new AppError("INVALID_INPUT", "a subtask title must not be empty");
+      if (title.length > 300) throw new AppError("INVALID_INPUT", "a subtask title must be at most 300 characters: one concrete step");
+      list.items.push({ id: `s${list.nextSeq++}`, title, status: "TODO", updatedAt: now });
+    }
+    if (list.items.length > MAX_SUBTASKS) throw new AppError("INVALID_INPUT", `At most ${MAX_SUBTASKS} subtasks per agent and task; make the steps bigger`);
+    for (const raw of input.done ?? []) Object.assign(find(raw), { status: "DONE", updatedAt: now });
+    for (const d of input.drop ?? []) {
+      if (!d.reason?.trim()) throw new AppError("INVALID_INPUT", `dropping '${d.id}' needs a 'reason'`);
+      Object.assign(find(d.id), { status: "DROPPED", note: d.reason.trim(), updatedAt: now });
+    }
+    if (input.start) {
+      const item = find(input.start);
+      for (const other of list.items) if (other !== item && other.status === "DOING") Object.assign(other, { status: "TODO", updatedAt: now });
+      Object.assign(item, { status: "DOING", updatedAt: now });
+    }
+    return this.subtasks.save(list);
   }
 
   private requireIntegrator(task: Task): void {

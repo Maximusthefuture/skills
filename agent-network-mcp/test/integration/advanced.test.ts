@@ -38,12 +38,12 @@ const assignments = [
 ];
 
 describe("advanced tools", () => {
-  it("with AGENT_NETWORK_ADVANCED=1 exposes the five swarm tools plus the fine-grained set, never phase_transition", async () => {
+  it("with AGENT_NETWORK_ADVANCED=1 exposes the swarm tools plus the fine-grained set, never phase_transition", async () => {
     const { networkDir } = await project();
     const backend = await spawnAgent({ id: "backend", networkDir });
     expect(await backend.listTools()).toEqual(
       [
-        "swarm_context", "create_task", "send_message", "propose", "complete", "wait",
+        "swarm_context", "create_task", "send_message", "propose", "subtasks", "complete", "wait",
         "agent_register", "agent_list", "agent_heartbeat",
         "task_create", "task_get",
         "agreement_propose", "agreement_approve", "agreement_get",
@@ -143,12 +143,11 @@ describe("full protocol cycle with two MCP processes", () => {
 
     // 11-13. implementation
     await backend.call("implementation_start", { taskId: task.id });
-    // the project is a git repository, so work is reported as verified commits
-    expect((await backend.callError("implementation_complete", { taskId: task.id, summary: "x", commits: ["abc123"] })).message).toContain("does not exist");
+    // commits are optional and recorded as given; the changed files are the reported ones
     const api = commit("src/auth/AuthController.java", "src/auth/AuthService.java");
-    expect((await backend.call("implementation_complete", { taskId: task.id, summary: "Implemented authentication API", commits: [api] })).implementation.filesChanged).toEqual(["src/auth/AuthController.java", "src/auth/AuthService.java"]);
+    expect((await backend.call("implementation_complete", { taskId: task.id, summary: "Implemented authentication API", filesChanged: ["src/auth/AuthController.java", "src/auth/AuthService.java"], commits: [api] })).implementation).toMatchObject({ filesChanged: ["src/auth/AuthController.java", "src/auth/AuthService.java"], commits: [api] });
     await reviewer.call("implementation_start", { taskId: task.id });
-    expect((await reviewer.call("implementation_complete", { taskId: task.id, summary: "Integration tests", commits: [commit("src/test/AuthIT.java")] })).phase).toBe("SYNC");
+    expect((await reviewer.call("implementation_complete", { taskId: task.id, summary: "Integration tests", filesChanged: ["src/test/AuthIT.java"], commits: [commit("src/test/AuthIT.java")] })).phase).toBe("SYNC");
     expect((await reviewer.call("implementation_list", { taskId: task.id })).implementations.map((i: any) => i.status)).toEqual(["READY_FOR_SYNC", "READY_FOR_SYNC"]);
 
     // 14-16. backend PASS, reviewer NEEDS_FIX -> back to IMPLEMENT

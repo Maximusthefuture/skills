@@ -43,12 +43,51 @@ export interface Task {
   maxFixRounds?: number;
   /** Agents whose work the next/current SYNC round reviews: the agents that just fixed. Absent = everyone. */
   reviewScope?: string[];
-  /** IMPLEMENT and INTEGRATE completions must name commits that are verified with git. False outside a repository. */
+  /** Legacy (tasks created before commits became optional); ignored. */
   requireCommits?: boolean;
   /** Build/test command the integrator runs on the merged result, e.g. "mvn -q verify". */
   verifyCommand?: string;
   /** Why the task is BLOCKED. */
   blockedReason?: string;
+  /** Follow-up: the task whose integration created this one. */
+  parentTaskId?: string;
+  /** Follow-up: the first task of the chain (the one the operator created). */
+  rootTaskId?: string;
+  /** Follow-up: merged HEAD of the parent. Agents merge it into their branch first; their commits must descend from it. */
+  baseCommit?: string;
+  /** Chain root only: how many follow-up tasks the leads of this chain may create in total. 0 / absent = none. */
+  maxFollowUps?: number;
+  /** Chain root only: follow-up tasks created so far in the chain. */
+  followUpsUsed?: number;
+}
+
+/** A follow-up task the lead asks for when it integrates with PASS. */
+export interface FollowUpRequest {
+  title: string;
+  description: string;
+  /** Default: the agents of the parent task (same lead). The first one is the lead. */
+  agents?: string[];
+}
+
+export type SubtaskStatus = "TODO" | "DOING" | "DONE" | "DROPPED";
+
+/** One step of an agent's own plan for its part of a task. */
+export interface Subtask {
+  id: string;
+  title: string;
+  status: SubtaskStatus;
+  /** DROPPED: why it is not needed; DONE: optional note. */
+  note?: string;
+  updatedAt: string;
+}
+
+/** An agent's own checklist for its part of a task; only that agent changes it, everybody can read it. */
+export interface SubtaskList {
+  taskId: string;
+  agentId: string;
+  items: Subtask[];
+  /** Next number for an id "s<N>". */
+  nextSeq: number;
 }
 
 export interface Assignment {

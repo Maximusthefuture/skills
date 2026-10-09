@@ -17,11 +17,11 @@ const assignments = [
   { agentId: "reviewer", responsibility: "validation, review of backend", files: ["src/test/**"] },
 ];
 
-describe("five-tool surface", () => {
-  it("exposes exactly swarm_context, create_task, send_message, propose, complete, wait", async () => {
+describe("swarm tool surface", () => {
+  it("exposes exactly swarm_context, create_task, send_message, propose, subtasks, complete, wait", async () => {
     const networkDir = await network();
     const backend = await spawnAgent({ id: "backend", networkDir });
-    expect(await backend.listTools()).toEqual(["complete", "create_task", "propose", "send_message", "swarm_context", "wait"]);
+    expect(await backend.listTools()).toEqual(["complete", "create_task", "propose", "send_message", "subtasks", "swarm_context", "wait"]);
   });
 
   it("registers the agent at startup, so the other agent sees it without any tool call", async () => {
@@ -149,7 +149,8 @@ describe("operator CLI", () => {
   it("creates a task with options and refuses to unblock a task that is not blocked", async () => {
     const networkDir = await network();
     const task = createTaskViaCli(networkDir, ["backend", "reviewer"], "Options", ["--max-fix-rounds", "1", "--verify", "mvn -q verify", "--no-commits"]);
-    expect(task).toMatchObject({ maxFixRounds: 1, verifyCommand: "mvn -q verify", requireCommits: false });
+    expect(task).toMatchObject({ maxFixRounds: 1, verifyCommand: "mvn -q verify" }); // --no-commits is obsolete and ignored
+    expect(task.requireCommits).toBeUndefined();
     const list = JSON.parse(execFileSync(process.execPath, [SERVER_ENTRY, "task", "list"], { env: { ...process.env, NETWORK_DIR: networkDir } }).toString());
     expect(list).toEqual([expect.objectContaining({ id: "task-001", maxFixRounds: 1 })]);
     let out = "";
@@ -375,7 +376,7 @@ describe("three agents in three git worktrees", () => {
     createTaskViaCli(ws.networkDir, ids, "User list page with REST endpoint", ["--verify", "npm test", "--max-fix-rounds", "2"]);
 
     // DISCUSS: globs in the same directory that only differ by suffix are not an overlap any more
-    expect(await backend.call("swarm_context")).toMatchObject({ nextAction: "propose", task: { requireCommits: true, verifyCommand: "npm test", maxFixRounds: 2, lead: "backend" } });
+    expect(await backend.call("swarm_context")).toMatchObject({ nextAction: "propose", task: { verifyCommand: "npm test", maxFixRounds: 2, lead: "backend" } });
     await backend.call("send_message", { to: "frontend", message: "I take src/*Service.ts, you take src/*View.ts, qa takes test/**" });
     await backend.call("send_message", { to: "qa", message: "I take src/*Service.ts, frontend src/*View.ts, you test/**" });
     const proposed = await backend.call("propose", {
@@ -395,14 +396,13 @@ describe("three agents in three git worktrees", () => {
     }
     expect(await backend.call("complete")).toMatchObject({ phaseChanged: { to: "IMPLEMENT" }, nextAction: "implement" });
 
-    // IMPLEMENT in parallel, each in its own worktree; work counts only when committed
-    expect(await frontend.callError("complete", { result: "UserView", filesChanged: ["src/UserView.ts"] })).toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("Commit your changes") });
+    // IMPLEMENT in parallel, each in its own worktree; commits are optional and recorded as given (the lead merges from them)
     const shaB = ws.commit("backend", "src/UserService.ts", "export const users = () => [{ id: 1, name: 'a' }];\n");
     const shaF = ws.commit("frontend", "src/UserView.ts", "export const view = (u) => u.map((x) => x.nam).join();\n");
     const shaQ = ws.commit("qa", "test/users.test.ts", "// GET /users and UserView\n");
-    expect(await backend.call("complete", { result: "UserService", commits: [shaB] })).toMatchObject({ implementation: { filesChanged: ["src/UserService.ts"] }, nextAction: "wait" });
-    expect(await frontend.call("complete", { result: "UserView", commits: [shaF] })).toMatchObject({ nextAction: "wait" });
-    expect(await qa.call("complete", { result: "tests", commits: [shaQ] })).toMatchObject({ phaseChanged: { to: "SYNC" }, nextAction: "sync", reviewTargets: ["backend", "frontend"] });
+    expect(await backend.call("complete", { result: "UserService", filesChanged: ["src/UserService.ts"], commits: [shaB] })).toMatchObject({ implementation: { filesChanged: ["src/UserService.ts"], commits: [shaB] }, nextAction: "wait" });
+    expect(await frontend.call("complete", { result: "UserView", filesChanged: ["src/UserView.ts"], commits: [shaF] })).toMatchObject({ nextAction: "wait" });
+    expect(await qa.call("complete", { result: "tests", filesChanged: ["test/users.test.ts"], commits: [shaQ] })).toMatchObject({ phaseChanged: { to: "SYNC" }, nextAction: "sync", reviewTargets: ["backend", "frontend"] });
 
     // SYNC round 1: qa's NEEDS_FIX does not cut off the other reviews; the task moves once all three reported
     expect(await qa.call("complete", { status: "NEEDS_FIX", findings: [{ severity: "ERROR", description: "UserView reads x.nam, the field is name", relatedAgent: "frontend", files: ["src/UserView.ts"] }] })).toMatchObject({ task: { phase: "SYNC" }, waitingOn: ["backend", "frontend"] });
@@ -412,7 +412,7 @@ describe("three agents in three git worktrees", () => {
 
     // only frontend fixes; round 2 reviews only that fix, by backend and qa
     const fixSha = ws.commit("frontend", "src/UserView.ts", "export const view = (u) => u.map((x) => x.name).join();\n");
-    expect(await frontend.call("complete", { result: "x.nam -> x.name", commits: [fixSha] })).toMatchObject({ phaseChanged: { to: "SYNC" }, task: { syncRound: 2 }, nextAction: "wait", waitingOn: ["backend", "qa"] });
+    expect(await frontend.call("complete", { result: "x.nam -> x.name", filesChanged: ["src/UserView.ts"], commits: [fixSha] })).toMatchObject({ phaseChanged: { to: "SYNC" }, task: { syncRound: 2 }, nextAction: "wait", waitingOn: ["backend", "qa"] });
     for (const a of [backend, qa]) {
       expect(await a.call("wait", { timeoutMs: 20_000 })).toMatchObject({ nextAction: "sync", reviewTargets: ["frontend"] });
     }

@@ -5,6 +5,7 @@ import { AgreementStore } from "../stores/agreementStore.js";
 import { ImplementationStore } from "../stores/implementationStore.js";
 import { IntegrationStore } from "../stores/integrationStore.js";
 import { PhaseManager } from "../phase/phaseManager.js";
+import { SubtaskStore } from "../stores/subtaskStore.js";
 import { SyncStore } from "../stores/syncStore.js";
 import { TaskStore } from "../stores/taskStore.js";
 import type { FileStore } from "../storage/fileStore.js";
@@ -24,6 +25,7 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
   const syncs = new SyncStore(fs);
   const grants = new GrantStore(fs);
   const integrations = new IntegrationStore(fs);
+  const subtasks = new SubtaskStore(fs);
 
   const [agents, tasks] = await Promise.all([agentStore.list(), taskStore.list()]);
 
@@ -46,6 +48,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         waitingOn: waitingOn(task, agreement?.assignments.map((a) => a.agentId) ?? [], agreement?.approvedBy ?? [], impls, current.map((r) => r.agentId), !!agreement),
         messages: await tail<Message>(fs, ["tasks", task.id, "messages"], "msg"),
         events: await tail<NetworkEvent>(fs, ["tasks", task.id, "events"], "event"),
+        subtasks: Object.fromEntries((await Promise.all(task.agents.map((a) => subtasks.get(task.id, a)))).map((l) => [l.agentId, l.items])),
+        followUps: tasks.filter((t) => t.parentTaskId === task.id).map((t) => t.id),
       };
     }),
   );
@@ -71,8 +75,13 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
 }
 
 function pickTask(t: Task) {
-  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand } = t;
-  return { id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git, blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null };
+  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed } = t;
+  return {
+    id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
+    blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
+    parentTaskId: parentTaskId ?? null, baseCommit: baseCommit ?? null,
+    followUpBudget: maxFollowUps ? { max: maxFollowUps, used: followUpsUsed ?? 0 } : null,
+  };
 }
 
 /** Who the task is currently waiting on, mirroring the protocol's prerequisites per phase. */
