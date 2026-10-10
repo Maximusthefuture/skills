@@ -43,7 +43,7 @@ L: the "user approves design and plan" gate becomes "all agents approve the agre
 - In a follow-up task (`task.baseCommit` is set) working in your own git branch, merge the parent's result first: `git merge <baseCommit>`.
 - Phase 4 as usual: domain skills of the slice, `java-tdd` per behavior, hook warnings handled.
 - Phase 5 for your part: full test run of the project (or at least of your module, named in `result`), then the `critic` agent on your diff for M and L. **Do not run `java-code-reviewer` here**: the SYNC reviewer is the fresh-context reviewer. Critic blockers are fixed test-first before `complete`; critic questions go into `result`.
-- Commits are optional in the swarm (pass their hashes to `complete` if you made them; they help the lead merge separate worktrees). Committing to your own branch needs no extra permission; push, PR, Jira still need the user.
+- On your own branch (a separate worktree) commit before `complete` and pass the hashes: reviewers and the lead see only committed work there. In a shared folder commits are optional. Committing to your own branch needs no extra permission; push, PR, Jira still need the user.
 - `result` is the short report from `references/templates.md`: size, files, test command and outcome, critic status and open questions. Under 20 lines.
 
 ### SYNC

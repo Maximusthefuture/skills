@@ -1,6 +1,6 @@
 # Handing work to subagents and reviewer agents
 
-**Open when:** in an L task you want to give a slice to a subagent, or you run a reviewer agent in phase 5.
+**Open when:** an L plan file is written (goldfish check, phase 3), in an L task you want to give a slice to a subagent, or you run a reviewer agent in phase 5.
 
 ## When to give a slice to a subagent
 
@@ -80,6 +80,64 @@ A report is a claim, not evidence.
 3. Compare with the plan: are all the slice's behaviors covered? Do the seam signatures match the plan?
 4. `DONE_WITH_CONCERNS` — resolve every concern before moving on. `BLOCKED` or `NEEDS_CONTEXT` — give context, split the slice or do it yourself. Do not resend the same subagent with the same prompt.
 5. Mark the slice done in the plan or todo list.
+
+## Goldfish check of an L plan (phase 3)
+
+After Dave Rensin's Elephant-Goldfish model: this session is the elephant and remembers the whole discussion; a goldfish is a fresh agent that knows only what is written. If a goldfish cannot retell the plan, or cannot implement it without asking, the plan relies on the conversation rather than on its text. Prompts adapted from [vshvedov/elephant-goldfish](https://github.com/vshvedov/elephant-goldfish) (MIT).
+
+Runs at the end of phase 3 for every L plan file, before the plan is shown to the user (`design-and-plan.md`). Agent: `general-purpose` with `model: sonnet`, not Haiku (see the models note in `skill-map.md`). The prompt holds only the project path and the plan path: no retelling of the discussion, no intent, no "pay attention to". Whatever you add is context the plan does not carry, and the check stops testing the plan.
+
+Round 1: comprehension and readiness in one message. Later rounds: a new readiness agent; never resume the previous one, it remembers the old version. Comprehension again only if round 1 misread the plan.
+
+Comprehension:
+
+```
+You are a fresh reader with no prior context. In the project <path> read the plan
+<plan path> and the files it references. Do not critique the plan or suggest changes.
+
+Return:
+## What the change does
+2–5 sentences in your own words: the behavior that changes, who triggers it, what they get.
+## How the system works today
+2–5 sentences on the classes, tables, endpoints and events the plan touches and how they
+behave now, checked against the code.
+
+The first line is the status: `Status: CLEAR`, or `Status: UNCLEAR` followed by the
+sections you could not retell and why. Do not edit files.
+```
+
+Readiness:
+
+```
+You are an experienced Java/Spring engineer who has not seen any discussion of this task.
+In the project <path> read the plan <plan path> and the files it references. You must
+implement it in one pass and cannot ask the author anything.
+
+For every file, signature at a slice seam, table and column, endpoint, event, error code,
+test boundary and verification command in the plan, check:
+- could you write this code without asking the author?
+- could you tell when it works: are the behavior and its test concrete?
+- does it match the existing code: the file exists or is clearly new, the signature fits
+  its callers, the referenced classes behave as the plan assumes?
+
+List every question you would have to ask the author before you could ship. For each:
+the question in one sentence; the plan section that should have answered it; and either
+`in code: <file:line>` (the answer is in the repository) or `decision` (only a human can
+decide it).
+
+The first line is the status: `Status: READY` (no questions) or
+`Status: NOT_READY — <n> questions`. Do not suggest design improvements and do not review
+style: only what blocks a first-pass implementation. Do not edit files.
+```
+
+How to read the answers:
+- comprehension `UNCLEAR`, or a retelling that differs from what was meant — the plan does not carry the context: rewrite the sections it misread;
+- a readiness question `in code` — write the answer into the plan yourself;
+- a readiness question `decision` — the user's call. It goes to them with the plan for approval, with your recommended answer; do not decide it for them;
+- a question may be rebutted only as: outside the task (quote the goal or the user's words), decided by the user (quote them), or forbidden by `CLAUDE.md` (cite it). "Section X already says so" is not a rebuttal: the goldfish did not find it there, so rewrite section X. Rebuttals go verbatim into the plan's "Goldfish check" section;
+- only nit-picks left (wording, names that cross no seam) — record them under assumptions and end the loop.
+
+After a revision run a new readiness round. At most three revisions: if the third still ends `NOT_READY`, stop and ask the user — answer the remaining questions, cut scope, proceed with them recorded as assumptions, or stop. The check asks the user nothing by itself, so a general "do it all" does not skip it (`SKILL.md`, "When to stop and ask").
 
 ## Reviewer agents (phase 5)
 

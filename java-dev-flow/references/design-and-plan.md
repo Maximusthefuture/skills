@@ -37,9 +37,13 @@ If the design decided to refactor first, the first slice is a **preparatory refa
 
 **Exit:** for M — test boundaries and the behavior list in the session todo list. For L — a plan file per the template in `templates.md`: `docs/plans/YYYY-MM-DD-<slug>.md` unless the project has its own place for such documents. In an OpenSpec project the plan for both M and L is the change's `specs/` and `tasks.md`. If the session is in plan mode, this plan is the plan to exit with.
 
+**L: goldfish check before approval.** When the plan file is written and passes the self-check in `templates.md`, hand it to two fresh agents: comprehension (can a cold reader retell it) and readiness (could they implement it in one pass without asking anything). Prompts, how to read the answers and the three-revision limit are in `subagent-handoff.md`, "Goldfish check of an L plan". Only then show the plan to the user, with the check's result: rounds, the `decision` questions with your recommended answers, rebuttals. If approval changes slices or seams, run readiness once more before code.
+
+The check does not run for M (unless the user asks; then write the M plan to a file first), in an OpenSpec project (`java-spec-review` and its `READY` cover this) or in a swarm (there is no plan file: phases 0–3 go into `propose`).
+
 ## L: moving to implementation
 
-When the user has approved the plan, offer two options: continue in this session or start phase 4 in a new one. A new session is better for a long implementation: the design discussion is no longer needed there and only takes context. An L plan is self-contained and holds the design summary, so a new session needs only a link to the file. Do not copy a retelling of the plan into the prompt. The prompt goes in one block so it can be copied whole:
+When the user has approved the plan, offer two options: continue in this session or start phase 4 in a new one. A new session is better for a long implementation: the design discussion is no longer needed there and only takes context. An L plan is self-contained and holds the design summary, so a new session needs only a link to the file. The goldfish check's `READY` is the evidence for that. Do not copy a retelling of the plan into the prompt. The prompt goes in one block so it can be copied whole:
 
 ```
 Use the java-dev-flow skill. L task, the plan is approved — start with phase 4, slice 1.

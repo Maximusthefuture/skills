@@ -65,6 +65,9 @@ The plan pins the decisions the implementer cannot make alone: files, names and 
 **Constraints:** <Java/Boot versions, API backward compatibility, prohibitions from CLAUDE.md, dependency limits>
 **Integration test infrastructure:** <from the build: Testcontainers (Postgres, Kafka) | no Testcontainers: Kafka — `@EmbeddedKafka`, DB — <how the project starts it in tests>>; added test dependencies: <none | `org.testcontainers:kafka` | `spring-kafka-test`>
 
+## Rejected alternatives
+- <option> — <why not: the user's decision, a constraint, a measurement>
+
 ## PR split
 - PR 1: slices 1–2 (schema and repository) — can be merged separately
 - PR 2: slices 3–5
@@ -92,12 +95,20 @@ The plan pins the decisions the implementer cannot make alone: files, names and 
 
 ## Risks not covered by slice tests
 <Inputs and failures the task implies but no slice checks yet. For example: a duplicate webhook while the first is still processing; a provider timeout after the charge. For each — which slice gets the test.>
+
+## Goldfish check
+Rounds: <n> · comprehension: <CLEAR | UNCLEAR → what was rewritten> · readiness: <READY | n questions left>
+- rebutted: <question> — <reason, verbatim>
+- accepted as an assumption: <question> — <assumption>
 ````
 
 Before showing it to the user, check the plan yourself:
 - every requirement has a slice;
 - names and signatures at seams match between slices;
-- the plan has no lines that decide nothing ("handle errors", "add tests").
+- the plan has no lines that decide nothing ("handle errors", "add tests");
+- every option that was discussed and dropped is under "Rejected alternatives": a later session would otherwise propose it again.
+
+Then run the goldfish check (`subagent-handoff.md`) and fill in its section.
 
 ---
 
@@ -119,6 +130,7 @@ Route: <classification line; if the size changed — from what to what and why>
 - `./mvnw verify` — <N tests, 0 failed> (or the failed ones by name)
 - java-code-reviewer — <status; n findings ≥ 80: fixed m, left k — why> (no agent: "java-code-review, self-review")
 - critic — <status; blockers: fixed m of n; risks: fixed k, left l — why> (no agent: "critic questions, self-review")
+- goldfish check (L) — <READY in n rounds | skipped by the user | k open questions accepted as assumptions>
 - <agent / command> — <result>
 
 ### Questions before release (from critic)

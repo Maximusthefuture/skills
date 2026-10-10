@@ -13,7 +13,7 @@ Talk to the user in their language. Announce phase transitions in one line.
 ## Checklist before saying "done"
 
 1. The classification line (phase 0) came before the first line of code.
-2. M and L: a design summary exists. L: design and plan were approved by the user before code.
+2. M and L: a design summary exists. L with a plan file: the plan passed the goldfish check (`READY`), or the user explicitly skipped it or accepted its open questions; design and plan were approved by the user before code.
 3. Every behavior is covered by a test you saw fail for the right reason (`java-tdd`).
 4. The full test suite ran in this session after the last edit. Failed and not-run tests are named in the report; no Docker — the report says so.
 5. M and L: the `java-code-reviewer` and `critic` agents ran on the diff in one message, in parallel. Their findings were checked against the code: fixed test-first or listed in the report.
@@ -62,7 +62,7 @@ A quick look at the affected classes is enough; do not read the whole project.
 |---|---|---|
 | **S** | an edit inside an existing component, 1–3 production files, 1–3 behaviors. **Unchanged:** DB schema, public API or event contract (parameters, pagination, response format, error codes), authorization, transaction boundaries, external calls | skip phases 1–3, go to phase 4; short verification |
 | **M** | a new component or any of the "unchanged" items above; one module; up to ~10 behaviors | all phases; design — 10–20 lines in chat; plan — behaviors in the todo list |
-| **L** | several modules or services; schema + API + integration together; backfill; vague requirements; more than ~10 behaviors or a day of work | clarification via `grilling`; design and plan in a file; **wait for approval before code**; propose splitting into PRs |
+| **L** | several modules or services; schema + API + integration together; backfill; vague requirements; more than ~10 behaviors or a day of work | clarification via `grilling`; design and plan in a file; goldfish check of the plan; **wait for approval before code**; propose splitting into PRs |
 
 A public contract change is no longer S, even in one file. Size is revisited as you go: an S task touched the schema, a contract or an external call — announce "upgrading to M" and do the skipped phases. More than 4–5 signals is almost always L.
 
@@ -91,7 +91,7 @@ A skill is loaded in the phase and slice where its signal shows up.
 |---|---|---|---|
 | 1. Clarification | L; M — only if the design depends on the answer | L: `grilling`; M: up to three questions, each with a recommended answer | questions closed or assumptions recorded |
 | 2. Design | M, L | `think-before-coding` + domain skills by signals; a variant for a set the code branches on → `java-extensibility-review` | design summary per `references/templates.md`; L — user approval |
-| 3. Plan | M, L | — | M: test boundaries and behaviors in the todo list; L: plan file and approval; OpenSpec: `tasks.md` |
+| 3. Plan | M, L | L: goldfish check — two fresh agents (`references/subagent-handoff.md`) | M: test boundaries and behaviors in the todo list; L: plan file, goldfish check, approval; OpenSpec: `tasks.md` |
 | 4. Implementation | always | `java-tdd` for every behavior | every behavior has a test you saw fail |
 | 5. Verification | always | by size, see below | full run; reviewer and critic findings resolved |
 | 6. Report | always | template `references/templates.md` | report to the user |
@@ -153,6 +153,8 @@ Only in these cases:
 - an irreversible or external action: commit, push, PR, Jira, deleting data, shared configuration.
 
 Decide everything else yourself and record the decision with its reason in the report.
+
+**The goldfish check of an L plan is not a stop.** It asks the user nothing, so "do it all", "implement right away" or an autonomous mode do not skip it: they waive the pauses for the user, such as L approval. Skip the check only when the user says so about this check ("skip the goldfish check", "без goldfish-проверки"), and write "Goldfish check: skipped by the user" in the report.
 
 ## Priorities in a conflict
 

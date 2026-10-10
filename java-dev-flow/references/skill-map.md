@@ -59,6 +59,7 @@ Models: `java-code-reviewer` and `critic` use `sonnet` (on Haiku they miss cross
 | `critic` | phase 5, M and L: pre-mortem — what breaks in production (existing data, deploy and rollback, consumers, retries, partial failures, load, observability); loads domain skills by diff signals itself | read + Bash (git, compilation), no edits |
 | `test-runner` | phases 4–5: runs the test command and returns a short summary instead of logs: passed / failed / skipped, failed tests with the first assertion line, what did not run and why | Bash only, no edits |
 | `component-architect` | L: a design that needs a wide code overview | read only |
+| goldfish check (built-in `general-purpose`, two agents) | phase 3, L: comprehension and readiness of the plan file; gets only the project and plan paths, prompts in `subagent-handoff.md` | read only by the prompt |
 | `incident-thinker` | phase 5: consumer, job, integration, money | read only |
 | `schema-reviewer` | phase 5: changeset or `@Entity` in L, a big or hot table | read only |
 | `security-reviewer` | phase 5: endpoint, security config, roles, tenant | read only |
@@ -243,6 +244,19 @@ All four ask questions about what we build. `java-spec-review` also loads the sa
 
 The pre-mortem in `java-spec-review` (section G of its question bank) does not replace `critic`. The first looks for holes in the agreement, the second in the code written from it.
 
+### 2.18. Plan checks: goldfish check, `java-spec-review`, `critic`
+
+All three look for holes before or after code. They differ in what they read and whom they ask.
+
+**Resolution:**
+- goldfish check — an L plan file without OpenSpec, before approval: can a reader who saw none of the discussion retell the plan and implement it in one pass. It knows only the plan and the code, asks the user nothing and loads no domain skills.
+- `java-spec-review` — an OpenSpec change before `/opsx:apply`: domain question bank, grilling rounds with the user. Its `READY` replaces the goldfish check in OpenSpec projects.
+- `critic` — the code after implementation: what breaks in production.
+
+A plan that passed the goldfish check can still be wrong: it is executable, not necessarily correct. Correctness stays with the design phases and with `critic`.
+
 ---
 
 Ideas for the evidence rule, subagent statuses and the sliced plan are partly borrowed from [obra/superpowers](https://github.com/obra/superpowers) (MIT).
+
+The goldfish check follows Dave Rensin's Elephant-Goldfish model; its prompts are adapted from [vshvedov/elephant-goldfish](https://github.com/vshvedov/elephant-goldfish) (MIT).
