@@ -1,8 +1,11 @@
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { SessionOutput, type SessionResult } from "./sessionOutput.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore, defaultIsProcessAlive } from "./stores/agentStore.js";
 import { MessageStore } from "./stores/messageStore.js";
+import { SessionStore } from "./stores/sessionStore.js";
 import { TaskStore } from "./stores/taskStore.js";
 import type { Task } from "./types.js";
 
@@ -17,7 +20,9 @@ import type { Task } from "./types.js";
 export const DEFAULT_PROMPT =
   'You are agent {agent} of the agent-network swarm. Task {taskId} ("{title}") is assigned to you. ' +
   "Work through the agent-network MCP tools and the project files: call swarm_context first, then do what nextAction says " +
-  "and read nextAction in every response; when it is wait, call wait(). End your turn only when nextAction is done.{resume}";
+  "and read nextAction in every response; when it is wait, call wait(). End your turn only when nextAction is done. " +
+  "Nobody reads your replies in this session: if something only a human can decide is unclear (scope, requirements), ask with " +
+  'send_message({to: "operator", message: <question>}) and call wait() for the answer; never invent the scope.{resume}';
 
 const RESUME =
   " This is session {attempt} for this task: the previous one ended before the task was done. " +
@@ -40,10 +45,23 @@ export function renderPrompt(template: string, v: PromptVars): string {
     .replaceAll("{attempt}", String(v.attempt));
 }
 
-/** `{prompt}` inside any argument is replaced; without a placeholder the prompt becomes the last argument. */
-export function buildArgv(command: string[], prompt: string): string[] {
-  return command.some((a) => a.includes("{prompt}")) ? command.map((a) => a.replaceAll("{prompt}", prompt)) : [...command, prompt];
+/** The operator's own instructions for one agent (its role, rules, style) go after the standard prompt, never instead of it. */
+export function withInstructions(prompt: string, instructions: string | undefined, v: PromptVars): string {
+  const text = instructions?.trim();
+  return text ? `${prompt}\n\nInstructions from the operator for you (${v.agent}):\n${renderPrompt(text, v)}` : prompt;
 }
+
+/**
+ * `{prompt}` inside any argument is replaced; without a placeholder the prompt becomes the last argument.
+ * `{systemPrompt}` is replaced by the system prompt text (for --system-prompt), when given.
+ */
+export function buildArgv(command: string[], prompt: string, systemPrompt?: string): string[] {
+  const args = systemPrompt === undefined ? command : command.map((a) => a.replaceAll("{systemPrompt}", systemPrompt));
+  return args.some((a) => a.includes("{prompt}")) ? args.map((a) => a.replaceAll("{prompt}", prompt)) : [...args, prompt];
+}
+
+/** Used for {systemPrompt} when the system prompt file cannot be read: the CLI must not get an empty system prompt. */
+export const FALLBACK_SYSTEM_PROMPT = "You are a headless coding agent in an agent-network swarm. Follow nextAction from the agent-network tools.";
 
 const seq = (t: Task): number => Number(t.id.slice(t.id.lastIndexOf("-") + 1));
 const isFinished = (t: Task): boolean => t.status === "COMPLETED" || t.status === "CANCELLED";
@@ -61,6 +79,12 @@ export interface RunnerOptions {
   cwd?: string;
   /** Placeholders: {agent} {taskId} {title} {attempt} {resume}. */
   promptTemplate?: string;
+  /** Read before every session (edits apply to the next one); replaces the whole template. Wins over promptTemplate. */
+  promptFile?: string;
+  /** Read before every session: the agent's own instructions, appended to the prompt. */
+  instructionsFile?: string;
+  /** Read before every session and put where the command has {systemPrompt} (e.g. --system-prompt "{systemPrompt}"). */
+  systemPromptFile?: string;
   /** Extra sessions for one task after the first before the runner gives up until the task changes. Default 3. */
   maxRestarts?: number;
   /** How often the idle runner looks at the network directory. Default 2000 ms. */
@@ -91,29 +115,58 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Runs the agent session; on abort sends SIGTERM, then SIGKILL after 10 s. Resolves with the exit code. */
-function runSession(argv: string[], env: NodeJS.ProcessEnv, cwd: string | undefined, stdio: "inherit" | "ignore", signal?: AbortSignal, output?: (text: string) => void): Promise<number> {
+interface SessionRun {
+  code: number;
+  result?: SessionResult;
+}
+
+/**
+ * Runs the agent session; on abort sends SIGTERM, then SIGKILL after 10 s. Its stdout goes through SessionOutput
+ * (JSON events become a readable log and the final usage is kept); `sink` receives what to show (null = nothing).
+ */
+function runSession(argv: string[], env: NodeJS.ProcessEnv, cwd: string | undefined, sink: ((text: string) => void) | null, signal?: AbortSignal): Promise<SessionRun> {
   return new Promise((done) => {
-    const out = output ? "pipe" : stdio;
-    const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ["ignore", out, out] });
-    if (output) {
-      child.stdout?.on("data", (b: Buffer) => output(b.toString("utf8")));
-      child.stderr?.on("data", (b: Buffer) => output(b.toString("utf8")));
-    }
+    const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    const parsed = new SessionOutput();
+    const show = (text: string): void => {
+      if (text && sink) sink(text);
+    };
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (text: string) => show(parsed.feed(text)));
+    child.stderr.on("data", (text: string) => show(text));
     let killTimer: NodeJS.Timeout | undefined;
     const stop = (): void => {
       child.kill("SIGTERM");
       killTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
     };
     signal?.addEventListener("abort", stop, { once: true });
+    let settled = false;
     const finish = (code: number): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(killTimer);
       signal?.removeEventListener("abort", stop);
-      done(code);
+      show(parsed.end());
+      const result = parsed.result();
+      done({ code, ...(result ? { result } : {}) });
     };
-    child.on("error", () => finish(127)); // e.g. the CLI is not installed
-    child.on("exit", (code, sig) => finish(code ?? (sig ? 128 : 1)));
+    child.on("error", (e: NodeJS.ErrnoException) => {
+      show(`cannot start ${argv[0]}: ${e.code ?? e.message}\n`);
+      finish(127); // e.g. the CLI is not installed
+    });
+    child.on("close", (code, sig) => finish(code ?? (sig ? 128 : 1))); // after the output is fully read
   });
+}
+
+/** A file the operator may edit at any time; unreadable = say so and go on without it. */
+async function readText(path: string, what: string, log: (l: string) => void): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (e) {
+    log(`cannot read the ${what} ${path} (${(e as NodeJS.ErrnoException).code ?? (e as Error).message}); starting without it`);
+    return undefined;
+  }
 }
 
 /** Returns 0 when stopped by the signal or after --once finished the task, 1 when --once gave up. */
@@ -129,6 +182,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
   const tasks = new TaskStore(fs);
   const agents = new AgentStore(fs);
   const messages = new MessageStore(fs);
+  const sessions = new SessionStore(fs);
 
   const attempts = new Map<string, number>();
   /** taskId -> state signature when the runner gave up; retried as soon as the state changes. */
@@ -177,18 +231,40 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
 
     const attempt = (attempts.get(task.id) ?? 0) + 1;
     attempts.set(task.id, attempt);
-    const prompt = renderPrompt(opts.promptTemplate ?? DEFAULT_PROMPT, { agent, taskId: task.id, title: task.title, attempt });
+    const vars = { agent, taskId: task.id, title: task.title, attempt };
+    const template = (opts.promptFile ? await readText(opts.promptFile, "prompt file", log) : undefined) ?? opts.promptTemplate ?? DEFAULT_PROMPT;
+    const instructions = opts.instructionsFile ? await readText(opts.instructionsFile, "instructions file", log) : undefined;
+    const prompt = withInstructions(renderPrompt(template, vars), instructions, vars);
     const env = { ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt) };
     say(`${task.id}: starting session ${attempt} (phase ${task.phase})`);
     const finishedBefore = new Set((await tasks.listForAgent(agent)).filter(isFinished).map((t) => t.id));
-    const code = await runSession(buildArgv(opts.command, prompt), env, opts.cwd, opts.stdio ?? "inherit", signal, opts.output);
+    const sink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
+    const startedAt = new Date();
+    const wantsSystem = opts.command.some((a) => a.includes("{systemPrompt}"));
+    const systemText = wantsSystem ? (opts.systemPromptFile ? await readText(opts.systemPromptFile, "system prompt file", log) : undefined) : undefined;
+    const system = wantsSystem ? renderPrompt(systemText?.trim() || FALLBACK_SYSTEM_PROMPT, vars) : undefined;
+    const { code, result } = await runSession(buildArgv(opts.command, prompt, system), env, opts.cwd, sink, signal);
+    const endedAt = new Date();
+    // a session may go on to the next task by itself (e.g. a follow-up): its time and tokens are counted for this task
+    const alsoTasks = (await tasks.listForAgent(agent)).filter((t) => isFinished(t) && t.id !== task.id && !finishedBefore.has(t.id));
+    await sessions
+      .create({
+        taskId: task.id, agentId: agent, attempt, startedAt: startedAt.toISOString(), endedAt: endedAt.toISOString(),
+        durationMs: endedAt.getTime() - startedAt.getTime(), exitCode: code,
+        ...(result?.usage ? { usage: result.usage } : {}),
+        ...(result?.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
+        ...(result?.numTurns !== undefined ? { numTurns: result.numTurns } : {}),
+        ...(result?.model ? { model: result.model } : {}),
+        ...(alsoTasks.length ? { alsoFinished: alsoTasks.map((t) => t.id) } : {}),
+      })
+      .catch((e: Error) => log(`cannot record the session: ${e.message}`));
     if (signal?.aborted) break;
 
     const after = await tasks.find(task.id);
     if (!after || isFinished(after)) {
-      // a session may go on to the next task by itself (e.g. a follow-up): name everything it finished
-      const also = (await tasks.listForAgent(agent)).filter((t) => isFinished(t) && t.id !== task.id && !finishedBefore.has(t.id)).map((t) => `${t.id} ${t.status}`);
-      say(`${task.id}: ${after?.status ?? "gone"}${also.length ? `; in the same session also ${also.join(", ")}` : ""} (session exit ${code})`);
+      const also = alsoTasks.map((t) => `${t.id} ${t.status}`);
+      const tokens = result?.usage ? `, ${result.usage.total} tokens` : "";
+      say(`${task.id}: ${after?.status ?? "gone"}${also.length ? `; in the same session also ${also.join(", ")}` : ""} (session exit ${code}${tokens})`);
       attempts.delete(task.id);
       if (opts.once) return 0;
       continue;

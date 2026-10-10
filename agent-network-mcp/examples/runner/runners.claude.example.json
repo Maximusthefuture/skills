@@ -6,23 +6,62 @@
     "mcp.json takes AGENT_ID and NETWORK_DIR from the environment (${AGENT_ID}); the runner sets them for every session.",
     "--settings adds the agent-network hooks (new messages while working, no early stop); fill in its /abs/path values too, or drop the flag.",
     "Prompt first, right after -p: --allowedTools takes several values and would swallow it.",
+    "instructionsFile (per agent, relative to this file): the agent's own instructions, appended to the standard prompt and read again before every session; can also be set on the page.",
+    "stream-json output lets the runner count tokens and cost per session (task statistics) and still show a readable log.",
+    "Lean context: a short system prompt ({systemPrompt} <- systemPromptFile) and only the tools the agent needs; every turn re-reads them, so this cuts tokens per turn several times.",
     "autostart: false = start that agent with the button on the page."
   ],
   "networkDir": "/abs/path/project/.agent-network",
   "defaults": {
     "command": [
-      "claude", "-p", "{prompt}",
-      "--model", "sonnet", "--max-turns", "200",
-      "--mcp-config", "/abs/path/agent-network-mcp/examples/runner/mcp.json", "--strict-mcp-config",
-      "--settings", "/abs/path/agent-network-mcp/examples/claude-hooks/settings.json",
-      "--permission-mode", "acceptEdits",
-      "--allowedTools", "mcp__agent-network", "Read", "Write", "Edit", "Glob", "Grep", "Bash(git:*)", "Bash(./mvnw:*)"
+      "claude",
+      "-p",
+      "{prompt}",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--tools",
+      "Read,Write,Edit,Glob,Grep,Bash",
+      "--system-prompt",
+      "{systemPrompt}",
+      "--model",
+      "sonnet",
+      "--max-turns",
+      "200",
+      "--mcp-config",
+      "/abs/path/agent-network-mcp/examples/runner/mcp.json",
+      "--strict-mcp-config",
+      "--settings",
+      "/abs/path/agent-network-mcp/examples/claude-hooks/settings.json",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "mcp__agent-network",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Bash(git:*)",
+      "Bash(./mvnw:*)"
     ],
-    "maxRestarts": 2
+    "maxRestarts": 2,
+    "systemPromptFile": "swarm-system-prompt.md"
   },
   "agents": [
-    { "id": "backend", "cwd": "/abs/path/project-backend" },
-    { "id": "reviewer", "cwd": "/abs/path/project-reviewer" },
-    { "id": "tester", "cwd": "/abs/path/project-tester", "autostart": false }
+    {
+      "id": "backend",
+      "cwd": "/abs/path/project-backend"
+    },
+    {
+      "id": "reviewer",
+      "cwd": "/abs/path/project-reviewer",
+      "instructionsFile": "instructions/reviewer.md"
+    },
+    {
+      "id": "tester",
+      "cwd": "/abs/path/project-tester",
+      "autostart": false
+    }
   ]
 }

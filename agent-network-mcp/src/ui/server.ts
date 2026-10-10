@@ -27,7 +27,7 @@ const json = (status: number, value: unknown): Reply => ({ status, type: "applic
 const text = (status: number, body: string): Reply => ({ status, type: "text/plain; charset=utf-8", body });
 
 /**
- * GET / (page), GET /api/state (JSON). With `runners` also: POST /api/tasks, POST /api/runners/<id>/start|stop,
+ * GET / (page), GET /api/state (JSON). With `runners` also: POST /api/tasks, POST /api/runners/<id>/start|stop|instructions, POST /api/questions/answer,
  * GET /api/runners/<id>/log. Bound to loopback; foreign Host headers are refused, and state-changing requests must be
  * same-origin JSON (a page on another site cannot create tasks for the agents).
  */
@@ -59,7 +59,7 @@ export async function startUiServer(networkDir: string, opts: UiOptions = {}): P
 
     if (method === "GET") {
       if (path === "/") return { status: 200, type: "text/html; charset=utf-8", body: PAGE_HTML };
-      if (path === "/api/state") return json(200, { ...(await buildUiState(fs)), control: pool ? { runners: pool.list() } : null });
+      if (path === "/api/state") return json(200, { ...(await buildUiState(fs)), control: pool ? { runners: await pool.details() } : null });
       const log = /^\/api\/runners\/([^/]+)\/log$/.exec(path);
       if (log && pool) return json(200, { id: log[1], lines: pool.log(decodeURIComponent(log[1]!)) });
       return text(404, "not found");
@@ -84,6 +84,15 @@ export async function startUiServer(networkDir: string, opts: UiOptions = {}): P
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
       });
       return json(201, { task });
+    }
+    if (path === "/api/questions/answer") {
+      const b = body as { taskId?: unknown; messageId?: unknown; answer?: unknown };
+      return json(201, { answer: await operator.answerQuestion({ taskId: String(b.taskId ?? ""), messageId: String(b.messageId ?? ""), answer: String(b.answer ?? "") }) });
+    }
+    const inst = /^\/api\/runners\/([^/]+)\/instructions$/.exec(path);
+    if (inst) {
+      const file = (body as { file?: unknown }).file;
+      return json(200, await pool.setInstructionsFile(decodeURIComponent(inst[1]!), typeof file === "string" ? file : null));
     }
     const act = /^\/api\/runners\/([^/]+)\/(start|stop)$/.exec(path);
     if (act) {

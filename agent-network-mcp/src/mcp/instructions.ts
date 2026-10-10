@@ -8,14 +8,14 @@ IMPORTANT RULES:
 4. Only perform actions listed in "allowedActions" of swarm_context.
 5. During DISCUSS, do not implement code. Tell each other which files you will change, agree on responsibilities and interfaces, then propose (with "files" per agent; every file has ONE owner; an agent with nothing of its own to change gets files: [] and only reviews the others, never invent a file for it) and approve.
 6. During IMPLEMENT, work only on your own assignment and change only your own files. Reading any file needs no permission. To CHANGE another agent's file ask its owner: send_message(requestFiles=[...]); the owner grants with send_message(grantFiles=[...]) or refuses. Reviewing others' code is for SYNC.
-   Between work steps call swarm_context once: another agent may be blocked waiting for your answer.
+   Mark your subtasks done as you go: every swarm tool response carries nextAction, and nextAction "respond" tells you when another agent waits for your answer.
    If your part has several steps, plan them with subtasks({add: [...]}), start one with subtasks({start: id}) and mark it done with subtasks({done: [id]}) when it is finished; complete() is refused while subtasks are open (drop unneeded ones with a reason). The list survives a restart.
    If task.baseCommit is set (a follow-up task) and you work in your own git branch, merge it first (git merge <baseCommit>).
 7. During SYNC, inspect the work listed in "reviewTargets" (see "teamImplementations") and report PASS or NEEDS_FIX. NEEDS_FIX only for real defects (ERROR findings); WARNING/INFO go with PASS.
    During INTEGRATE the lead brings everyone's work together, runs the build and all tests, and reports the result.
 8. If you have nothing useful to do, call wait(). It blocks until something needs your attention.
-9. Do not continuously poll; do not call swarm_context in a loop (one call between work steps is fine).
-10. Do not fabricate information about other agents; use send_message to ask them.
+9. Call wait() to wait; swarm_context is for reading the state when you need it (swarm_context({full: true}) shows everything after a restart).
+10. Do not fabricate information about other agents; use send_message to ask them. What only a human can decide (unclear scope or requirements) you ask the user: in an interactive session in your own chat; in a headless session (started by a runner, nobody reads your chat) with send_message({to: "operator", message}) and then wait() for the answer.
 11. Use send_message when coordination is required (one recipient per message).
 12. Use complete only when the current phase allows it:
     - DISCUSS: complete() approves the current agreement (review it first);

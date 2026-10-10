@@ -61,8 +61,8 @@ trap 'echo; echo "stopping..."; cleanup; echo "logs: $RUN"; exit 130' INT TERM
 runner() {
   local id=$1
   "${BIN[@]}" run --agent "$id" --network-dir "$NET" --cwd "$PROJECT" \
-    --prompt-file "$AN/examples/runner/qwen-prompt.md" --max-restarts 2 -- \
-    qwen "{prompt}" "${MODEL_FLAGS[@]}" \
+    --prompt-file "$AN/examples/runner/qwen-prompt.md" --system-prompt-file "$AN/examples/runner/swarm-system-prompt.md" --max-restarts 2 -- \
+    qwen "{prompt}" -o stream-json --system-prompt "{systemPrompt}" --exclude-tools web_fetch agent list_agents skill get_goal update_goal manage_memory search_memory notebook_edit "${MODEL_FLAGS[@]}" \
       --mcp-config "$RUN/qwen-mcp.json" \
       --approval-mode auto-edit --allowed-tools mcp__agent-network \
       --max-session-turns 200 --max-wall-time 40m \

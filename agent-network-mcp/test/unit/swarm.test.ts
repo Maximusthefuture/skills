@@ -75,14 +75,15 @@ describe("swarm_context", () => {
       task: { id: "task-001", phase: "DISCUSS", status: "ACTIVE", agents: ["backend", "reviewer"] },
       nextAction: "propose",
       allowedActions: ["send_message", "propose", "wait"],
-      agreement: null,
-      assignment: null,
     });
-    expect(lead.otherAgents).toEqual([{ id: "reviewer", role: null, status: "NOT_REGISTERED" }]);
+    expect(lead.agreement).toBeUndefined(); // compact: empty fields are left out
+    expect(lead.assignment).toBeUndefined();
+    expect(lead.otherAgents).toEqual([{ id: "reviewer", status: "NOT_REGISTERED" }]);
     expect(await services.backend!.agents.get("backend")).toMatchObject({ status: "ONLINE" });
     const other = await s.reviewer.context();
     expect(other).toMatchObject({ nextAction: "wait", allowedActions: ["send_message", "propose", "wait"] });
-    expect((other.otherAgents as any[])[0]).toMatchObject({ id: "backend", role: "backend" });
+    expect((other.otherAgents as any[])[0]).toEqual({ id: "backend", status: "ONLINE" }); // role = id is left out
+    expect(((await s.reviewer.context({ full: true })).otherAgents as any[])[0]).toMatchObject({ id: "backend", role: "backend" });
   });
 
   it("walks every phase with the right nextAction / allowedActions / assignment", async () => {
@@ -91,7 +92,7 @@ describe("swarm_context", () => {
     await s.backend.context();
     const proposed = await s.backend.propose({ summary: "split", assignments, decisions: ["UUID ids"], interfaces: ["POST /users"] });
     expect(proposed).toMatchObject({ ok: true, action: "AGREEMENT_PROPOSED", nextAction: "approve", allowedActions: ["send_message", "propose", "complete", "wait"] });
-    expect(proposed.agreement).toMatchObject({ summary: "split", decisions: ["UUID ids"], approvedBy: [], approvedByYou: false });
+    expect(proposed.agreement).toMatchObject({ summary: "split", decisions: ["UUID ids"], approvedBy: [] });
 
     await s.reviewer.context();
     expect(await s.reviewer.complete({})).toMatchObject({ action: "AGREEMENT_APPROVED", nextAction: "wait", waitingOn: ["backend"] });
@@ -99,7 +100,8 @@ describe("swarm_context", () => {
     expect(toImpl).toMatchObject({ task: { phase: "IMPLEMENT" }, phaseChanged: { from: "DISCUSS", to: "IMPLEMENT" }, nextAction: "implement", assignment: { responsibility: "REST API" } });
 
     const impl = await s.backend.complete({ result: "api", filesChanged: ["src/Api.java"], commits: ["abc123"] });
-    expect(impl).toMatchObject({ action: "IMPLEMENTATION_COMPLETED", nextAction: "wait", implementation: { status: "READY_FOR_SYNC", filesChanged: ["src/Api.java"] }, waitingOn: ["reviewer"] });
+    expect(impl).toMatchObject({ action: "IMPLEMENTATION_COMPLETED", nextAction: "wait", implementation: { status: "READY_FOR_SYNC" }, waitingOn: ["reviewer"] });
+    expect((await s.backend.context({ full: true })).implementation).toMatchObject({ status: "READY_FOR_SYNC", filesChanged: ["src/Api.java"], commits: ["abc123"] });
     const sync = await s.reviewer.complete({ result: "validation" });
     expect(sync).toMatchObject({ phaseChanged: { from: "IMPLEMENT", to: "SYNC" }, nextAction: "sync", allowedActions: ["send_message", "complete", "wait"] });
     expect(sync.teamImplementations).toEqual([expect.objectContaining({ agentId: "backend", filesChanged: ["src/Api.java"], commits: ["abc123"] })]);
@@ -111,13 +113,14 @@ describe("swarm_context", () => {
     expect(integrate).toMatchObject({ phaseChanged: { from: "SYNC", to: "INTEGRATE" }, nextAction: "wait", waitingOn: ["backend"] });
     const lead = await s.backend.context();
     expect(lead).toMatchObject({ nextAction: "integrate", allowedActions: ["send_message", "complete", "wait"], task: { lead: "backend", maxFixRounds: 3 } });
-    expect(lead.exampleCall).toMatchObject({ tool: "complete", args: { status: "PASS" } });
+    expect(lead.hint).toContain('complete({status: "PASS", result})');
     expect(await failure(s.backend, s.backend.complete({ status: "PASS" }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("'result'") });
     expect(await failure(s.backend, s.backend.complete({ status: "PASS", result: "x", filesChanged: ["a"] }))).toMatchObject({ error: "INVALID_INPUT" });
     expect(await failure(s.reviewer, s.reviewer.complete({ status: "PASS", result: "x" }))).toMatchObject({ error: "NOT_ASSIGNED" });
 
     const done = await s.backend.complete({ status: "PASS", result: "merged into main, tests green", commits: ["abc999"] });
-    expect(done).toMatchObject({ action: "INTEGRATION_PASS", task: { phase: "DONE", status: "COMPLETED" }, nextAction: "done", allowedActions: [], integration: { status: "PASS", commits: ["abc999"] } });
+    expect(done).toMatchObject({ action: "INTEGRATION_PASS", task: { phase: "DONE", status: "COMPLETED" }, nextAction: "done", allowedActions: [] });
+    expect((await s.backend.context({ full: true })).integration).toMatchObject({ status: "PASS", commits: ["abc999"] });
     expect(await s.reviewer.context()).toMatchObject({ nextAction: "done" });
   });
 
@@ -126,9 +129,9 @@ describe("swarm_context", () => {
     await task();
     const lead = await s.backend.context();
     expect(lead.exampleCall).toMatchObject({ tool: "propose", args: { assignments: [{ agentId: "backend" }, { agentId: "reviewer" }] } });
-    expect((await s.reviewer.context()).exampleCall).toEqual({ tool: "wait", args: {} });
+    expect((await s.reviewer.context()).exampleCall).toBeUndefined(); // simple calls are spelled out in the hint
     await s.backend.propose({ summary: "s", assignments });
-    expect((await s.reviewer.context()).exampleCall).toEqual({ tool: "complete", args: {} });
+    expect((await s.reviewer.context()).exampleCall).toBeUndefined();
   });
 
   it("is idempotent: pending messages stay until the agent acts, then count as read", async () => {
@@ -264,11 +267,11 @@ describe("tool misuse (state is never corrupted, errors are actionable)", () => 
   it("send_message to a nonexistent agent, to self, empty, or to an agent of another task", async () => {
     const { s, task } = await setup(["backend", "reviewer", "outsider"]);
     await task(["backend", "reviewer"]);
-    expect(await failure(s.backend, s.backend.sendMessage({ to: "ghost", message: "x" }))).toMatchObject({ error: "NOT_ASSIGNED", validRecipients: ["reviewer"] });
-    expect(await failure(s.backend, s.backend.sendMessage({ to: "outsider", message: "x" }))).toMatchObject({ error: "NOT_ASSIGNED", validRecipients: ["reviewer"] });
+    expect(await failure(s.backend, s.backend.sendMessage({ to: "ghost", message: "x" }))).toMatchObject({ error: "NOT_ASSIGNED", validRecipients: ["reviewer", "operator"] });
+    expect(await failure(s.backend, s.backend.sendMessage({ to: "outsider", message: "x" }))).toMatchObject({ error: "NOT_ASSIGNED", validRecipients: ["reviewer", "operator"] });
     expect(await failure(s.backend, s.backend.sendMessage({ to: "backend", message: "x" }))).toMatchObject({ error: "NOT_ASSIGNED" });
     expect(await failure(s.backend, s.backend.sendMessage({ to: "reviewer", message: "   " }))).toMatchObject({ error: "INVALID_INPUT" });
-    expect(await failure(s.backend, s.backend.sendMessage({ message: "x" }))).toMatchObject({ error: "INVALID_INPUT", validRecipients: ["reviewer"] });
+    expect(await failure(s.backend, s.backend.sendMessage({ message: "x" }))).toMatchObject({ error: "INVALID_INPUT", validRecipients: ["reviewer", "operator"] });
     expect(await failure(s.outsider!, s.outsider!.sendMessage({ to: "backend", message: "x" }))).toMatchObject({ error: "NO_ACTIVE_TASK" });
     expect((await s.reviewer.context()).pendingMessages).toEqual([]);
   });
@@ -544,12 +547,12 @@ describe("file ownership and negotiation", () => {
     );
     expect(err).toMatchObject({ error: "FILE_OVERLAP", overlaps: [{ agents: ["backend", "reviewer"], files: ["src/main/**", "src/main/A.java"] }] });
     expect(err.message).toContain("ONE owner");
-    expect((await s.backend.context()).agreement).toBeNull(); // nothing was stored
+    expect((await s.backend.context()).agreement).toBeUndefined(); // nothing was stored
   });
 
   it("swarm_context shows who owns what", async () => {
     const { s } = await inImplement();
-    expect(await s.backend.context()).toMatchObject({ ownership: { yourFiles: ["src/main/**"], othersFiles: [{ agentId: "reviewer", files: ["src/test/**"] }], grantedToYou: [], grantedByYou: [] } });
+    expect((await s.backend.context()).ownership).toEqual({ yourFiles: ["src/main/**"], othersFiles: [{ agentId: "reviewer", files: ["src/test/**"] }] });
   });
 
   it("complete is refused for another agent's file; unowned files only warn", async () => {
@@ -626,8 +629,8 @@ describe("open file requests (the requester is blocked until the owner answers)"
       exampleCall: { tool: "send_message", args: { to: "reviewer", grantFiles: ["src/main/Controller.java"] } },
     });
     expect(ctx.allowedActions).toEqual(expect.arrayContaining(["send_message", "complete", "wait"]));
-    expect(ctx.hint).toContain("BLOCKED");
-    expect(ctx.hint).toContain("reading files needs no permission");
+    expect(ctx.hint).toContain("reviewer waits for your answer");
+    expect(ctx.hint).toContain("grantFiles");
   });
 
   it("reading the request does not close it: the busy owner is reminded on every call, and wait returns at once", async () => {
@@ -685,6 +688,6 @@ describe("open file requests (the requester is blocked until the owner answers)"
     await toImplement(s);
     const res = await s.reviewer.sendMessage({ to: "backend", message: "need it", requestFiles: ["src/main/X.java"] });
     expect(res.note).toContain("reading needs no permission");
-    expect((await s.reviewer.context()).hint).toContain("Reading any file needs no permission");
+    expect((await s.reviewer.context()).hint).toMatch(/reading any file needs no permission/i);
   });
 });

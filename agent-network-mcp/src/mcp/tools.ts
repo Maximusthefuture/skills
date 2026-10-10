@@ -28,9 +28,9 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
 
   tool(
     "swarm_context",
-    "Everything you need to decide what to do next: task, phase, your assignment, other agents, unread messages, agreement, implementations, allowedActions and nextAction. Read-only and safe to call at any time. Call it before acting.",
-    {},
-    async () => swarm.context(),
+    "What you need for your next step: task, phase, your assignment, unread messages, and what the current phase uses (agreement, ownership, the others' work), plus allowedActions and nextAction. Compact: only the current phase, the task description once per session. Read-only; call it before acting.",
+    { full: z.boolean().optional().describe("true = everything (agreement, all implementations, reports), e.g. after a restart") },
+    async (a) => swarm.context(a),
   );
   tool(
     "create_task",
@@ -45,9 +45,9 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   );
   tool(
     "send_message",
-    "Send a message to ONE other agent of your task. Your identity is added automatically. Also used to negotiate files: requestFiles asks the owner for permission to CHANGE their files (reading any file needs no permission), grantFiles (owner) gives it. A request blocks the asker until the owner answers, so owners answer first (nextAction 'respond').",
+    "Send a message to ONE other agent of your task, or to 'operator' (the human) with a question only a human can answer. Your identity is added automatically. Also used to negotiate files: requestFiles asks the owner for permission to CHANGE their files (reading any file needs no permission), grantFiles (owner) gives it. A request blocks the asker until the owner answers, so owners answer first (nextAction 'respond').",
     {
-      to: z.string().describe("Agent id of the recipient, one of the other agents of your task, e.g. 'reviewer'"),
+      to: z.string().describe("Agent id of the recipient, one of the other agents of your task, e.g. 'reviewer'; or 'operator' to ask the human operator a question (the answer arrives in pendingMessages)"),
       message: z.string().describe("Text of the message, e.g. 'I take the controller and service, you take validation. Agreed?'"),
       requestFiles: z.array(z.string()).optional().describe("Only to CHANGE files OWNED by the recipient (never for reading: reading needs no permission). Explain why in message. The owner replies with grantFiles or a refusal"),
       grantFiles: z.array(z.string()).optional().describe("Owner only: let the recipient change these files of yours (answer to their request); message = conditions. To refuse, send a normal message with the reason"),

@@ -63,14 +63,17 @@ File ownership:
 - If `nextAction` is `respond`, another agent is blocked waiting for your answer to its `FILE_REQUEST` (see `openFileRequests`).
   Answer FIRST: allow with `send_message({to: <requester>, message: <conditions>, grantFiles: [<files>]})`, or refuse with a normal
   message and the reason. Reading the request is not an answer.
-- Between work steps (after each file or test run) call `swarm_context` once, so you notice requests addressed to you.
+- Mark your subtasks done as you go: every swarm tool response carries `nextAction`, and `respond` tells you that someone waits for your answer.
 - `complete` is refused (`FILE_NOT_OWNED`) when `filesChanged` contains another agent's file without a grant. Files nobody declared are
   allowed but reported as warnings: tell the others about them.
 
 Rules:
 - Never invent the scope. The task `description` (in `swarm_context`) must say concretely what to build. If it does not
-  (placeholders like "...", no feature, no files), do NOT guess and do NOT propose an agreement: ask the user in your own
-  chat what to build and wait for the answer before `propose`/`complete`.
+  (placeholders like "...", no feature, no files), do NOT guess and do NOT propose an agreement: ask the user what to build and
+  wait for the answer before `propose`/`complete`. In an interactive session ask in your own chat; in a headless session
+  (started by a runner: nobody reads your chat) ask with `send_message({to: "operator", message: <question>})` and `wait()`:
+  the operator answers on the network page and the answer arrives in `pendingMessages`.
+- Anything only a human can decide (requirements, scope, an irreversible action) goes to the user the same way.
 - Never assume the phase; use `swarm_context`.
 - Only perform actions from `allowedActions`.
 - Do not make up facts about other agents; ask them with `send_message`.

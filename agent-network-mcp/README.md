@@ -425,14 +425,15 @@ node dist/index.js run --agent backend --network-dir <dir> [--cwd <dir>] [--once
 
 ```bash
 node dist/index.js run --agent backend --network-dir /abs/project/.agent-network --cwd /abs/project-backend -- \
-  claude -p "{prompt}" --model sonnet --mcp-config examples/runner/mcp.json --strict-mcp-config \
+  claude -p "{prompt}" --output-format stream-json --verbose --model sonnet --mcp-config examples/runner/mcp.json --strict-mcp-config \
     --permission-mode acceptEdits --allowedTools mcp__agent-network Read Write Edit "Bash(git:*)" "Bash(./mvnw:*)"
 ```
 
 - **Каждая задача — свежая сессия.** Задача та же, что считает текущей сервер: самая старая `ACTIVE`/`BLOCKED` с этим
   агентом. Промпт (`{prompt}`, по умолчанию — «ты агент X, задача Y, вызови `swarm_context`, иди по `nextAction` до `done`»)
   подставляется вместо `{prompt}` в любом аргументе или добавляется последним. Свой шаблон — `--prompt-file` с
-  `{agent}`, `{taskId}`, `{title}`, `{attempt}`, `{resume}`.
+  `{agent}`, `{taskId}`, `{title}`, `{attempt}`, `{resume}`; инструкции агента поверх стандартного промпта —
+  `--instructions-file`. Оба файла читаются перед каждой сессией.
 - **Сессии передаются** `AGENT_ID`, `NETWORK_DIR`, `AGENT_NETWORK_TASK_ID`, `AGENT_NETWORK_ATTEMPT`. Claude Code подставляет
   `${AGENT_ID}` и `${NETWORK_DIR}` в MCP-конфиг, поэтому один [examples/runner/mcp.json](examples/runner/mcp.json) годится
   всем агентам.
@@ -453,6 +454,43 @@ node dist/index.js run --agent backend --network-dir /abs/project/.agent-network
 
 Два агента в двух worktree с общей сетью — [examples/runner/run-claude.sh](examples/runner/run-claude.sh).
 
+#### Экономия токенов: короткая база и компактный `swarm_context`
+
+Модель на каждом ходу заново читает системный промпт CLI и описания всех его инструментов: у Claude Code это ~31 тыс.
+токенов, у Qwen Code ~17 тыс. Сессия агента — это 10–20 ходов, поэтому база, а не ответы роя, решает расход. Примеры
+runner'а запускают агентов с короткой базой:
+
+- **свой системный промпт** — [swarm-system-prompt.md](examples/runner/swarm-system-prompt.md) (протокол, работа с кодом,
+  границы: только папка проекта, коммиты только в свою ветку, без секретов). Runner подставляет его вместо
+  `{systemPrompt}` (`--system-prompt "{systemPrompt}"`, поле `systemPromptFile` / флаг `--system-prompt-file`), файл
+  перечитывается перед каждой сессией;
+- **только нужные инструменты**: Claude — `--tools Read,Write,Edit,Glob,Grep,Bash`; Qwen — `--exclude-tools web_fetch agent
+  list_agents skill get_goal update_goal manage_memory search_memory notebook_edit`.
+
+Замер одного хода: Claude ~31 тыс. → ~7 тыс. токенов, Qwen ~17 тыс. → ~7.6 тыс. На настоящем Haiku (задача «два файла, ревьюер
+только проверяет») — 1.18 млн токенов / $0.32 / 1 мин 7 с до и 385 тыс. / $0.137 / 53 с после.
+
+Ответ `swarm_context` компактный: только поля текущей фазы (договорённость целиком в DISCUSS, кратко дальше; права на
+файлы — в IMPLEMENT; работа коллег — в SYNC и INTEGRATE), без пустых полей, описание задачи — один раз за сессию,
+`exampleCall` — только для `propose`. Это вдвое короче прежнего (например, INTEGRATE: ~710 → ~280 токенов).
+`swarm_context({full: true})` отдаёт всё — например, после перезапуска.
+
+#### Статистика задач: время и токены
+
+- **Время** — из `phaseHistory` задачи (сервер отмечает вход в каждую фазу): всего и по фазам (повторные IMPLEMENT/SYNC
+  после исправлений суммируются). Есть только у задач, созданных этой версией; у старых — «нет данных».
+- **Токены и стоимость** — из итога каждой сессии, которую запустил runner: CLI должен печатать JSON-события
+  (`claude -p … --output-format stream-json --verbose`, `qwen … -o stream-json`; `json` тоже подходит). Runner превращает
+  поток в читаемый лог (текст агента, `→ tool(args)`, `[result] …`) и сохраняет сессию в
+  `tasks/<id>/sessions/session-NNN.json`: агент, попытка, начало/конец, код выхода, токены (вход с кэшем, выход, из кэша),
+  стоимость (у Claude), число ходов, модель. С обычным текстовым выводом время сессий есть, токенов нет.
+- Claude считает кэш отдельно от `input_tokens`, Qwen — внутри; в статистике «вход» — всё, что прочитала модель, «всего» —
+  вход + выход. У Qwen туда входят и фоновые вызовы (агент памяти).
+- Сессия, которая сама перешла на follow-up задачу, учитывается в задаче, ради которой её запустили; у follow-up так и
+  написано: «токены учтены в task-001».
+- Где смотреть: строка статистики и таблица по агентам в карточке задачи на странице, `task stats [--id task-001]` в CLI.
+- `--json-file` у Qwen (dual output) в неинтерактивном режиме 0.24.7 ничего не пишет, поэтому runner читает `stdout`.
+
 #### Qwen Code
 
 Пример — [examples/runner/run-qwen.sh](examples/runner/run-qwen.sh) с [qwen-mcp.json](examples/runner/qwen-mcp.json) и
@@ -461,7 +499,7 @@ node dist/index.js run --agent backend --network-dir /abs/project/.agent-network
 ```bash
 node dist/index.js run --agent backend --network-dir /abs/project/.agent-network --cwd /abs/project-backend \
   --prompt-file examples/runner/qwen-prompt.md -- \
-  qwen "{prompt}" -m qwen/qwen3.5-9b --mcp-config examples/runner/qwen-mcp.json --approval-mode auto-edit \
+  qwen "{prompt}" -o stream-json -m qwen/qwen3.5-9b --mcp-config examples/runner/qwen-mcp.json --approval-mode auto-edit \
     --allowed-tools mcp__agent-network "run_shell_command(git)" "run_shell_command(./mvnw)" --max-session-turns 300 --max-wall-time 1h
 ```
 
@@ -507,8 +545,8 @@ node dist/index.js ui --runners runners.json [--port 4777]
 
 - форма **«Новая задача»**: название, описание, lead и остальные агенты, `--verify`, бюджет follow-up задач, лимит раундов
   исправлений; runner'ы подхватывают задачу за пару секунд;
-- **runner'ы**: статус `RUNNING`/`STOPPED`, кнопки «Старт»/«Стоп», папка, команда и хвост лога (строки runner'а и вывод
-  сессий CLI, последние 400 строк);
+- **runner'ы**: статус `RUNNING`/`STOPPED`, кнопки «Старт»/«Стоп», папка, команда, **файл инструкций агента** (поле
+  ввода, «Сохранить», начало текста) и хвост лога (строки runner'а и вывод сессий CLI, последние 400 строк);
 - в карточке задачи — **подзадачи** каждого агента (`2/3`, ✓ ▶ · ✕) и **цепочка follow-up**: «follow-up от task-001»,
   «follow-up задачи: …», бюджет.
 
@@ -536,6 +574,23 @@ node dist/index.js ui --runners runners.json [--port 4777]
   ]
 }
 ```
+
+**Вопросы агентов к вам.** Сессия runner'а без собеседника: её чат никто не читает. Поэтому то, что может решить только
+человек (неясная задача, требования), агент спрашивает через сеть: `send_message({to: "operator", message})` и `wait()`.
+Вопрос появляется вверху страницы в блоке «Вопросы агентов» (число открытых — в заголовке вкладки), вы отвечаете в поле
+под ним, и ответ приходит агенту обычным сообщением: его `wait()` просыпается, и он продолжает **в той же сессии**. Пока
+вопрос в DISCUSS без ответа, `nextAction` агента — `wait` (не `propose`/`approve`), чтобы он не додумывал задачу; в других
+фазах вопрос не останавливает работу, а лишь напоминает, что ответ ещё не пришёл. Ответить можно только из UI с
+`--runners`; без него вопросы видны, но только для чтения. `operator` — зарезервированное имя, агента так назвать нельзя.
+
+**Свои инструкции каждому агенту** — `instructionsFile` (у агента или в `defaults`): роль, правила, стиль. Текст
+**добавляется** к стандартному промпту после строки «Instructions from the operator for you (<id>)», подстановки
+`{agent}`, `{taskId}`, `{title}` работают. Файл читается заново перед каждой сессией: правка применяется со следующей,
+без перезапуска. На странице путь задаётся в карточке runner'а: файл должен читаться, относительный путь — от папки
+конфига, значение записывается обратно в `runners.json` (остальное, включая `_comment`, сохраняется); пустое поле —
+без инструкций. Пример — [instructions/reviewer.md](examples/runner/instructions/reviewer.md). `promptFile`, наоборот,
+заменяет весь промпт целиком (тоже читается перед каждой сессией): в нём легко потерять «вызови `swarm_context`, иди по
+`nextAction` до `done`», поэтому для роли агента берите `instructionsFile`.
 
 `command`, `promptFile`, `maxRestarts` — те же, что у [`run`](#runner-агенты-работают-без-остановки); для Claude Code — команда из
 `run-claude.sh`. `networkDir` можно задать и флагом `--network-dir` / `NETWORK_DIR` (они важнее). Ctrl+C останавливает
@@ -671,7 +726,7 @@ npm run test:integration
 npm run typecheck
 ```
 
-267 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
+282 теста, vitest 3 (vitest 4 требует Node ≥ 20.19):
 
 - **unit**: `FileStore` (атомарная запись, конкурентные создания, path traversal, lock), сторы, `PhaseManager` (все пары
   переходов, сбор раунда, ревью исправленного, лимит раундов), точное пересечение масок (с fuzz-проверкой), `EventHub`,

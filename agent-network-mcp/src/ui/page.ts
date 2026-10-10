@@ -38,6 +38,9 @@ button{font:inherit;border:1px solid var(--accent);background:var(--accent);colo
 button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:.5;cursor:default}
 .note{font-size:13px}.note.err{color:var(--bad)}.note.ok{color:var(--ok)}
 pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px;margin:6px 0 0;font:11px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
+.stats{display:flex;flex-wrap:wrap;gap:4px 12px;margin:6px 0;font-size:12px;color:var(--muted)}.stats b{color:var(--text);font-weight:600}
+.q{border-left:3px solid var(--warn)}.q .who{font-weight:600}.q textarea{min-height:60px;margin-top:8px}.q .row2{display:flex;gap:8px;align-items:center;margin-top:6px}
+.inst{display:flex;gap:6px;margin-top:6px}.inst input{flex:1;min-width:0}.inst button{padding:4px 10px}
 .runner .top{display:flex;align-items:center;gap:8px;font-weight:600}.runner .top button{margin-left:auto}.runner .line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sub{font-size:12px}.sub .DONE{color:var(--ok)}.sub .DOING{color:var(--accent);font-weight:600}.sub .DROPPED{color:var(--idle);text-decoration:line-through}
 </style>
@@ -45,6 +48,7 @@ pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var
 <body>
 <header><h1>Agent Network</h1><span class="muted mono" id="dir"></span><span class="muted" id="upd"></span></header>
 <main>
+<section id="questions" hidden><h2>Вопросы агентов</h2><div class="grid" id="qlist"></div></section>
 <section id="control" hidden>
 <h2>Новая задача</h2>
 <form class="card" id="newtask">
@@ -94,6 +98,7 @@ function renderTask(t){
   const head=el("div");head.append(el("h3","",t.id+" · "+t.title+(t.status==="CANCELLED"?" (отменена)":"")));head.append(el("div","muted",t.description));
   const chain=[];if(t.parentTaskId)chain.push("follow-up от "+t.parentTaskId);if(t.followUps&&t.followUps.length)chain.push("follow-up задачи: "+t.followUps.join(", "));if(t.followUpBudget)chain.push("бюджет follow-up: "+t.followUpBudget.used+"/"+t.followUpBudget.max);
   if(chain.length)head.append(el("div","muted",chain.join(" · ")));
+  head.append(renderStats(t));
   if(t.status==="BLOCKED"){const b=el("div","");b.append(badge("BLOCKED")," "+(t.blockedReason||"")+" — нужен оператор: task unblock / task cancel");head.append(b)}
   c.append(head);
   const steps=el("div","steps");const idx=PHASES.indexOf(t.phase);
@@ -149,6 +154,11 @@ function renderControl(s){
     c.info.textContent=r.running&&r.startedAt?"запущен "+ago(r.startedAt):r.stoppedAt?"остановлен "+ago(r.stoppedAt):"не запускался";
     c.cwd.textContent=r.cwd?"папка: "+r.cwd:"папка: текущая";c.cwd.title=r.cwd||"";
     c.cmd.textContent=r.command;c.cmd.title=r.command;
+    c.instState.className="note line"+(r.instructions&&r.instructions.error?" err":"");
+    c.instState.textContent=!r.instructionsFile?"инструкции: нет (только стандартный промпт)":r.instructions&&r.instructions.error?"инструкции: не читается "+r.instructionsFile+" ("+r.instructions.error+")":"инструкции: "+r.instructionsFile;
+    c.instState.title=r.instructionsFile||"";
+    c.instPre.textContent=r.instructions&&r.instructions.preview!==undefined?r.instructions.preview:"";c.instDetails.hidden=!(r.instructions&&r.instructions.preview);
+    if(document.activeElement!==c.instInput&&c.instInput.dataset.server!==(r.instructionsFile||"")){c.instInput.value=r.instructionsFile||"";c.instInput.dataset.server=r.instructionsFile||""}
     if(c.details.open)loadLog(r.id,c);
   }
 }
@@ -158,9 +168,15 @@ function makeRunnerCard(id){
   const root=el("div","card runner");const top=el("div","top");const badgeEl=el("span","badge","");const btn=el("button","","");
   btn.type="button";btn.onclick=async()=>{btn.disabled=true;try{await post("/api/runners/"+encodeURIComponent(id)+"/"+btn.dataset.action);await tick()}catch(e){alert(e.message)}finally{btn.disabled=false}};
   top.append(el("span","",id),badgeEl,btn);const info=el("div","muted","");const cwd=el("div","muted line","");const cmd=el("div","muted mono line","");
+  const instState=el("div","note line","");
+  const instDetails=el("details");instDetails.append(el("summary","","Текст инструкций"));const instPre=el("pre","log","");instDetails.append(instPre);
+  const inst=el("form","inst");const instInput=document.createElement("input");instInput.placeholder="файл инструкций, напр. instructions/backend.md";
+  const instBtn=el("button","ghost","Сохранить");instBtn.type="submit";inst.append(instInput,instBtn);
+  inst.onsubmit=async ev=>{ev.preventDefault();instBtn.disabled=true;
+    try{await post("/api/runners/"+encodeURIComponent(id)+"/instructions",{file:instInput.value});instInput.dataset.server="";instInput.blur();await tick()}catch(e){alert(e.message)}finally{instBtn.disabled=false}};
   const details=el("details");details.append(el("summary","","Лог"));const pre=el("pre","log","");details.append(pre);
   details.addEventListener("toggle",()=>{if(details.open)loadLog(id,c)});
-  root.append(top,info,cwd,cmd,details);const c={root,badge:badgeEl,btn,info,cwd,cmd,details,pre};return c}
+  root.append(top,info,cwd,cmd,instState,inst,instDetails,details);const c={root,badge:badgeEl,btn,info,cwd,cmd,details,pre,instState,instInput,instPre,instDetails};return c}
 async function loadLog(id,c){try{const r=await fetch("/api/runners/"+encodeURIComponent(id)+"/log",{cache:"no-store"});const j=await r.json();
   const atEnd=c.pre.scrollTop+c.pre.clientHeight>=c.pre.scrollHeight-8;c.pre.textContent=j.lines.length?j.lines.join("\n"):"(пусто)";if(atEnd)c.pre.scrollTop=c.pre.scrollHeight}catch(e){}}
 $("lead").addEventListener("change",()=>renderOthers(knownIds.split(",")));
@@ -173,12 +189,46 @@ $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
 
 const open=new Set();
+function fmtMs(ms){const s=Math.round(ms/1000);if(s<60)return s+" с";const m=Math.floor(s/60);if(m<60)return m+" мин"+(s%60?" "+(s%60)+" с":"");return Math.floor(m/60)+" ч"+(m%60?" "+(m%60)+" мин":"")}
+function fmtTok(n){return n>=1e6?(n/1e6).toFixed(n>=1e7?0:1)+"M":n>=1e3?Math.round(n/1e3)+"k":String(n)}
+function renderStats(t){
+  const box=el("div","");const st=t.stats;
+  if(!st){box.append(el("div","stats","статистика: нет данных (задача создана до учёта времени)"));return box}
+  const line=el("div","stats");const item=(label,value)=>{const s=el("span","");s.append(label+" ",el("b","",value));line.append(s)};
+  item(st.finishedAt?"время":"идёт",fmtMs(st.elapsedMs));
+  st.phases.forEach(p=>item(p.phase,fmtMs(p.ms)));
+  if(st.usage)item("токены",fmtTok(st.usage.total)+" (вход "+fmtTok(st.usage.input)+", выход "+fmtTok(st.usage.output)+(st.usage.cacheRead?", из кэша "+fmtTok(st.usage.cacheRead):"")+")");
+  else if(st.countedIn.length)item("токены","учтены в "+st.countedIn.join(", ")+" (та же сессия)");
+  else item("токены",st.sessions?"нет данных (CLI без JSON-вывода)":"нет данных (не через runner)");
+  if(st.costUsd!==null)item("стоимость","$"+st.costUsd.toFixed(st.costUsd<1?3:2));
+  if(st.sessions)item("сессий",String(st.sessions)+(st.sessionsWithoutUsage&&st.usage?" ("+st.sessionsWithoutUsage+" без токенов)":""));
+  box.append(line);
+  if(st.agents.length){const d=el("details");d.append(el("summary","","Статистика по агентам"));const tb=el("table");const hr=el("tr");["Агент","Сессий","Время сессий","Токены","Вход / выход","Стоимость"].forEach(h=>hr.append(el("th","",h)));tb.append(hr);
+    st.agents.forEach(a=>{const r=el("tr");[a.agentId,String(a.sessions),fmtMs(a.ms),a.usage?fmtTok(a.usage.total):"—",a.usage?fmtTok(a.usage.input)+" / "+fmtTok(a.usage.output):"—",a.costUsd!==null?"$"+a.costUsd.toFixed(3):"—"].forEach(v=>r.append(el("td","",v)));tb.append(r)});
+    d.append(tb);box.append(d)}
+  return box;
+}
+const qCards=new Map();
+function renderQuestions(s){
+  const open=s.openQuestions||[];document.title=(open.length?"("+open.length+") ":"")+"Agent Network";
+  $("questions").hidden=!open.length;const box=$("qlist");const keep=new Set();
+  for(const q of open){const key=q.taskId+"/"+q.messageId;keep.add(key);if(qCards.has(key))continue;
+    const c=el("div","card q");c.append(el("div","",""));c.firstChild.append(el("span","who",q.from),el("span","muted"," · "+q.taskId+" «"+q.taskTitle+"» · "+time(q.askedAt)));
+    c.append(el("div","",q.question));
+    if(s.control){const f=el("form","");const t=document.createElement("textarea");t.placeholder="Ваш ответ агенту "+q.from;const row=el("div","row2");const b=el("button","","Ответить");b.type="submit";const note=el("span","note","");row.append(b,note);f.append(t,row);
+      f.onsubmit=async ev=>{ev.preventDefault();if(!t.value.trim())return;b.disabled=true;note.className="note";note.textContent="отправляю…";
+        try{await post("/api/questions/answer",{taskId:q.taskId,messageId:q.messageId,answer:t.value});note.className="note ok";note.textContent="отправлено";await tick()}catch(e){note.className="note err";note.textContent=e.message;b.disabled=false}};
+      c.append(f)}else c.append(el("div","muted","ответить можно из UI, запущенного с --runners"));
+    qCards.set(key,c);box.append(c)}
+  for(const [key,c] of qCards)if(!keep.has(key)){c.remove();qCards.delete(key)}
+}
 function render(s){
   $("dir").textContent=s.networkDir;$("upd").textContent="обновлено "+time(s.generatedAt);
+  renderQuestions(s);
   renderControl(s);
   renderAgents(s);
   const box=$("tasks");
-  box.querySelectorAll("details[open]").forEach(d=>open.add(d.parentNode.dataset.id+"|"+d.firstChild.textContent.split(" ")[0]));
+  box.querySelectorAll("details[open]").forEach(d=>{const card=d.closest("[data-id]");if(card)open.add(card.dataset.id+"|"+d.firstChild.textContent.split(" ")[0])});
   box.replaceChildren();
   if(!s.tasks.length)box.append(el("div","empty",s.control?"Задач нет. Создайте формой выше.":"Задач нет. Создайте: agent-network-mcp task create --title … --agents a,b"));
   for(const t of s.tasks){const c=renderTask(t);c.dataset.id=t.id;c.querySelectorAll("details").forEach(d=>{if(open.has(t.id+"|"+d.firstChild.textContent.split(" ")[0]))d.open=true});box.append(c)}

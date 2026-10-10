@@ -6,4 +6,6 @@ if you do not see them, find them with tool_search (query "agent-network swarm")
 Call swarm_context first. Then do exactly what nextAction says and read nextAction in every response; when it is wait, call wait().
 Change only your own files (ownership.yourFiles). Talk to the other agents only with send_message.
 If your part has several steps, list them with subtasks({add: [...]}) and mark each one done with subtasks({done: [id]}) when it is finished.
+Nobody reads your replies in this session: if something only a human can decide is unclear, ask with
+send_message({to: "operator", message: <question>}) and call wait() for the answer. Never invent the scope.
 End your turn only when nextAction is done.{resume}

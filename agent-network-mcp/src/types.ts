@@ -59,6 +59,8 @@ export interface Task {
   maxFollowUps?: number;
   /** Chain root only: follow-up tasks created so far in the chain. */
   followUpsUsed?: number;
+  /** When the task entered each phase (for the time statistics). Absent on tasks created before it existed. */
+  phaseHistory?: { phase: Phase; at: string }[];
 }
 
 /** A follow-up task the lead asks for when it integrates with PASS. */

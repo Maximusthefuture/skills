@@ -20,8 +20,8 @@ MODEL=qwen/qwen3.5-9b                   # a model from modelProviders in ~/.qwen
 agent() {
   local id=$1
   node "$AN/dist/index.js" run --agent "$id" --network-dir "$NETWORK_DIR" --cwd "$PROJECT-$id" \
-    --prompt-file "$AN/examples/runner/qwen-prompt.md" -- \
-    qwen "{prompt}" -m "$MODEL" \
+    --prompt-file "$AN/examples/runner/qwen-prompt.md" --system-prompt-file "$AN/examples/runner/swarm-system-prompt.md" -- \
+    qwen "{prompt}" -o stream-json --system-prompt "{systemPrompt}" --exclude-tools web_fetch agent list_agents skill get_goal update_goal manage_memory search_memory notebook_edit -m "$MODEL" \
       --mcp-config "$AN/examples/runner/qwen-mcp.json" \
       --approval-mode auto-edit \
       --allowed-tools mcp__agent-network "run_shell_command(git)" "run_shell_command(./mvnw)" \

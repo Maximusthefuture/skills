@@ -90,5 +90,5 @@ Three layers: OpenSpec owns **what** (requirements, scenarios, design, tasks), t
 - **Checklist item 5** (reviewer and critic in parallel) becomes: critic on your own diff in IMPLEMENT + a peer review in SYNC.
 - **Checklist item 6** (report) becomes: `complete({result})`. In your own chat write one line per phase transition, nothing more.
 - **When to stop and ask:** questions about the agreement, interfaces or another agent's part go to that agent via `send_message`. Only the lead asks the user, and only for vague scope, no Docker, or an irreversible action outside the protocol (push, PR, Jira, deleting data). Every other "ask the user" becomes "decide, record it in `result`".
-- **Never wait for a user answer while the swarm waits for you.** If you must ask the user, tell the other agents first (`send_message`) that you are blocked.
+- **Never wait for a user answer while the swarm waits for you.** If you must ask the user, tell the other agents first (`send_message`) that you are blocked. In a headless session (started by a runner) the user is the operator: `send_message({to: "operator", message})`, then `wait()` for the answer.
 - `grilling` and multi-round user interviews are not used inside the swarm.

@@ -11,8 +11,9 @@ SETTINGS=$AN/examples/claude-hooks/settings.json   # optional: hooks for message
 
 agent() {
   local id=$1
-  node "$AN/dist/index.js" run --agent "$id" --network-dir "$NETWORK_DIR" --cwd "$PROJECT-$id" -- \
-    claude -p "{prompt}" --model sonnet --max-turns 200 \
+  node "$AN/dist/index.js" run --agent "$id" --network-dir "$NETWORK_DIR" --cwd "$PROJECT-$id" \
+    --system-prompt-file "$AN/examples/runner/swarm-system-prompt.md" -- \
+    claude -p "{prompt}" --output-format stream-json --verbose --tools Read,Write,Edit,Glob,Grep,Bash --system-prompt "{systemPrompt}" --model sonnet --max-turns 200 \
       --mcp-config "$MCP" --strict-mcp-config --settings "$SETTINGS" \
       --permission-mode acceptEdits \
       --allowedTools mcp__agent-network Read Write Edit Glob Grep "Bash(git:*)" "Bash(./mvnw:*)"

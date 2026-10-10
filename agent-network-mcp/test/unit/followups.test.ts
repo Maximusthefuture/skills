@@ -73,7 +73,7 @@ describe("subtasks", () => {
 
     const other = await s.reviewer.context();
     expect(other.otherAgents).toEqual([expect.objectContaining({ id: "backend", subtasks: "1/3 done, s3 in progress" })]);
-    expect((await s.backend.context()).hint).toContain('s2 "Validate currency"');
+    expect((await s.backend.context()).hint).toContain("Open subtasks: s2, s3 (doing)");
   });
 
   it("complete() is refused while subtasks are open; done or dropped (with a reason) closes them", async () => {
@@ -125,13 +125,14 @@ describe("follow-up tasks", () => {
     await toIntegrate(s);
     const ctx = await s.backend.context();
     expect(ctx.followUps).toMatchObject({ max: 2, used: 0, remaining: 2, notes: [expect.objectContaining({ severity: "WARNING", reportedBy: "reviewer" })] });
-    expect(ctx.hint).toContain("at most 2");
+    expect(ctx.hint).toContain("up to 2 follow-up task(s)");
     expect((await s.reviewer.context()).followUps).toBeUndefined(); // only the lead decides
 
     const waiting = s.reviewer.wait({ timeoutMs: 5000 });
     const res = await s.backend.complete({ status: "PASS", result: "merged", followUps: [{ title: "Currency validation", description: CONCRETE }] });
     expect(res.followUpsCreated).toEqual([{ id: "task-002", title: "Currency validation", agents: ["backend", "reviewer"] }]);
     expect((await operator.tasks.get(root.id))).toMatchObject({ status: "COMPLETED", phase: "DONE", followUpsUsed: 1 });
+    expect((await operator.tasks.get(root.id)).phaseHistory!.map((h) => h.phase)).toEqual(["DISCUSS", "IMPLEMENT", "SYNC", "INTEGRATE", "DONE"]);
     expect(await operator.tasks.get("task-002")).toMatchObject({ status: "ACTIVE", phase: "DISCUSS", parentTaskId: root.id, rootTaskId: root.id, createdBy: "backend" });
 
     const woke = await waiting; // the reviewer is already on the next task
@@ -235,7 +236,7 @@ describe("review-only agents (files: [])", () => {
     const review = await s.reviewer.context();
     expect(review).toMatchObject({ nextAction: "implement", ownership: { yourFiles: [], reviewOnly: true } });
     expect(review.hint).toContain("Your assignment has no files");
-    expect((review.ownership as { rule: string }).rule).toContain("you change nothing");
+    expect(review.ownership).toEqual({ yourFiles: [], reviewOnly: true, othersFiles: [{ agentId: "backend", files: ["README.md"] }] });
     expect((await s.reviewer.complete({ result: "review only: nothing to change" })).action).toBe("IMPLEMENTATION_COMPLETED");
     const done = await s.backend.complete({ result: "README", filesChanged: ["README.md", "docs/extra.md"] }); // an undeclared file is a warning, not a refusal
     expect(done).toMatchObject({ action: "IMPLEMENTATION_COMPLETED", phaseChanged: { to: "SYNC" }, warnings: [expect.stringContaining("docs/extra.md")] });

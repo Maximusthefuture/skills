@@ -20,7 +20,8 @@ describe("renderPrompt", () => {
   it("fills the placeholders and adds the resume note only on restarts", () => {
     const first = renderPrompt(DEFAULT_PROMPT, { agent: "backend", taskId: "task-002", title: "Cancel orders", attempt: 1 });
     expect(first).toContain('You are agent backend of the agent-network swarm. Task task-002 ("Cancel orders")');
-    expect(first).not.toContain("{");
+    expect(first).not.toMatch(/\{(agent|taskId|title|attempt|resume)\}/); // every placeholder is filled
+    expect(first).toContain('send_message({to: "operator"'); // headless: questions go to the operator
     expect(first).not.toContain("previous one ended");
 
     const third = renderPrompt(DEFAULT_PROMPT, { agent: "backend", taskId: "task-002", title: "Cancel orders", attempt: 3 });
@@ -34,6 +35,7 @@ describe("buildArgv", () => {
     expect(buildArgv(["claude", "-p", "{prompt}", "--model", "haiku"], "do it")).toEqual(["claude", "-p", "do it", "--model", "haiku"]);
     expect(buildArgv(["tool", "--input={prompt}"], "x")).toEqual(["tool", "--input=x"]);
     expect(buildArgv(["codex", "exec"], "do it")).toEqual(["codex", "exec", "do it"]);
+    expect(buildArgv(["claude", "-p", "{prompt}", "--system-prompt", "{systemPrompt}"], "task", "be brief")).toEqual(["claude", "-p", "task", "--system-prompt", "be brief"]);
   });
 });
 

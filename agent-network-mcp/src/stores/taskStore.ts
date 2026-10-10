@@ -40,6 +40,7 @@ export class TaskStore {
       createdBy: input.createdBy,
       git: input.git,
       syncRound: 0,
+      phaseHistory: [{ phase: "DISCUSS", at: now }],
       maxFixRounds: input.maxFixRounds ?? DEFAULT_MAX_FIX_ROUNDS,
       ...(input.verifyCommand ? { verifyCommand: input.verifyCommand } : {}),
       ...(input.maxFollowUps ? { maxFollowUps: input.maxFollowUps, followUpsUsed: 0 } : {}),

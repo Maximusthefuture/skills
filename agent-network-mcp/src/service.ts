@@ -46,6 +46,8 @@ export const MAX_WAIT_MS = 300_000;
 /** A task description must say concretely what to build. */
 export const MIN_DESCRIPTION = 40;
 export const MAX_SUBTASKS = 50;
+/** The human behind the network (UI, CLI). Agents ask it with send_message(to: "operator"); it is never a task agent. */
+export const OPERATOR = "operator";
 
 export interface ServiceOptions {
   hub?: EventHub;
@@ -178,6 +180,7 @@ export class NetworkService {
     if (!title) throw new AppError("INVALID_INPUT", "title must not be empty");
     const agents = [...new Set(input.agents.map((a) => assertAgentId(a)))];
     if (agents.length < 2) throw new AppError("INVALID_INPUT", "A task needs at least two distinct agents");
+    if (agents.includes(OPERATOR)) throw new AppError("INVALID_INPUT", `'${OPERATOR}' is reserved for the human operator and cannot be a task agent`);
     if (asAgent) {
       if (!agents.includes(createdBy)) throw new AppError("NOT_ASSIGNED", "The creating agent must be one of the task agents");
       for (const a of agents) await this.agents.require(a);
@@ -310,7 +313,8 @@ export class NetworkService {
     if (task.status === "COMPLETED") throw new AppError("ALREADY_COMPLETED", "The task is completed");
     const to = assertAgentId(input.to, "to");
     if (to === this.me) throw new AppError("INVALID_INPUT", "You cannot send a message to yourself");
-    if (!task.agents.includes(to)) throw new AppError("NOT_ASSIGNED", `Agent '${to}' is not part of ${task.id}`);
+    if (to !== OPERATOR && !task.agents.includes(to)) throw new AppError("NOT_ASSIGNED", `Agent '${to}' is not part of ${task.id}`);
+    if (to === OPERATOR && input.files?.length) throw new AppError("INVALID_INPUT", "The operator owns no files: ask it questions, not for files");
     if (!input.content.trim()) throw new AppError("INVALID_INPUT", "content must not be empty");
     if (input.replyTo) {
       assertMessageId(input.replyTo);
@@ -319,6 +323,22 @@ export class NetworkService {
     const message = await this.messages.create({ taskId: task.id, from: this.me, to, type: input.type, content: input.content, replyTo: input.replyTo, files: input.files });
     await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: to, sourceAgent: this.me, payload: { messageId: message.id, from: this.me, type: message.type, ...(message.files ? { files: message.files } : {}) } });
     return message;
+  }
+
+  /**
+   * The operator answers a question an agent asked it. The answer is an ordinary message to that agent (so its wait()
+   * wakes up with it in pendingMessages) and the question counts as answered (read).
+   */
+  async answerQuestion(input: { taskId: string; messageId: string; answer: string }): Promise<Message> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator answers questions to the operator");
+    const task = await this.tasks.get(assertTaskId(input.taskId));
+    const question = await this.messages.get(task.id, assertMessageId(input.messageId));
+    if (question.to !== OPERATOR) throw new AppError("INVALID_INPUT", `${question.id} is not a question to the operator`);
+    if (!input.answer.trim()) throw new AppError("INVALID_INPUT", "The answer must not be empty");
+    const answer = await this.messages.create({ taskId: task.id, from: OPERATOR, to: question.from, type: "INFORMATION", content: input.answer.trim(), replyTo: question.id });
+    await this.messages.markRead(question);
+    await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: question.from, sourceAgent: OPERATOR, payload: { messageId: answer.id, from: OPERATOR, type: answer.type, replyTo: question.id } });
+    return answer;
   }
 
   async listMessages(input: { taskId: string; direction?: "inbox" | "sent" | "all"; unreadOnly?: boolean }): Promise<Message[]> {
@@ -793,7 +813,7 @@ export class NetworkService {
   }
 
   private async applyTransition(task: Task, t: Transition, reports: SyncReport[]): Promise<Task> {
-    const next = this.phases.apply(task, t);
+    const next = { ...this.phases.apply(task, t), phaseHistory: [...(task.phaseHistory ?? []), { phase: t.to, at: new Date().toISOString() }] };
     if (t.needsFix) {
       for (const agentId of t.needsFix) {
         const impl = await this.implementations.find(task.id, agentId);

@@ -4,6 +4,8 @@ import { isAbsolute, resolve } from "node:path";
 import { AppError } from "./errors.js";
 import { runHookCli } from "./hook.js";
 import { runRunner } from "./runner.js";
+import { collectStats } from "./stats.js";
+import { FileStore } from "./storage/fileStore.js";
 import { NetworkService } from "./service.js";
 import { loadRunnersConfig, RunnerPool, type RunnersConfig } from "./ui/runners.js";
 import { startUiServer } from "./ui/server.js";
@@ -12,6 +14,7 @@ const USAGE = `Usage:
   agent-network-mcp task create --title <t> --agents <a,b[,c]> [--description <d>] [--verify <build/test command>]
                                 [--max-fix-rounds 3] [--follow-ups 0] [--network-dir <abs path>]
   agent-network-mcp task list [--network-dir <abs path>]
+  agent-network-mcp task stats [--id <task-001>] [--network-dir <abs path>]   time per phase, sessions, tokens, cost
   agent-network-mcp task cancel --id <task-001> [--reason <text>] [--network-dir <abs path>]
   agent-network-mcp task unblock --id <task-001> [--rounds 1] [--network-dir <abs path>]   more fix rounds for a BLOCKED task
   agent-network-mcp agent list [--network-dir <abs path>]
@@ -19,7 +22,7 @@ const USAGE = `Usage:
                         web page on http://127.0.0.1:<port>; read-only, or with --runners: a task form and the
                         agents' runners (start/stop, log tail), started together with the page
   agent-network-mcp hook <post-tool|stop> [--network-dir <abs path>] [--agent <id>]   Claude Code hook: new messages / stay in the loop
-  agent-network-mcp run --agent <id> [--network-dir <abs path>] [--cwd <dir>] [--prompt-file <path>] [--max-restarts 3]
+  agent-network-mcp run --agent <id> [--network-dir <abs path>] [--cwd <dir>] [--prompt-file <path>] [--instructions-file <path>] [--system-prompt-file <path>] [--max-restarts 3]
                         [--restart-delay-ms 5000] [--poll-ms 2000] [--once] -- <agent CLI> [args, "{prompt}"]
                         keeps one agent working: starts a session per task, restarts it until DONE, then waits again
 
@@ -36,7 +39,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
   if (group === "ui") return runUi(command ? [command, ...rest] : rest, env, out);
   if (group === "hook") return runHookCli(command, rest, env, out);
   if (group === "run") return runAgentRunner(command === undefined ? rest : [command, ...rest], env, out);
-  const known = (group === "task" && (command === "create" || command === "list" || command === "cancel" || command === "unblock")) || (group === "agent" && command === "list");
+  const known = (group === "task" && (command === "create" || command === "list" || command === "stats" || command === "cancel" || command === "unblock")) || (group === "agent" && command === "list");
   if (!known) {
     out(USAGE);
     return group === "help" || group === "--help" ? 0 : 2;
@@ -76,6 +79,16 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       }
       const task = command === "cancel" ? await service.cancelTask(values.id, values.reason) : await service.unblockTask(values.id, values.rounds === undefined ? 1 : Number(values.rounds));
       out(JSON.stringify(task, null, 2));
+      return 0;
+    }
+    if (command === "stats") {
+      const tasks = (await service.tasks.list()).filter((t) => !values.id || t.id === values.id);
+      if (values.id && !tasks.length) {
+        out(`error: no task ${values.id}`);
+        return 1;
+      }
+      const stats = await collectStats(await FileStore.open(resolve(dir)), tasks);
+      out(JSON.stringify(tasks.map((t) => ({ id: t.id, title: t.title, status: t.status, phase: t.phase, stats: stats.get(t.id) ?? null })), null, 2));
       return 0;
     }
     if (command === "list") {
@@ -134,7 +147,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
     return 2;
   }
   try {
-    const runners = config ? new RunnerPool(resolve(dir), config.agents) : undefined;
+    const runners = config ? new RunnerPool(resolve(dir), config.agents, config.path ? { configPath: config.path } : {}) : undefined;
     const ui = await startUiServer(resolve(dir), { port, ...(runners ? { runners } : {}) });
     out(`Agent Network UI: ${ui.url}  (network: ${resolve(dir)})  Ctrl+C to stop`);
     if (runners && config) {
@@ -179,6 +192,8 @@ async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: s
       "network-dir": { type: "string" },
       cwd: { type: "string" },
       "prompt-file": { type: "string" },
+      "instructions-file": { type: "string" },
+      "system-prompt-file": { type: "string" },
       "max-restarts": { type: "string" },
       "restart-delay-ms": { type: "string" },
       "poll-ms": { type: "string" },
@@ -191,7 +206,10 @@ async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: s
     return 2;
   }
   try {
-    const promptTemplate = values["prompt-file"] ? await readFile(values["prompt-file"], "utf8") : undefined;
+    // both files are read again before every session, so edits apply to the next one; a wrong path fails right away
+    if (values["prompt-file"]) await readFile(values["prompt-file"], "utf8");
+    if (values["instructions-file"]) await readFile(values["instructions-file"], "utf8");
+    if (values["system-prompt-file"]) await readFile(values["system-prompt-file"], "utf8");
     const controller = new AbortController();
     let interrupts = 0;
     const onSignal = (): void => {
@@ -206,7 +224,9 @@ async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: s
         networkDir: resolve(dir),
         command,
         ...(values.cwd ? { cwd: resolve(values.cwd) } : {}),
-        ...(promptTemplate ? { promptTemplate } : {}),
+        ...(values["prompt-file"] ? { promptFile: resolve(values["prompt-file"]) } : {}),
+        ...(values["instructions-file"] ? { instructionsFile: resolve(values["instructions-file"]) } : {}),
+        ...(values["system-prompt-file"] ? { systemPromptFile: resolve(values["system-prompt-file"]) } : {}),
         maxRestarts: positiveInt(values["max-restarts"], "max-restarts", 3),
         restartDelayMs: positiveInt(values["restart-delay-ms"], "restart-delay-ms", 5000),
         pollMs: positiveInt(values["poll-ms"], "poll-ms", 2000, 10),

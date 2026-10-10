@@ -210,7 +210,7 @@ describe("full cycle through the five tools (two processes)", () => {
 
     // DISCUSS: backend leads
     const ctx = await backend.call("swarm_context");
-    expect(ctx).toMatchObject({ nextAction: "propose", task: { phase: "DISCUSS" }, otherAgents: [{ id: "reviewer", role: "reviewer", status: expect.any(String) }] });
+    expect(ctx).toMatchObject({ nextAction: "propose", task: { phase: "DISCUSS" }, otherAgents: [{ id: "reviewer", status: expect.any(String) }] });
     await backend.call("send_message", { to: "reviewer", message: "I take controller+service, you take validation. POST /users returns UUID. OK?" });
 
     const woke = await reviewer.call("wait", { timeoutMs: 20_000 });
@@ -229,7 +229,9 @@ describe("full cycle through the five tools (two processes)", () => {
     // IMPLEMENT
     expect(await backend.call("complete", { result: "Controller and service", filesChanged: ["src/UserController.java", "src/UserService.java"], commits: ["abc123"] })).toMatchObject({ nextAction: "wait", waitingOn: ["reviewer"] });
     const inImpl = await reviewer.call("swarm_context");
-    expect(inImpl).toMatchObject({ nextAction: "implement", teamImplementations: [expect.objectContaining({ agentId: "backend", status: "READY_FOR_SYNC" })] });
+    expect(inImpl.nextAction).toBe("implement");
+    expect(inImpl.teamImplementations).toBeUndefined(); // the others' work matters in SYNC, not while implementing
+    expect((await reviewer.call("swarm_context", { full: true })).teamImplementations).toEqual([expect.objectContaining({ agentId: "backend", status: "READY_FOR_SYNC" })]);
     expect(await reviewer.call("complete", { result: "Validation rules", filesChanged: ["src/UserValidator.java"] })).toMatchObject({ phaseChanged: { to: "SYNC" }, nextAction: "sync" });
 
     // SYNC: backend wakes up, reviews, PASS; reviewer finds an incompatibility
@@ -265,7 +267,7 @@ describe("misuse over MCP", () => {
     const cases: [Promise<any>, Record<string, unknown>][] = [
       [reviewer.callError("complete"), { code: "AGREEMENT_NOT_READY", nextAction: "wait" }],
       [backend.callError("complete", { status: "PASS" }), { code: "INVALID_INPUT", currentPhase: "DISCUSS" }],
-      [backend.callError("send_message", { to: "ghost", message: "x" }), { code: "NOT_ASSIGNED", validRecipients: ["reviewer"] }],
+      [backend.callError("send_message", { to: "ghost", message: "x" }), { code: "NOT_ASSIGNED", validRecipients: ["reviewer", "operator"] }],
       [backend.callError("send_message", { to: "reviewer", message: "" }), { code: "INVALID_INPUT" }],
       [backend.callError("propose", { summary: "s", assignments: [] }), { code: "INVALID_INPUT", taskAgents: ["backend", "reviewer"] }],
     ];
@@ -376,7 +378,7 @@ describe("three agents in three git worktrees", () => {
     createTaskViaCli(ws.networkDir, ids, "User list page with REST endpoint", ["--verify", "npm test", "--max-fix-rounds", "2"]);
 
     // DISCUSS: globs in the same directory that only differ by suffix are not an overlap any more
-    expect(await backend.call("swarm_context")).toMatchObject({ nextAction: "propose", task: { verifyCommand: "npm test", maxFixRounds: 2, lead: "backend" } });
+    expect(await backend.call("swarm_context", { full: true })).toMatchObject({ nextAction: "propose", task: { verifyCommand: "npm test", maxFixRounds: 2, lead: "backend" } });
     await backend.call("send_message", { to: "frontend", message: "I take src/*Service.ts, you take src/*View.ts, qa takes test/**" });
     await backend.call("send_message", { to: "qa", message: "I take src/*Service.ts, frontend src/*View.ts, you test/**" });
     const proposed = await backend.call("propose", {
@@ -400,7 +402,8 @@ describe("three agents in three git worktrees", () => {
     const shaB = ws.commit("backend", "src/UserService.ts", "export const users = () => [{ id: 1, name: 'a' }];\n");
     const shaF = ws.commit("frontend", "src/UserView.ts", "export const view = (u) => u.map((x) => x.nam).join();\n");
     const shaQ = ws.commit("qa", "test/users.test.ts", "// GET /users and UserView\n");
-    expect(await backend.call("complete", { result: "UserService", filesChanged: ["src/UserService.ts"], commits: [shaB] })).toMatchObject({ implementation: { filesChanged: ["src/UserService.ts"], commits: [shaB] }, nextAction: "wait" });
+    expect(await backend.call("complete", { result: "UserService", filesChanged: ["src/UserService.ts"], commits: [shaB] })).toMatchObject({ implementation: { status: "READY_FOR_SYNC" }, nextAction: "wait" });
+    expect((await backend.call("swarm_context", { full: true })).implementation).toMatchObject({ filesChanged: ["src/UserService.ts"], commits: [shaB] });
     expect(await frontend.call("complete", { result: "UserView", filesChanged: ["src/UserView.ts"], commits: [shaF] })).toMatchObject({ nextAction: "wait" });
     expect(await qa.call("complete", { result: "tests", filesChanged: ["test/users.test.ts"], commits: [shaQ] })).toMatchObject({ phaseChanged: { to: "SYNC" }, nextAction: "sync", reviewTargets: ["backend", "frontend"] });
 
@@ -424,7 +427,8 @@ describe("three agents in three git worktrees", () => {
     const merged = ws.git(ws.repo, "rev-parse", "HEAD");
     expect(readdirSync(join(ws.repo, "src")).sort()).toEqual(["UserService.ts", "UserView.ts"]);
     const done = await backend.call("complete", { status: "PASS", result: "main: backend+frontend+qa merged, npm test green", commits: [merged] });
-    expect(done).toMatchObject({ task: { phase: "DONE", status: "COMPLETED" }, integration: { status: "PASS", commits: [merged] } });
+    expect(done).toMatchObject({ task: { phase: "DONE", status: "COMPLETED" } });
+    expect((await backend.call("swarm_context", { full: true })).integration).toMatchObject({ status: "PASS", commits: [merged] });
     for (const a of [frontend, qa]) expect(await a.call("wait", { timeoutMs: 5_000 })).toMatchObject({ status: "DONE" });
   });
 });

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import { runRunner, type RunnerOptions } from "../../src/runner.js";
 import { FileStore } from "../../src/storage/fileStore.js";
 import { AgentStore } from "../../src/stores/agentStore.js";
 import { MessageStore } from "../../src/stores/messageStore.js";
+import { SessionStore } from "../../src/stores/sessionStore.js";
 import { TaskStore } from "../../src/stores/taskStore.js";
 import { tmpDir } from "../helpers/tmp.js";
 
@@ -114,6 +115,63 @@ describe("agent runner", () => {
     await r.stop();
     expect(r.lines).toContain(`${t1.id}: COMPLETED; in the same session also ${t2.id} COMPLETED (session exit 0)`);
     expect(s.launches().map((l) => l.taskId)).toEqual([t1.id]);
+  });
+
+  it("appends the agent's instructions file to the prompt and reads it again before every session", async () => {
+    const s = await setup();
+    const file = join(dirname(s.log), "backend.md");
+    writeFileSync(file, "You are the backend. Work on {taskId} in src/main only.");
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "2", "{prompt}"], { instructionsFile: file, restartDelayMs: 300 });
+    const t = await s.newTask("Instructions");
+    await until(() => s.launches().length === 1, "first session");
+    writeFileSync(file, "Second version: tests first.");
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "done on the second session");
+    await r.stop();
+    const [first, second] = s.launches().map((l) => l.args[0]!);
+    expect(first).toContain(`Instructions from the operator for you (backend):\nYou are the backend. Work on ${t.id} in src/main only.`);
+    expect(first).toContain("call swarm_context first"); // the standard prompt stays
+    expect(second).toContain("Second version: tests first.");
+  });
+
+  it("puts the system prompt file where the command has {systemPrompt}, with the placeholders filled", async () => {
+    const s = await setup();
+    const file = join(dirname(s.log), "system.md");
+    writeFileSync(file, "You are {agent}, a headless swarm agent.");
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "1", "{prompt}", "--system-prompt", "{systemPrompt}"], { systemPromptFile: file });
+    await s.newTask("System prompt");
+    await until(() => s.launches().length === 1, "session");
+    await r.stop();
+    expect(s.launches()[0]!.args.slice(1)).toEqual(["--system-prompt", "You are backend, a headless swarm agent."]);
+  });
+
+  it("goes on without an unreadable instructions file and says so", async () => {
+    const s = await setup();
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "1", "{prompt}"], { instructionsFile: join(dirname(s.log), "missing.md") });
+    await s.newTask("No file");
+    await until(() => s.launches().length === 1, "session without instructions");
+    await r.stop();
+    expect(r.lines.some((l) => l.includes("cannot read the instructions file") && l.includes("ENOENT"))).toBe(true);
+    expect(s.launches()[0]!.args[0]).not.toContain("Instructions from the operator");
+  });
+
+  it("records every session with its tokens and shows the stream as a readable log", async () => {
+    const s = await setup();
+    const out: string[] = [];
+    const r = start(s.networkDir, [process.execPath, join(dirname(FAKE), "streamAgent.mjs")], { output: (t) => out.push(t) });
+    const t = await s.newTask("Tokens");
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "done");
+    await until(() => r.lines.some((l) => l.includes("120 tokens")), "the session line");
+    await r.stop();
+    expect(out.join("")).toBe(`[session] model fake-model\nWorking on ${t.id}\n[result] done · tokens 120 (in 100, out 20)\n`);
+    const sessions = await new SessionStore(await FileStore.open(s.networkDir)).list(t.id);
+    expect(sessions).toEqual([expect.objectContaining({ agentId: "backend", attempt: 1, exitCode: 0, costUsd: 0.5, numTurns: 2, model: "fake-model", usage: { input: 100, output: 20, cacheRead: 0, cacheCreation: 0, total: 120 } })]);
+    expect(sessions[0]!.durationMs).toBeGreaterThanOrEqual(0);
+
+    const lines: string[] = [];
+    expect(await runCli(["task", "stats", "--network-dir", s.networkDir, "--id", t.id], {}, (l) => lines.push(l))).toBe(0);
+    const [stat] = JSON.parse(lines[0]!);
+    expect(stat).toMatchObject({ id: t.id, stats: { sessions: 1, usage: { total: 120 }, costUsd: 0.5, agents: [expect.objectContaining({ agentId: "backend", sessions: 1 })] } });
+    expect(stat.stats.phases[0].phase).toBe("DISCUSS");
   });
 
   it("stops the running session on abort", async () => {

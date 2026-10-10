@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { AppError } from "../errors.js";
 import { runRunner, type RunnerOptions } from "../runner.js";
@@ -10,7 +10,7 @@ import { assertAgentId } from "../validation.js";
  *   {
  *     "networkDir": "/abs/project/.agent-network",          optional: --network-dir / NETWORK_DIR win
  *     "defaults": { "command": ["qwen", "{prompt}", ...], "promptFile": "qwen-prompt.md", "maxRestarts": 2 },
- *     "agents": [ { "id": "backend", "cwd": "../project-backend" }, { "id": "reviewer", "cwd": "../project-reviewer", "autostart": false } ]
+ *     "agents": [ { "id": "backend", "cwd": "../project-backend", "instructionsFile": "backend.md" }, { "id": "reviewer", "cwd": "../project-reviewer", "autostart": false } ]
  *   }
  *
  * Every agent field may also sit in "defaults"; relative paths are resolved against the config file.
@@ -20,8 +20,12 @@ export interface RunnerAgentConfig {
   /** Agent CLI argv with "{prompt}" (see `run`). */
   command: string[];
   cwd?: string;
-  /** File with the prompt template ({agent} {taskId} {title} {attempt} {resume}). */
+  /** File with the whole prompt template ({agent} {taskId} {title} {attempt} {resume}); read before every session. */
   promptFile?: string;
+  /** File with this agent's own instructions (role, rules), appended to the prompt; read before every session. */
+  instructionsFile?: string;
+  /** File with the system prompt, put where the command has {systemPrompt}; read before every session. */
+  systemPromptFile?: string;
   maxRestarts?: number;
   /** Start together with the UI. Default true. */
   autostart?: boolean;
@@ -29,7 +33,9 @@ export interface RunnerAgentConfig {
 
 export interface RunnersConfig {
   networkDir?: string;
-  agents: (RunnerAgentConfig & { promptTemplate?: string })[];
+  agents: RunnerAgentConfig[];
+  /** Where the config came from: the UI writes the instructions file it sets back there. */
+  path?: string;
 }
 
 type RawAgent = Partial<RunnerAgentConfig>;
@@ -56,16 +62,23 @@ export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
       throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" needs "command": the agent CLI as an array, e.g. ["qwen", "{prompt}", "-m", "qwen/qwen3.5-9b"]`);
     }
     const promptFile = merged.promptFile ? abs(merged.promptFile) : undefined;
+    const instructionsFile = merged.instructionsFile ? abs(merged.instructionsFile) : undefined;
+    const systemPromptFile = merged.systemPromptFile ? abs(merged.systemPromptFile) : undefined;
+    for (const [what, f] of [["promptFile", promptFile], ["instructionsFile", instructionsFile], ["systemPromptFile", systemPromptFile]] as const) {
+      if (f) await readFile(f, "utf8").catch((e: Error) => { throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" ${what} ${f}: ${e.message}`); });
+    }
     agents.push({
       id,
       command: merged.command,
       ...(merged.cwd ? { cwd: abs(merged.cwd) } : {}),
-      ...(promptFile ? { promptFile, promptTemplate: await readFile(promptFile, "utf8") } : {}),
+      ...(promptFile ? { promptFile } : {}),
+      ...(instructionsFile ? { instructionsFile } : {}),
+      ...(systemPromptFile ? { systemPromptFile } : {}),
       ...(merged.maxRestarts !== undefined ? { maxRestarts: Number(merged.maxRestarts) } : {}),
       autostart: merged.autostart !== false,
     });
   }
-  return { ...(typeof raw.networkDir === "string" ? { networkDir: abs(raw.networkDir) } : {}), agents };
+  return { ...(typeof raw.networkDir === "string" ? { networkDir: abs(raw.networkDir) } : {}), agents, path: file };
 }
 
 export interface RunnerView {
@@ -75,6 +88,13 @@ export interface RunnerView {
   stoppedAt: string | null;
   cwd: string | null;
   command: string;
+  promptFile: string | null;
+  instructionsFile: string | null;
+}
+
+export interface RunnerDetails extends RunnerView {
+  /** The start of the instructions file, or why it cannot be read. */
+  instructions: { preview: string } | { error: string } | null;
 }
 
 interface Managed {
@@ -94,7 +114,7 @@ export class RunnerPool {
   constructor(
     private readonly networkDir: string,
     agents: RunnersConfig["agents"],
-    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number> } = {},
+    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string } = {},
   ) {
     for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "" });
   }
@@ -111,7 +131,46 @@ export class RunnerPool {
       stoppedAt: m.stoppedAt,
       cwd: m.config.cwd ?? null,
       command: m.config.command.map((c) => (/\s/.test(c) ? JSON.stringify(c) : c)).join(" "),
+      promptFile: m.config.promptFile ?? null,
+      instructionsFile: m.config.instructionsFile ?? null,
     }));
+  }
+
+  /** list() plus a look into each instructions file, for the page. */
+  async details(): Promise<RunnerDetails[]> {
+    return Promise.all(
+      this.list().map(async (v) => {
+        if (!v.instructionsFile) return { ...v, instructions: null };
+        try {
+          const text = (await readFile(v.instructionsFile, "utf8")).trim();
+          return { ...v, instructions: { preview: text.length > 300 ? `${text.slice(0, 300)}…` : text } };
+        } catch (e) {
+          return { ...v, instructions: { error: (e as NodeJS.ErrnoException).code ?? (e as Error).message } };
+        }
+      }),
+    );
+  }
+
+  /**
+   * Point an agent at another instructions file (null/empty = none). Relative paths are resolved against the config file.
+   * The file must be readable; it is read again before every session, so the change applies to the next one.
+   * With a config file the value is written back there, so it survives a restart.
+   */
+  async setInstructionsFile(id: string, raw: string | null): Promise<RunnerView> {
+    const m = this.get(id);
+    const given = raw?.trim() || null;
+    const base = this.opts.configPath ? dirname(this.opts.configPath) : process.cwd();
+    const path = given ? (isAbsolute(given) ? given : resolve(base, given)) : null;
+    if (path) {
+      await readFile(path, "utf8").catch((e: NodeJS.ErrnoException) => {
+        throw new AppError("INVALID_INPUT", `Cannot read ${path}: ${e.code ?? e.message}`);
+      });
+    }
+    if (path) m.config.instructionsFile = path;
+    else delete m.config.instructionsFile;
+    if (this.opts.configPath) await saveAgentField(this.opts.configPath, id, "instructionsFile", given);
+    this.push(m, `[ui] instructions file: ${path ?? "none"} (applies from the next session)\n`);
+    return this.view(id);
   }
 
   log(id: string): string[] {
@@ -133,7 +192,9 @@ export class RunnerPool {
       networkDir: this.networkDir,
       command: m.config.command,
       ...(m.config.cwd ? { cwd: m.config.cwd } : {}),
-      ...(m.config.promptTemplate ? { promptTemplate: m.config.promptTemplate } : {}),
+      ...(m.config.promptFile ? { promptFile: m.config.promptFile } : {}),
+      ...(m.config.instructionsFile ? { instructionsFile: m.config.instructionsFile } : {}),
+      ...(m.config.systemPromptFile ? { systemPromptFile: m.config.systemPromptFile } : {}),
       ...(m.config.maxRestarts !== undefined ? { maxRestarts: m.config.maxRestarts } : {}),
       signal: controller.signal,
       log: (line) => this.push(m, `[runner] ${line}\n`),
@@ -177,4 +238,14 @@ export class RunnerPool {
     const max = this.opts.maxLines ?? 400;
     if (m.lines.length > max) m.lines.splice(0, m.lines.length - max);
   }
+}
+
+/** Update one field of one agent in the JSON config, keeping everything else (including _comment). */
+async function saveAgentField(configPath: string, id: string, field: string, value: string | null): Promise<void> {
+  const raw = JSON.parse(await readFile(configPath, "utf8")) as { agents?: Record<string, unknown>[] };
+  const agent = raw.agents?.find((a) => a.id === id);
+  if (!agent) return;
+  if (value === null) delete agent[field];
+  else agent[field] = value;
+  await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);
 }

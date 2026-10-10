@@ -6,25 +6,69 @@
     "networkDir is shared by all agents; relative paths here (promptFile) are resolved against this file's folder.",
     "qwen does not expand ${AGENT_ID} in --mcp-config but passes its environment to MCP servers: the runner sets AGENT_ID and NETWORK_DIR.",
     "Prompt first, right after qwen: --allowed-tools takes several values and would swallow it.",
+    "instructionsFile (per agent, relative to this file): the agent's own instructions, appended to the standard prompt and read again before every session; can also be set on the page.",
+    "stream-json output lets the runner count tokens and cost per session (task statistics) and still show a readable log.",
+    "Lean context: a short system prompt ({systemPrompt} <- systemPromptFile) and only the tools the agent needs; every turn re-reads them, so this cuts tokens per turn several times.",
     "autostart: false = start that agent with the button on the page."
   ],
   "networkDir": "/abs/path/project/.agent-network",
   "defaults": {
     "command": [
-      "qwen", "{prompt}",
-      "-m", "qwen/qwen3.5-9b",
-      "--auth-type", "openai", "--openai-base-url", "http://127.0.0.1:1234/v1", "--openai-api-key", "lm-studio",
-      "--mcp-config", "/abs/path/agent-network-mcp/examples/runner/qwen-mcp.json",
-      "--approval-mode", "auto-edit",
-      "--allowed-tools", "mcp__agent-network", "run_shell_command(git)", "run_shell_command(./mvnw)",
-      "--max-session-turns", "300", "--max-wall-time", "1h"
+      "qwen",
+      "{prompt}",
+      "-o",
+      "stream-json",
+      "--system-prompt",
+      "{systemPrompt}",
+      "--exclude-tools",
+      "web_fetch",
+      "agent",
+      "list_agents",
+      "skill",
+      "get_goal",
+      "update_goal",
+      "manage_memory",
+      "search_memory",
+      "notebook_edit",
+      "-m",
+      "qwen/qwen3.5-9b",
+      "--auth-type",
+      "openai",
+      "--openai-base-url",
+      "http://127.0.0.1:1234/v1",
+      "--openai-api-key",
+      "lm-studio",
+      "--mcp-config",
+      "/abs/path/agent-network-mcp/examples/runner/qwen-mcp.json",
+      "--approval-mode",
+      "auto-edit",
+      "--allowed-tools",
+      "mcp__agent-network",
+      "run_shell_command(git)",
+      "run_shell_command(./mvnw)",
+      "--max-session-turns",
+      "300",
+      "--max-wall-time",
+      "1h"
     ],
     "promptFile": "qwen-prompt.md",
-    "maxRestarts": 2
+    "maxRestarts": 2,
+    "systemPromptFile": "swarm-system-prompt.md"
   },
   "agents": [
-    { "id": "backend", "cwd": "/abs/path/project-backend" },
-    { "id": "reviewer", "cwd": "/abs/path/project-reviewer" },
-    { "id": "tester", "cwd": "/abs/path/project-tester", "autostart": false }
+    {
+      "id": "backend",
+      "cwd": "/abs/path/project-backend"
+    },
+    {
+      "id": "reviewer",
+      "cwd": "/abs/path/project-reviewer",
+      "instructionsFile": "instructions/reviewer.md"
+    },
+    {
+      "id": "tester",
+      "cwd": "/abs/path/project-tester",
+      "autostart": false
+    }
   ]
 }
