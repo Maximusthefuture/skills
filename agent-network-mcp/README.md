@@ -340,9 +340,12 @@ node dist/index.js task create --network-dir <dir> --agents backend,reviewer --t
 
 ### Коммиты
 
-Коммиты **необязательны** и сервером не проверяются. Агент может передать их в `complete({..., commits})` — они
-записываются как есть и видны остальным в `teamImplementations` (lead по ним сливает ветки, если агенты работают в
-отдельных worktree). Изменённые файлы — это `filesChanged`, который сообщает агент; владение проверяется по нему.
+Коммиты сервером не проверяются. Агент может передать их в `complete({..., commits})` — они записываются как есть и
+видны остальным в `teamImplementations`. **В отдельном worktree коммит нужен до `complete()`**: незакоммиченные правки
+лежат только в папке автора, ревьюер их не видит, а lead сливает ветки только по коммитам. Сервер сравнивает папку агента
+с checkout'ом, где создана задача; если у агента своя ветка, подсказка `implement`/`fix` говорит «закоммить перед
+`complete()`». Ревьюер, не увидевший изменения из `filesChanged`, просит автора закоммитить, а не пишет NEEDS_FIX. В
+общей папке коммиты по-прежнему необязательны. Изменённые файлы — это `filesChanged`, который сообщает агент; владение проверяется по нему.
 У follow-up задачи `baseCommit` — HEAD, который lead назвал при INTEGRATE: подсказка, откуда начинать, а не требование.
 Флаг `task create --no-commits` устарел и ничего не делает.
 
@@ -355,7 +358,7 @@ node dist/index.js task create --network-dir <dir> --agents backend,reviewer --t
 
 | Tool | Аргументы | Что делает |
 |---|---|---|
-| `swarm_context` | — | Всё для решения «что дальше»: задача (с `lead`, `maxFixRounds`, `verifyCommand`, `blockedReason`), фаза, ваше assignment, другие агенты, `pendingMessages`, agreement, implementations коллег (`teamImplementations`), в SYNC `reviewTargets`, `integration`, `fixRequests`, `allowedActions`, `nextAction`, `hint`, `exampleCall` (для `propose` и `respond`). Только чтение, можно звать когда угодно |
+| `swarm_context` | — | Всё для решения «что дальше»: задача (с `lead`, `maxFixRounds`, `verifyCommand`, `blockedReason`), фаза, ваше assignment, другие агенты, `pendingMessages`, agreement, implementations коллег (`teamImplementations`; в SYNC без авторского `summary`), в SYNC `reviewTargets` и после исправлений `fixedFindings`, `integration`, `fixRequests`, `handoff` (сессию сменяет свежая), `allowedActions`, `nextAction`, `hint`, `exampleCall` (для `propose` и `respond`). Только чтение, можно звать когда угодно |
 | `create_task` | `title`, `description`, `agents` (обязательны), `verifyCommand?` | Начать новую задачу, **только если пользователь попросил**. Создатель становится lead; `agents` — id *других* зарегистрированных агентов. Подробнее ниже |
 | `send_message` | `to`, `message` (обязательны), `requestFiles?`, `grantFiles?` | Сообщение одному другому агенту задачи; через `requestFiles`/`grantFiles` ведутся переговоры о чужих файлах |
 | `propose` | `summary`, `assignments[{agentId, responsibility, files}]` (обязательны), `decisions?`, `interfaces?` | Только DISCUSS: предложить/заменить agreement. У каждого агента заявлены **файлы** (пути или маски), заявки не должны пересекаться |
@@ -517,7 +520,8 @@ node dist/index.js run --agent backend --network-dir <dir> [--cwd <dir>] [--once
 ```bash
 node dist/index.js run --agent backend --network-dir /abs/project/.agent-network --cwd /abs/project-backend -- \
   claude -p "{prompt}" --output-format stream-json --verbose --model sonnet --mcp-config examples/runner/mcp.json --strict-mcp-config \
-    --permission-mode acceptEdits --allowedTools mcp__agent-network Read Write Edit "Bash(git:*)" "Bash(./mvnw:*)"
+    --permission-mode acceptEdits --allowedTools mcp__agent-network Read Write Edit "Bash(./mvnw:*)" \
+    "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)" "Bash(git show:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git merge:*)" "Bash(git rev-parse:*)"
 ```
 
 - **Каждая задача — свежая сессия.** Задача та же, что считает текущей сервер: самая старая `ACTIVE`/`BLOCKED` с этим
@@ -526,19 +530,37 @@ node dist/index.js run --agent backend --network-dir /abs/project/.agent-network
   `{agent}`, `{taskId}`, `{title}`, `{attempt}`, `{resume}`; инструкции агента поверх стандартного промпта —
   `--instructions-file`. Оба файла читаются перед каждой сессией. Модель: `{model}` в команде (`-m "{model}"`,
   `--model "{model}"`) и `--model <имя>`.
-- **Сессии передаются** `AGENT_ID`, `NETWORK_DIR`, `AGENT_NETWORK_TASK_ID`, `AGENT_NETWORK_ATTEMPT`. Claude Code подставляет
+- **Сессии передаются** `AGENT_ID`, `NETWORK_DIR`, `AGENT_NETWORK_TASK_ID`, `AGENT_NETWORK_ATTEMPT` (и `AGENT_NETWORK_FRESH_PHASES` при `--fresh-phases`). Claude Code подставляет
   `${AGENT_ID}` и `${NETWORK_DIR}` в MCP-конфиг, поэтому один [examples/runner/mcp.json](examples/runner/mcp.json) годится
   всем агентам.
 - **Перезапуск.** Сессия вышла, а задача ещё `ACTIVE` (упала, кончились `--max-turns`, модель остановилась раньше):
   новая сессия через `--restart-delay-ms` × номер попытки с пометкой «это сессия N, вызови `swarm_context`, не переделывай
   сделанное». После `--max-restarts` (по умолчанию 3) runner сдаётся, пока задача не изменится (фаза, статус, новое
   сообщение агенту), — лимит не сгорит на модели, которая не может продвинуться.
+- **Свежий ревьюер: `--fresh-phases SYNC`** (в `runners.json` — `"freshPhases": ["SYNC"]`; по умолчанию выключено).
+  Идея — «золотая рыбка» из модели Elephant-Goldfish ([статья](https://drensin.medium.com/elephants-goldfish-and-the-new-golden-age-of-software-engineering-c33641a48874)):
+  ревьюит тот, кто не участвовал в обсуждении. Без опции ревьюер в SYNC — та же сессия, что спорила в DISCUSS и писала
+  свою часть: он помнит, «что имелось в виду», и пропускает то, чего в коде нет. С опцией сессия, видевшая задачу в более
+  ранней фазе, при входе задачи в SYNC получает `nextAction: "done"` с `handoff: {phase: "SYNC"}` и заканчивается
+  (Stop-хук её не держит). Runner сразу, без паузы, запускает новую сессию с пометкой «ты свежая сессия для SYNC». Она
+  видит только задачу, соглашение (`summary`, `decisions`, `interfaces`) и код. Такая передача не считается попыткой для
+  `--max-restarts`. После раунда исправлений повторное ревью тоже уходит свежей сессии, а `fixedFindings` подсказывает
+  ей, что проверять. Цена — одна лишняя сессия (≈ 7k базовых токенов при [короткой базе](#экономия-токенов-короткая-база-и-компактный-swarm_context))
+  на агента и раунд SYNC. Допустимы `IMPLEMENT`, `SYNC`, `INTEGRATE`; проверялось на `SYNC`. Независимо от опции, в SYNC
+  `teamImplementations` не показывают `summary` авторов: ревьюер судит по коду и коммитам, а не по пересказу.
 - **Не запускает сессию**, пока задача `BLOCKED` (ждёт `task unblock`) и пока id агента держит живой процесс (например,
   интерактивная сессия с тем же `AGENT_ID` или не успевший выйти MCP-сервер прошлой сессии).
 - Ctrl+C: SIGTERM сессии, через 10 с SIGKILL; второй Ctrl+C — выход сразу. `--once`: одна задача и выход (для CI).
 - `-p` у `claude` неинтерактивный: разрешения не спросить, поэтому нужен явный `--allowedTools` (и `acceptEdits` для
   правок). `--allowedTools` принимает несколько значений: ставьте `"{prompt}"` сразу после `-p`, иначе флаг заберёт
   промпт себе. `bypassPermissions` — только в изолированном worktree или контейнере.
+- **git — только нужные команды.** `"Bash(git:*)"` разрешил бы агенту `push`, `reset --hard`, `branch -D`, `config`.
+  Протоколу хватает `status`, `diff`, `log`, `show`, `add`, `commit`, `merge` (follow-up и интеграция), `rev-parse`;
+  остальное в `-p` отклоняется (проверено: `reset --hard`, `branch -D`, `push` получают отказ). Префикс точный:
+  `git -C <dir> commit` под `git commit:*` не попадает.
+- **Скиллы: `Skill` в `--tools`.** `--tools` задаёт, какие встроенные инструменты вообще есть в сессии; без `Skill`
+  модель видит названия скиллов, но загрузить их нечем. В `--allowedTools` его писать не нужно: подтверждения он не
+  требует, а скиллы подхватываются сами из `.claude/skills` папки агента и `~/.claude/skills`.
 - С [хуками](#хуки-сообщения-доходят-до-занятого-агента) сессия узнаёт о сообщениях во время работы, а Stop-хук не даёт ей
   выйти посреди задачи; runner — страховка, если она всё же вышла.
 - Codex: `-- codex exec "{prompt}"` *(не проверялось; его MCP-конфиг должен брать `AGENT_ID` из окружения или быть своим
@@ -556,8 +578,8 @@ runner'а запускают агентов с короткой базой:
   границы: только папка проекта, коммиты только в свою ветку, без секретов). Runner подставляет его вместо
   `{systemPrompt}` (`--system-prompt "{systemPrompt}"`, поле `systemPromptFile` / флаг `--system-prompt-file`), файл
   перечитывается перед каждой сессией;
-- **только нужные инструменты**: Claude — `--tools Read,Write,Edit,Glob,Grep,Bash`; Qwen — `--exclude-tools web_fetch agent
-  list_agents skill get_goal update_goal manage_memory search_memory notebook_edit`.
+- **только нужные инструменты**: Claude — `--tools Read,Write,Edit,Glob,Grep,Bash` (плюс `Skill`, если агенты грузят скиллы: каждый ход читает их список); Qwen — `--exclude-tools web_fetch agent
+  list_agents get_goal update_goal manage_memory search_memory notebook_edit` (плюс `skill`, если скиллы агентам не нужны).
 
 Замер одного хода: Claude ~31 тыс. → ~7 тыс. токенов, Qwen ~17 тыс. → ~7.6 тыс. На настоящем Haiku (задача «два файла, ревьюер
 только проверяет») — 1.18 млн токенов / $0.32 / 1 мин 7 с до и 385 тыс. / $0.137 / 53 с после.
@@ -592,7 +614,9 @@ runner'а запускают агентов с короткой базой:
 node dist/index.js run --agent backend --network-dir /abs/project/.agent-network --cwd /abs/project-backend \
   --prompt-file examples/runner/qwen-prompt.md -- \
   qwen "{prompt}" -o stream-json -m qwen/qwen3.5-9b --mcp-config examples/runner/qwen-mcp.json --approval-mode auto-edit \
-    --allowed-tools mcp__agent-network "run_shell_command(git)" "run_shell_command(./mvnw)" --max-session-turns 300 --max-wall-time 1h
+    --allowed-tools mcp__agent-network "run_shell_command(./mvnw)" \
+    "run_shell_command(git status)" "run_shell_command(git diff)" "run_shell_command(git log)" "run_shell_command(git show)" "run_shell_command(git add)" "run_shell_command(git commit)" "run_shell_command(git merge)" "run_shell_command(git rev-parse)" \
+    --max-session-turns 300 --max-wall-time 1h
 ```
 
 Проверено на Qwen Code 0.24.7 (runner → `qwen` → поддельная OpenAI-совместимая модель, которая вызывает инструменты):
@@ -603,9 +627,12 @@ node dist/index.js run --agent backend --network-dir /abs/project/.agent-network
   пулом `backend,reviewer`), так что сессия получает id от runner'а, а не из пула.
 - **Права без интерактива.** В `default` инструменты agent-network отклоняются («non-interactive mode cannot prompt»), а
   `write_file` в сессии нет вовсе. `auto-edit` разрешает правки файлов; `--allowed-tools mcp__agent-network` (или
-  `"trust": true` у сервера) — инструменты роя; `run_shell_command(git)` — команды `git`. Только читающие команды (`ls`)
+  `"trust": true` у сервера) — инструменты роя; `run_shell_command(git commit)` — только команды с этим префиксом (с
+  узким списком из примеров `git reset --hard`, `git branch -D`, `git push` отклоняются). Только читающие команды (`ls`)
   qwen пропускает и так, остальные (`touch`) без разрешения отклоняет. `--approval-mode yolo` разрешает всё — только в
   песочнице.
+- **Скиллы.** Инструмент `skill` грузит скиллы из `.qwen/skills/` папки агента (не из `.claude/skills/`) и разрешения не
+  требует; если он в `--exclude-tools`, скиллы недоступны.
 - **Отложенные инструменты.** MCP-инструменты в qwen скрыты за `tool_search`/`tool_call` (полное имя
   `mcp__agent-network__swarm_context`). `qwen-prompt.md` говорит модели, как их найти: маленькой модели это экономит ходы.
 - `--allowed-tools` принимает несколько значений: промпт ставьте первым, сразу после `qwen`.
@@ -655,7 +682,9 @@ node dist/index.js ui --runners runners.json [--port 4777]
   "networkDir": "/abs/project/.agent-network",
   "defaults": {
     "command": ["qwen", "{prompt}", "-m", "{model}", "--mcp-config", "/abs/agent-network-mcp/examples/runner/qwen-mcp.json",
-                "--approval-mode", "auto-edit", "--allowed-tools", "mcp__agent-network", "run_shell_command(git)", "run_shell_command(./mvnw)",
+                "--approval-mode", "auto-edit", "--allowed-tools", "mcp__agent-network", "run_shell_command(./mvnw)",
+                "run_shell_command(git status)", "run_shell_command(git diff)", "run_shell_command(git log)", "run_shell_command(git show)",
+                "run_shell_command(git add)", "run_shell_command(git commit)", "run_shell_command(git merge)", "run_shell_command(git rev-parse)",
                 "--max-session-turns", "300", "--max-wall-time", "1h"],
     "model": "qwen/qwen3.5-9b",
     "models": ["qwen/qwen3.5-9b", "qwen/qwen3-coder-30b"],
@@ -693,7 +722,7 @@ Qwen, `"--model", "{model}"` у Claude Code), `"model"` — модель по у
 заменяет весь промпт целиком (тоже читается перед каждой сессией): в нём легко потерять «вызови `swarm_context`, иди по
 `nextAction` до `done`», поэтому для роли агента берите `instructionsFile`.
 
-`command`, `promptFile`, `maxRestarts` — те же, что у [`run`](#runner-агенты-работают-без-остановки); для Claude Code — команда из
+`command`, `promptFile`, `maxRestarts`, `freshPhases` — те же, что у [`run`](#runner-агенты-работают-без-остановки); для Claude Code — команда из
 `run-claude.sh`. `networkDir` можно задать и флагом `--network-dir` / `NETWORK_DIR` (они важнее). Ctrl+C останавливает
 runner'ы (их сессиям — SIGTERM) и страницу.
 
@@ -733,6 +762,7 @@ ln -s /abs/path/agent-network-mcp/skills/agent-network/SKILL.md /abs/project/.qw
 | `AGENT_ROLE` | нет | роль (метка) |
 | `AGENT_NETWORK_WAIT_MS` | нет | таймаут `wait` по умолчанию, 1000..300000 (по умолчанию 120000); ниже таймаута tool у клиента |
 | `AGENT_NETWORK_ADVANCED` | нет | `1` включает расширенные tools |
+| `AGENT_NETWORK_FRESH_PHASES` | нет | ставит runner (`--fresh-phases`): фазы, которые сессия, видевшая задачу раньше, передаёт свежей (`SYNC`, `IMPLEMENT`, `INTEGRATE`) |
 
 Добавьте `.agent-network/` в `.gitignore` проекта. Процесс при старте регистрирует агента сам (отдельного `agent_register`
 больше не нужно); если `AGENT_ID` уже держит живой процесс, сервер не стартует (клиент покажет «disconnected»).
@@ -827,17 +857,17 @@ npm run test:integration
 npm run typecheck
 ```
 
-287 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
+296 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
 
 - **unit**: `FileStore` (атомарная запись, конкурентные создания, path traversal, lock), сторы, `PhaseManager` (все пары
   переходов, сбор раунда, ревью исправленного, лимит раундов), точное пересечение масок (с fuzz-проверкой), `EventHub`,
   `NetworkService` (протокол, интеграция, `BLOCKED`/`unblock`, задачи в настоящем git-репозитории) и фасад
   `Swarm` (весь протокол, цикл `NEEDS_FIX`, короткий `TIMEOUT`, misuse-сценарии), UI-состояние и HTTP, хуки Claude Code
-  (поиск агента по дереву процессов, одно уведомление на сообщение, напоминание об открытом запросе файлов, Stop один раз), runner (промпт, выбор задачи), подзадачи (план, отказ `complete` при открытых шагах, переживают перезапуск) и follow-up задачи (бюджет цепочки, переход агентов на новую задачу, `baseCommit` на настоящем git-репозитории).
+  (поиск агента по дереву процессов, одно уведомление на сообщение, напоминание об открытом запросе файлов, Stop один раз), runner (промпт, выбор задачи), передача свежей сессии в SYNC (`handoff`, маркер для Stop-хука, `fixedFindings`, SYNC без `summary`), подзадачи (план, отказ `complete` при открытых шагах, переживают перезапуск) и follow-up задачи (бюджет цепочки, переход агентов на новую задачу, `baseCommit` на настоящем git-репозитории).
 - **integration** (реальные процессы MCP через stdio-клиент SDK): полный цикл через 5 tools, **три агента в трёх git
   worktree** (деление файлов масками в одной папке, коммиты, сбор всех ревью, повторное ревью только исправления, слияние
   веток lead'ом), конкурентная запись из двух процессов, crash recovery (`SIGKILL` + рестарт), пул идентичностей, CLI
-  оператора, схемы tools; `advanced.test.ts` проходит шаги исходного ТЗ через расширенные tools; runner с поддельным агентом (сессия на задачу, ожидание между задачами, перезапуск и отказ после лимита, `BLOCKED`, занятый id, остановка, `run --once`).
+  оператора, схемы tools; `advanced.test.ts` проходит шаги исходного ТЗ через расширенные tools; runner с поддельным агентом (сессия на задачу, ожидание между задачами, перезапуск и отказ после лимита, передача свежей сессии без счёта попытки, `BLOCKED`, занятый id, остановка, `run --once`).
 
 ## Частые вопросы
 

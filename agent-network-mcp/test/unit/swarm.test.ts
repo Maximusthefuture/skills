@@ -1,8 +1,12 @@
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EventHub } from "../../src/events/eventHub.js";
+import { isHandedOver } from "../../src/handoff.js";
 import { Swarm } from "../../src/mcp/swarm.js";
 import { NetworkService } from "../../src/service.js";
+import { FileStore } from "../../src/storage/fileStore.js";
 import { tmpDir } from "../helpers/tmp.js";
 
 const assignments = [
@@ -689,5 +693,100 @@ describe("open file requests (the requester is blocked until the owner answers)"
     const res = await s.reviewer.sendMessage({ to: "backend", message: "need it", requestFiles: ["src/main/X.java"] });
     expect(res.note).toContain("reading needs no permission");
     expect((await s.reviewer.context()).hint).toMatch(/reading any file needs no permission/i);
+  });
+});
+
+describe("fresh sessions at phase changes (freshPhases)", () => {
+  const fresh = (service: NetworkService) => new Swarm(service, undefined, { freshPhases: ["SYNC"] });
+
+  it("a session that saw the discussion hands the task over at SYNC; a new session does the review", async () => {
+    const { s, services, task, dir } = await setup();
+    const t = await task();
+    s.reviewer = fresh(services.reviewer!);
+    await s.backend.context();
+    await toSync(s);
+    await s.backend.sendMessage({ to: "reviewer", message: "look at the DTO first" });
+    const old = await s.reviewer.context();
+    expect(old).toMatchObject({ nextAction: "done", allowedActions: [], handoff: { phase: "SYNC" }, pendingMessages: [] });
+    expect((await s.reviewer.wait({ timeoutMs: 1000 })).status).toBe("DONE");
+    expect((await s.backend.context()).nextAction).toBe("sync"); // a session without freshPhases goes on as before
+    expect(await isHandedOver(await FileStore.open(dir), "reviewer", (await services.reviewer!.tasks.find(t.id))!)).toBe(true);
+
+    const next = await fresh(services.reviewer!).context(); // first sees the task in SYNC: it is the fresh session
+    expect(next).toMatchObject({ nextAction: "sync", reviewTargets: ["backend"] });
+    expect(next.handoff).toBeUndefined();
+    expect(next.pendingMessages).toEqual([expect.objectContaining({ from: "backend", content: "look at the DTO first" })]); // left unread for it
+  });
+
+  it("after a fix round the re-review goes to a fresh session again, with the findings the fixes answer", async () => {
+    const { s, services, task } = await setup();
+    await task();
+    await toSync(s);
+    const round1 = fresh(services.reviewer!);
+    expect((await round1.context()).nextAction).toBe("sync");
+    await s.backend.complete({ status: "PASS" });
+    await round1.complete({ status: "NEEDS_FIX", findings: [{ severity: "ERROR", description: "email is not validated", relatedAgent: "backend", files: ["src/Api.java"] }] });
+    await s.backend.context();
+    expect(await s.backend.complete({ result: "validated", filesChanged: ["src/Api.java"] })).toMatchObject({ task: { phase: "SYNC", syncRound: 2 } });
+
+    expect(await round1.context()).toMatchObject({ nextAction: "done", handoff: { phase: "SYNC" } });
+    const round2 = await fresh(services.reviewer!).context();
+    expect(round2).toMatchObject({ nextAction: "sync", reviewTargets: ["backend"] });
+    expect(round2.fixedFindings).toEqual([expect.objectContaining({ description: "email is not validated", relatedAgent: "backend", reportedBy: "reviewer" })]);
+    expect(round2.hint).toContain("fixedFindings");
+  });
+
+  it("SYNC shows the agreed decisions but not the authors' summaries; INTEGRATE keeps them", async () => {
+    const { s, task } = await setup();
+    await task();
+    await s.backend.context();
+    await s.backend.propose({ summary: "split", assignments, decisions: ["emails are unique per tenant"], interfaces: ["POST /users"] });
+    await s.reviewer.context();
+    await s.reviewer.complete({});
+    await s.backend.complete({});
+    await s.backend.complete({ result: "api done, trust me", filesChanged: ["src/Api.java"], commits: ["abc123"] });
+    const review = await s.reviewer.complete({ result: "validation", filesChanged: ["src/Validator.java"] });
+    expect(review.agreement).toMatchObject({ decisions: ["emails are unique per tenant"], interfaces: ["POST /users"] });
+    const [shown] = review.teamImplementations as Record<string, unknown>[];
+    expect(shown).toMatchObject({ agentId: "backend", filesChanged: ["src/Api.java"], commits: ["abc123"] });
+    expect(shown).not.toHaveProperty("summary");
+    const [full] = (await s.reviewer.context({ full: true })).teamImplementations as Record<string, unknown>[];
+    expect(full).not.toHaveProperty("summary"); // not even when the reviewer asks for everything
+    expect(review.hint).toContain("not what its authors say");
+
+    await s.backend.complete({ status: "PASS" });
+    await s.reviewer.complete({ status: "PASS" });
+    const integrate = await s.backend.context();
+    expect(integrate.teamImplementations).toEqual([expect.objectContaining({ agentId: "reviewer", summary: "validation" })]);
+  });
+});
+
+describe("commits on an own branch", () => {
+  it("tells an agent in its own worktree to commit before complete(); an agent in the task's checkout is not told", async () => {
+    const repo = await tmpDir();
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" }).toString().trim();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@example.com");
+    git("config", "user.name", "t");
+    writeFileSync(join(repo, "README.md"), "demo");
+    git("add", ".");
+    git("commit", "-q", "-m", "init");
+    const worktree = `${repo}-backend`;
+    git("worktree", "add", "-q", worktree, "-b", "swarm-backend");
+    const dir = join(repo, ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const service = (id: string) => NetworkService.create(dir, { id, type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }) });
+    const s = {
+      backend: new Swarm(await service("backend"), undefined, { workdir: worktree }),
+      reviewer: new Swarm(await service("reviewer"), undefined, { workdir: repo }),
+    };
+    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    await toImplement(s);
+    const backend = await s.backend.context();
+    expect(backend.nextAction).toBe("implement");
+    expect(backend.hint).toContain("You work on your own branch swarm-backend: commit your files before complete()");
+    const reviewer = await s.reviewer.context();
+    expect(reviewer.nextAction).toBe("implement");
+    expect(reviewer.hint).not.toContain("own branch");
   });
 });

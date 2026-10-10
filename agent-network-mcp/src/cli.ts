@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { isAbsolute, resolve } from "node:path";
 import { AppError } from "./errors.js";
+import { parseFreshPhases } from "./handoff.js";
 import { runHookCli } from "./hook.js";
 import { isValidModel, runRunner, usesModel } from "./runner.js";
 import { collectStats } from "./stats.js";
@@ -23,8 +24,9 @@ const USAGE = `Usage:
                         agents' runners (start/stop, log tail), started together with the page
   agent-network-mcp hook <post-tool|stop> [--network-dir <abs path>] [--agent <id>]   Claude Code hook: new messages / stay in the loop
   agent-network-mcp run --agent <id> [--network-dir <abs path>] [--cwd <dir>] [--prompt-file <path>] [--instructions-file <path>] [--system-prompt-file <path>] [--model <name>]
-                        [--max-restarts 3] [--restart-delay-ms 5000] [--poll-ms 2000] [--once] -- <agent CLI> [args, "{prompt}"]
-                        keeps one agent working: starts a session per task, restarts it until DONE, then waits again
+                        [--max-restarts 3] [--restart-delay-ms 5000] [--poll-ms 2000] [--fresh-phases SYNC] [--once] -- <agent CLI> [args, "{prompt}"]
+                        keeps one agent working: starts a session per task, restarts it until DONE, then waits again;
+                        --fresh-phases SYNC: the review is done by a fresh session that did not see the discussion
 
 NETWORK_DIR is used when --network-dir is not given. Tasks created here are picked up automatically by
 the agents' swarm_context / wait. The first agent of --agents is the lead (proposes first, integrates at the end).
@@ -198,6 +200,7 @@ async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: s
       "max-restarts": { type: "string" },
       "restart-delay-ms": { type: "string" },
       "poll-ms": { type: "string" },
+      "fresh-phases": { type: "string" },
       once: { type: "boolean" },
     },
   });
@@ -212,6 +215,13 @@ async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: s
   }
   if (usesModel(command) && !values.model) {
     out("error: the command has {model}: give --model <name>");
+    return 2;
+  }
+  let freshPhases;
+  try {
+    freshPhases = parseFreshPhases(values["fresh-phases"], "--fresh-phases");
+  } catch (e) {
+    out(`error: ${(e as Error).message}`);
     return 2;
   }
   try {
@@ -240,6 +250,7 @@ async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: s
         maxRestarts: positiveInt(values["max-restarts"], "max-restarts", 3),
         restartDelayMs: positiveInt(values["restart-delay-ms"], "restart-delay-ms", 5000),
         pollMs: positiveInt(values["poll-ms"], "poll-ms", 2000, 10),
+        ...(freshPhases.length ? { freshPhases } : {}),
         once: values.once ?? false,
         signal: controller.signal,
       });

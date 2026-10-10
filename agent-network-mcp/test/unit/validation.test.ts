@@ -41,6 +41,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...env, AGENT_ID: "a,../b" })).toThrow(/AGENT_ID/);
     expect(() => loadConfig({ ...env, AGENT_ID: "a," })).toThrow(/AGENT_ID/);
   });
+  it("reads the phases a runner wants fresh sessions for", () => {
+    expect(loadConfig({ ...env, AGENT_NETWORK_FRESH_PHASES: "SYNC, IMPLEMENT" }).freshPhases).toEqual(["SYNC", "IMPLEMENT"]);
+    expect(loadConfig({ ...env, AGENT_NETWORK_FRESH_PHASES: "" })).not.toHaveProperty("freshPhases");
+    expect(() => loadConfig({ ...env, AGENT_NETWORK_FRESH_PHASES: "DISCUSS" })).toThrow(/AGENT_NETWORK_FRESH_PHASES/);
+    expect(() => loadConfig({ ...env, AGENT_NETWORK_FRESH_PHASES: "sync" })).toThrow(/AGENT_NETWORK_FRESH_PHASES/);
+  });
   it("reads the default wait timeout", () => {
     expect(loadConfig({ ...env, AGENT_NETWORK_WAIT_MS: "50000" }).waitMs).toBe(50000);
     expect(loadConfig(env).waitMs).toBeUndefined();

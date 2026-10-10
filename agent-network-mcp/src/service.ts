@@ -2,6 +2,7 @@ import { dirname } from "node:path";
 import { AppError } from "./errors.js";
 import { EventHub } from "./events/eventHub.js";
 import { readGitContext } from "./git.js";
+import { writeHandoffMarker } from "./handoff.js";
 import { anyDeclared, covers, findOverlaps, matches, normalizePath, ownersOf } from "./ownership.js";
 import { DEFAULT_MAX_FIX_ROUNDS, isHalt, PhaseManager, type Halt, type Transition } from "./phase/phaseManager.js";
 import { FileStore } from "./storage/fileStore.js";
@@ -137,6 +138,11 @@ export class NetworkService {
 
   close(): void {
     this.hub.close();
+  }
+
+  /** This session was told to hand the task over to a fresh one: lets the Stop hook release it. */
+  async markHandoff(taskId: string, epoch: number): Promise<void> {
+    await writeHandoffMarker(this.fs, this.me, taskId, epoch);
   }
 
   // ---------------------------------------------------------------- agents

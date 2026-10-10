@@ -1,7 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { AppError } from "../errors.js";
+import { parseFreshPhases } from "../handoff.js";
 import { isValidModel, runRunner, usesModel, type RunnerOptions } from "../runner.js";
+import type { Phase } from "../types.js";
 import { assertAgentId } from "../validation.js";
 
 /**
@@ -31,6 +33,8 @@ export interface RunnerAgentConfig {
   /** The choice offered on the page. */
   models?: string[];
   maxRestarts?: number;
+  /** Phases a fresh session takes over (["SYNC"]: the review is done by a session that did not see the discussion). */
+  freshPhases?: Phase[];
   /** Start together with the UI. Default true. */
   autostart?: boolean;
 }
@@ -70,6 +74,7 @@ export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
       throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" "models" must be a list of model names`);
     }
     if (usesModel(merged.command) && !merged.model) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" command has {model}: set "model" (in the agent or in "defaults")`);
+    const freshPhases = parseFreshPhases(merged.freshPhases as readonly unknown[] | string | undefined, `${file}: agent "${id}" freshPhases`);
     const promptFile = merged.promptFile ? abs(merged.promptFile) : undefined;
     const instructionsFile = merged.instructionsFile ? abs(merged.instructionsFile) : undefined;
     const systemPromptFile = merged.systemPromptFile ? abs(merged.systemPromptFile) : undefined;
@@ -86,6 +91,7 @@ export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
       ...(merged.model ? { model: merged.model } : {}),
       ...(merged.models?.length ? { models: [...new Set(merged.models)] } : {}),
       ...(merged.maxRestarts !== undefined ? { maxRestarts: Number(merged.maxRestarts) } : {}),
+      ...(freshPhases.length ? { freshPhases } : {}),
       autostart: merged.autostart !== false,
     });
   }
@@ -229,6 +235,7 @@ export class RunnerPool {
       ...(m.config.systemPromptFile ? { systemPromptFile: m.config.systemPromptFile } : {}),
       model: () => m.config.model,
       ...(m.config.maxRestarts !== undefined ? { maxRestarts: m.config.maxRestarts } : {}),
+      ...(m.config.freshPhases ? { freshPhases: m.config.freshPhases } : {}),
       signal: controller.signal,
       log: (line) => this.push(m, `[runner] ${line}\n`),
       output: (text) => this.push(m, text),

@@ -1,13 +1,14 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isHandedOver } from "./handoff.js";
 import { SessionOutput, type SessionResult } from "./sessionOutput.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore, defaultIsProcessAlive } from "./stores/agentStore.js";
 import { MessageStore } from "./stores/messageStore.js";
 import { SessionStore } from "./stores/sessionStore.js";
 import { TaskStore } from "./stores/taskStore.js";
-import type { Task } from "./types.js";
+import type { Phase, Task } from "./types.js";
 
 /**
  * Supervisor that keeps one agent working across tasks without an LLM in the idle loop: it watches the network
@@ -28,15 +29,21 @@ const RESUME =
   " This is session {attempt} for this task: the previous one ended before the task was done. " +
   "Call swarm_context to see where the task stands (your 'subtasks' show which steps are already done); do not redo work that is already committed or reported.";
 
+const HANDOFF =
+  " This is a fresh session for phase {phase}: the previous session handed the task over when the phase changed. " +
+  "You have not seen the earlier discussion, on purpose: work from swarm_context (the task and the agreement) and the code, not from what the others say they did.";
+
 export interface PromptVars {
   agent: string;
   taskId: string;
   title: string;
   attempt: number;
+  /** The previous session ended because the task entered this phase (see handoff.ts). */
+  handoff?: Phase;
 }
 
 export function renderPrompt(template: string, v: PromptVars): string {
-  const resume = v.attempt > 1 ? RESUME.replaceAll("{attempt}", String(v.attempt)) : "";
+  const resume = v.handoff ? HANDOFF.replaceAll("{phase}", v.handoff) : v.attempt > 1 ? RESUME.replaceAll("{attempt}", String(v.attempt)) : "";
   return template
     .replaceAll("{resume}", resume)
     .replaceAll("{agent}", v.agent)
@@ -101,6 +108,11 @@ export interface RunnerOptions {
   model?: string | (() => string | undefined);
   /** Extra sessions for one task after the first before the runner gives up until the task changes. Default 3. */
   maxRestarts?: number;
+  /**
+   * When the task enters one of these phases, the session that saw an earlier phase ends and a fresh one takes over
+   * (["SYNC"]: the review is done by a session that did not take part in the discussion). Such a handoff is not a failed attempt.
+   */
+  freshPhases?: readonly Phase[];
   /** How often the idle runner looks at the network directory. Default 2000 ms. */
   pollMs?: number;
   /** Pause before a restart, multiplied by the attempt number. Default 5000 ms. */
@@ -199,6 +211,11 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
   const sessions = new SessionStore(fs);
 
   const attempts = new Map<string, number>();
+  const freshPhases = opts.freshPhases ?? [];
+  /** taskId -> sessions that ended by a handoff; they do not count against maxRestarts. */
+  const handoffs = new Map<string, number>();
+  /** taskId -> the phase the next session takes over after a handoff. */
+  const handedTo = new Map<string, Phase>();
   /** taskId -> state signature when the runner gave up; retried as soon as the state changes. */
   const gaveUp = new Map<string, string>();
   let note = "";
@@ -252,12 +269,17 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
 
     const attempt = (attempts.get(task.id) ?? 0) + 1;
     attempts.set(task.id, attempt);
-    const vars = { agent, taskId: task.id, title: task.title, attempt };
+    const handoff = handedTo.get(task.id);
+    handedTo.delete(task.id);
+    const vars = { agent, taskId: task.id, title: task.title, attempt, ...(handoff ? { handoff } : {}) };
     const template = (opts.promptFile ? await readText(opts.promptFile, "prompt file", log) : undefined) ?? opts.promptTemplate ?? DEFAULT_PROMPT;
     const instructions = opts.instructionsFile ? await readText(opts.instructionsFile, "instructions file", log) : undefined;
     const prompt = withInstructions(renderPrompt(template, vars), instructions, vars);
-    const env = { ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt) };
-    say(`${task.id}: starting session ${attempt} (phase ${task.phase}${model ? `, model ${model}` : ""})`);
+    const env = {
+      ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt),
+      ...(freshPhases.length ? { AGENT_NETWORK_FRESH_PHASES: freshPhases.join(",") } : {}),
+    };
+    say(`${task.id}: starting session ${attempt} (phase ${task.phase}${handoff ? ", fresh after a handoff" : ""}${model ? `, model ${model}` : ""})`);
     const finishedBefore = new Set((await tasks.listForAgent(agent)).filter(isFinished).map((t) => t.id));
     const sink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
     const startedAt = new Date();
@@ -287,12 +309,22 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       const tokens = result?.usage ? `, ${result.usage.total} tokens` : "";
       say(`${task.id}: ${after?.status ?? "gone"}${also.length ? `; in the same session also ${also.join(", ")}` : ""} (session exit ${code}${tokens})`);
       attempts.delete(task.id);
+      handoffs.delete(task.id);
       if (opts.once) return 0;
       continue;
     }
     if (after.status === "BLOCKED") continue; // handled at the top: wait for the operator
-    if (attempt > maxRestarts) {
+    // the server told the session to end because the task moved on into a fresh phase: start the fresh one right away
+    const movedOn = (after.phaseHistory?.length ?? 0) > (task.phaseHistory?.length ?? 0);
+    if (freshPhases.length && movedOn && (await isHandedOver(fs, agent, after).catch(() => false))) {
+      handoffs.set(task.id, (handoffs.get(task.id) ?? 0) + 1);
+      handedTo.set(task.id, after.phase);
+      say(`${task.id}: handoff to a fresh session for ${after.phase} (session exit ${code})`);
+      continue;
+    }
+    if (attempt - (handoffs.get(task.id) ?? 0) > maxRestarts) {
       gaveUp.set(task.id, await signature(after));
+      handoffs.delete(task.id);
       say(`${task.id}: ${attempt} sessions ended before the task was done (last exit ${code}); giving up until the task changes`);
       if (opts.once) return 1;
       continue;

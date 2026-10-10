@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { isHandedOver } from "./handoff.js";
 import { openFileRequests } from "./mcp/swarm.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore, defaultIsProcessAlive } from "./stores/agentStore.js";
@@ -170,7 +171,11 @@ export async function runHook(mode: HookMode, input: HookInput, opts: HookOption
   // same rule as the server's nextAction "respond": open until the owner writes back to the requester
   const open = perTask.flatMap((all) => openFileRequests(all)).filter((m) => m.to === agentId);
 
-  if (mode === "stop") return { decision: "block", reason: stopReason(agentId, tasks, unread, open) };
+  if (mode === "stop") {
+    // the server told this session to end at a phase change: a fresh session takes the task over
+    for (const t of tasks) if (await isHandedOver(fs, agentId, t)) return null;
+    return { decision: "block", reason: stopReason(agentId, tasks, unread, open) };
+  }
 
   const now = deps.now();
   const statePath = ["hooks", `${agentId}.json`];

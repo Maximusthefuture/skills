@@ -31,9 +31,9 @@ async function main(): Promise<void> {
   const service = await NetworkService.create(config.networkDir, identity, { log });
   await service.registerAgent(announce); // visible to the others right away; fails if a live process already owns this AGENT_ID
   const advanced = process.env.AGENT_NETWORK_ADVANCED === "1";
-  const server = createServer(service, { advanced, log, waitMs: config.waitMs });
+  const server = createServer(service, { advanced, log, waitMs: config.waitMs, freshPhases: config.freshPhases });
   await server.connect(new StdioServerTransport());
-  log(`started: agent=${identity.id} network=${config.networkDir}${advanced ? " (advanced tools)" : ""}`);
+  log(`started: agent=${identity.id} network=${config.networkDir}${advanced ? " (advanced tools)" : ""}${config.freshPhases ? ` (fresh sessions: ${config.freshPhases.join(",")})` : ""}`);
 
   let closing = false;
   const shutdown = async (): Promise<void> => {

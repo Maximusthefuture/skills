@@ -18,6 +18,7 @@ interface Launch {
   networkDir: string;
   taskId: string;
   attempt: number;
+  fresh: string | null;
   args: string[];
 }
 
@@ -69,6 +70,36 @@ describe("agent runner", () => {
     expect(runs[0]!.networkDir).toBe(s.networkDir);
     expect(runs[1]!.args[0]).toContain(`Task ${t2.id} ("Archive orders") is assigned to you`);
     expect(runs[1]!.args[0]).not.toContain("previous one ended");
+  });
+
+  it("a handoff at a fresh phase starts the fresh session at once and is not a failed attempt", async () => {
+    const s = await setup();
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "handoff:2", "{prompt}"], { maxRestarts: 0, freshPhases: ["SYNC"], restartDelayMs: 60_000 });
+    const t = await s.newTask("Review with fresh eyes");
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "task done");
+    expect(await r.stop()).toBe(0);
+    const runs = s.launches();
+    expect(runs.map((l) => [l.attempt, l.fresh])).toEqual([[1, "SYNC"], [2, "SYNC"]]);
+    expect(runs[1]!.args[0]).toContain("This is a fresh session for phase SYNC");
+    expect(runs[1]!.args[0]).not.toContain("previous one ended");
+    expect(r.lines).toContain(`${t.id}: handoff to a fresh session for SYNC (session exit 0)`);
+  });
+
+  it("an early exit after a handoff still counts; without freshPhases the same exit is a plain failure", async () => {
+    const s = await setup();
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "handoff:0"], { maxRestarts: 0, freshPhases: ["SYNC"] });
+    await s.newTask("The fresh session crashes");
+    await until(() => r.lines.some((l) => l.includes("giving up until the task changes")), "give up");
+    await pause(80);
+    expect(s.launches().map((l) => l.attempt)).toEqual([1, 2]);
+    await r.stop();
+
+    const plain = await setup();
+    const p = start(plain.networkDir, [process.execPath, FAKE, plain.log, "handoff:0"], { maxRestarts: 0 });
+    await plain.newTask("No fresh phases");
+    await until(() => p.lines.some((l) => l.includes("giving up until the task changes")), "give up");
+    expect(plain.launches().map((l) => [l.attempt, l.fresh])).toEqual([[1, null]]);
+    await p.stop();
   });
 
   it("restarts an unfinished task with a resume note, gives up after the limit and retries when the task changes", async () => {

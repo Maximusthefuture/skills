@@ -27,6 +27,9 @@ describe("renderPrompt", () => {
     const third = renderPrompt(DEFAULT_PROMPT, { agent: "backend", taskId: "task-002", title: "Cancel orders", attempt: 3 });
     expect(third).toContain("This is session 3 for this task");
     expect(renderPrompt("{agent}/{taskId}/{attempt}", { agent: "a", taskId: "t", title: "", attempt: 2 })).toBe("a/t/2");
+    const fresh = renderPrompt(DEFAULT_PROMPT, { agent: "reviewer", taskId: "task-002", title: "Cancel orders", attempt: 2, handoff: "SYNC" });
+    expect(fresh).toContain("This is a fresh session for phase SYNC");
+    expect(fresh).not.toContain("previous one ended"); // a handoff is not a crash
   });
 });
 

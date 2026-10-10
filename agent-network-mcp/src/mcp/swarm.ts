@@ -1,7 +1,9 @@
 import { AppError, isAppError } from "../errors.js";
+import { readGitContext } from "../git.js";
+import { phaseEpoch } from "../handoff.js";
 import { normalizePath, ownersOf } from "../ownership.js";
 import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, type NetworkService } from "../service.js";
-import type { Agent, Agreement, FollowUpRequest, Implementation, IntegrationReport, Message, Phase, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
+import type { Agent, Agreement, FollowUpRequest, GitContext, Implementation, IntegrationReport, Message, Phase, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
 
 /** What the agent should do next, computed by the server so the agent never reasons about the state machine. */
 export type NextAction = "respond" | "propose" | "approve" | "implement" | "fix" | "sync" | "integrate" | "wait" | "done";
@@ -13,6 +15,8 @@ export interface Decision {
   waitingOn: string[];
   /** A ready-to-copy tool call for nextAction, with real agent ids filled in (helps weak models emit arguments). */
   exampleCall?: { tool: string; args: Record<string, unknown> };
+  /** The task entered a phase a fresh session does: this session ends (nextAction done). */
+  handoff?: Phase;
 }
 
 interface Snapshot {
@@ -33,6 +37,12 @@ interface Snapshot {
   myQuestions: Message[];
   /** INTEGRATE only: what the follow-up budget of the task chain still allows. */
   followUpBudget?: { max: number; used: number; remaining: number };
+  /** The phase this session hands over to a fresh one, if any (see handoff.ts). */
+  handoff: Phase | null;
+  /** SYNC after a fix round: the ERROR findings the fixes had to address. */
+  fixedFindings?: (SyncFinding & { reportedBy: string })[];
+  /** IMPLEMENT: the agent's own git branch when it works apart from the task's checkout (a worktree); null otherwise. */
+  ownBranch?: string | null;
 }
 
 /** "2/5 done, s3 in progress" */
@@ -72,6 +82,10 @@ function invalid(message: string, details?: Record<string, unknown>): AppError {
 export interface SwarmOptions {
   /** wait() timeout when the agent passes none (AGENT_NETWORK_WAIT_MS); keep it below the client's tool-call timeout. */
   defaultWaitMs?: number;
+  /** AGENT_NETWORK_FRESH_PHASES: when the task enters one of these phases, a session that saw an earlier one hands it over. */
+  freshPhases?: readonly Phase[];
+  /** The agent's working folder (default: this process's cwd, which the CLI sets to the agent's project or worktree). */
+  workdir?: string;
 }
 
 export class Swarm {
@@ -80,6 +94,14 @@ export class Swarm {
   private shownAgreement = new Map<string, number>();
   /** Tasks whose description this session has already shown (it stays in the agent's context). */
   private shownDescription = new Set<string>();
+  /** taskId -> phaseHistory length when this session first saw the task; later phases are new to it. */
+  private firstSeenEpoch = new Map<string, number>();
+  /** "taskId@epoch" whose handoff marker is written. */
+  private markedHandoff = "";
+  private readonly freshPhases: readonly Phase[];
+  private readonly workdir: string;
+  /** Git context of the working folder, read once per session. */
+  private workGit?: Promise<GitContext | null>;
   readonly defaultWaitMs: number;
 
   constructor(
@@ -88,6 +110,8 @@ export class Swarm {
     opts: SwarmOptions = {},
   ) {
     this.defaultWaitMs = Math.min(Math.max(opts.defaultWaitMs ?? DEFAULT_WAIT_MS, 0), MAX_WAIT_MS);
+    this.freshPhases = opts.freshPhases ?? [];
+    this.workdir = opts.workdir ?? process.cwd();
   }
 
   private get me(): string {
@@ -409,7 +433,54 @@ export class Swarm {
       openFromMe: open.filter((m) => m.from === this.me),
       myQuestions: messages.filter((m) => m.from === this.me && m.to === OPERATOR && !m.readAt),
       ...(task.phase === "INTEGRATE" ? { followUpBudget: await this.service.followUpBudget(task) } : {}),
+      handoff: await this.handoffPhase(task),
+      ...(task.phase === "SYNC" && task.syncRound > 1 ? { fixedFindings: await this.fixedFindings(task) } : {}),
+      ...(task.phase === "IMPLEMENT" ? { ownBranch: await this.ownBranch(task) } : {}),
     };
+  }
+
+  /**
+   * The agent's branch when it works apart from the checkout the task was created in (its own worktree or branch).
+   * Its uncommitted changes are invisible to the reviewers and the lead there, so it has to commit before complete().
+   */
+  private async ownBranch(task: Task): Promise<string | null> {
+    if (!task.git) return null;
+    this.workGit ??= readGitContext(this.workdir).catch(() => null);
+    const mine = await this.workGit;
+    if (!mine || mine.branch === "HEAD") return null; // not a repository, or a detached HEAD
+    return mine.repositoryRoot !== task.git.repositoryRoot || mine.branch !== task.git.branch ? mine.branch : null;
+  }
+
+  /**
+   * The phase to hand over to a fresh session: the task entered a fresh phase after this session first saw it. A session
+   * that first sees the task in that phase is the fresh one and keeps it. The marker lets the Stop hook release the session.
+   */
+  private async handoffPhase(task: Task): Promise<Phase | null> {
+    const epoch = phaseEpoch(task);
+    if (epoch === undefined) return null; // created before phaseHistory existed
+    const first = this.firstSeenEpoch.get(task.id) ?? epoch;
+    this.firstSeenEpoch.set(task.id, first);
+    if (task.status !== "ACTIVE" || !this.freshPhases.includes(task.phase) || epoch <= first) return null;
+    const key = `${task.id}@${epoch}`;
+    if (this.markedHandoff !== key) {
+      try {
+        await this.service.markHandoff(task.id, epoch);
+        this.markedHandoff = key;
+      } catch (e) {
+        this.log(`cannot write the handoff marker: ${(e as Error).message}`); // the Stop hook then asks once more; harmless
+      }
+    }
+    return task.phase;
+  }
+
+  /** What the previous round asked the agents under review to fix, in the reviewers' words. */
+  private async fixedFindings(task: Task): Promise<(SyncFinding & { reportedBy: string })[]> {
+    const round = task.syncRound - 1;
+    const under = this.service.phases.reviewees(task);
+    const [syncs, integrations] = await Promise.all([this.service.syncs.list(task.id, round), this.service.integrations.list(task.id, round)]);
+    return [...syncs, ...integrations]
+      .filter((r) => r.status === "NEEDS_FIX")
+      .flatMap((r) => r.findings.filter((f) => f.severity === "ERROR" && (!f.relatedAgent || under.includes(f.relatedAgent))).map((f) => ({ ...f, reportedBy: r.agentId })));
   }
 
   /**
@@ -434,6 +505,18 @@ export class Swarm {
     }
     const snap = await this.snapshot(task);
     const d = this.decide(snap);
+    if (d.handoff) {
+      // nothing else: messages stay unread for the fresh session, and nothing here should tempt this one to go on
+      return {
+        task: { id: task.id, title: task.title, phase: task.phase, status: task.status },
+        agent,
+        handoff: { phase: d.handoff },
+        pendingMessages: [],
+        allowedActions: d.allowedActions,
+        nextAction: d.nextAction,
+        hint: d.hint,
+      };
+    }
     const { agreement, impls, reports, integrations, agents, unread, openToMe, openFromMe, subtasks } = snap;
     const listOf = (id: string) => subtasks.find((l) => l.agentId === id);
     const mySubtasks = listOf(this.me)?.items ?? [];
@@ -466,7 +549,7 @@ export class Swarm {
         : phase === "IMPLEMENT"
           ? { agreement: { summary: agreement.summary, ...nonEmpty("decisions", agreement.decisions), ...nonEmpty("interfaces", agreement.interfaces) } }
           : phase === "SYNC"
-            ? { agreement: { summary: agreement.summary, ...nonEmpty("interfaces", agreement.interfaces), assignments: agreement.assignments.map((a) => ({ agentId: a.agentId, responsibility: a.responsibility })) } }
+            ? { agreement: { summary: agreement.summary, ...nonEmpty("decisions", agreement.decisions), ...nonEmpty("interfaces", agreement.interfaces), assignments: agreement.assignments.map((a) => ({ agentId: a.agentId, responsibility: a.responsibility })) } }
             : phase === "INTEGRATE"
               ? { agreement: { summary: agreement.summary } }
               : {};
@@ -501,11 +584,13 @@ export class Swarm {
         ? {
             teamImplementations: impls.filter((i) => i.agentId !== this.me).map((i) => {
               const steps = listOf(i.agentId)?.items ?? [];
-              return { agentId: i.agentId, status: i.status, summary: i.summary, filesChanged: i.filesChanged, ...nonEmpty("commits", i.commits), ...(steps.length ? { subtasks: steps.map((st) => `${st.id} [${st.status}] ${st.title}${st.note ? ` (${st.note})` : ""}`) } : {}) };
+              // in SYNC the reviewer judges the code, not its author's account of it (also with full: weak models ask for it first)
+              return { agentId: i.agentId, status: i.status, ...(phase !== "SYNC" ? { summary: i.summary } : {}), filesChanged: i.filesChanged, ...nonEmpty("commits", i.commits), ...(steps.length ? { subtasks: steps.map((st) => `${st.id} [${st.status}] ${st.title}${st.note ? ` (${st.note})` : ""}`) } : {}) };
             }),
           }
         : {}),
       ...(phase === "SYNC" ? { reviewTargets: phases.reviewees(task).filter((a) => a !== this.me) } : {}),
+      ...(snap.fixedFindings?.length ? { fixedFindings: snap.fixedFindings } : {}),
       ...(full && phase === "SYNC" ? { syncReports: reports.map((r) => ({ agentId: r.agentId, status: r.status, findings: r.findings })) } : {}),
       ...(full && integration ? { integration: { status: integration.status, result: integration.result, commits: integration.commits, findings: integration.findings } } : {}),
       ...(fixRequests.length ? { fixRequests } : {}),
@@ -541,6 +626,15 @@ export class Swarm {
 
   /** The decision table: phase + my own progress -> nextAction / allowedActions. */
   decide(s: Snapshot): Decision {
+    if (s.handoff) {
+      return {
+        nextAction: "done",
+        allowedActions: [],
+        hint: `The task entered ${s.handoff}, which a fresh session does: end your session now, with no more tool calls. The runner starts a new session that works only from the task, the agreement and the code.`,
+        waitingOn: [],
+        handoff: s.handoff,
+      };
+    }
     const core = this.decideCore(s);
     // an unanswered request for one of my files blocks another agent: answering it comes first
     const req = s.openToMe[0];
@@ -618,9 +712,12 @@ export class Swarm {
           : steps.length
             ? ""
             : "Several steps? Plan them first with subtasks({add: [...]}). ";
+        const commit = s.ownBranch
+          ? `You work on your own branch ${s.ownBranch}: commit your files before complete() and pass the hashes in commits; the reviewers and the lead see only committed work. `
+          : "";
         return task.syncRound > 0
-          ? done("fix", ["send_message", "subtasks", "complete", "wait"], `${base}Fix what 'fixRequests' (forYou) name. ${plan}Then complete({result, filesChanged}).`, pending)
-          : done("implement", ["send_message", "subtasks", "complete", "wait"], `${base}Implement your assignment in your own files (reading any file needs no permission; to change another agent's file ask its owner with send_message requestFiles). ${plan}Then complete({result, filesChanged}).`, pending);
+          ? done("fix", ["send_message", "subtasks", "complete", "wait"], `${base}Fix what 'fixRequests' (forYou) name. ${plan}${commit}Then complete({result, filesChanged}).`, pending)
+          : done("implement", ["send_message", "subtasks", "complete", "wait"], `${base}Implement your assignment in your own files (reading any file needs no permission; to change another agent's file ask its owner with send_message requestFiles). ${plan}${commit}Then complete({result, filesChanged}).`, pending);
       }
       case "SYNC": {
         const pending = phases.reviewers(task).filter((id) => !reports.some((r) => r.agentId === id));
@@ -635,7 +732,7 @@ export class Swarm {
         return done(
           "sync",
           ["send_message", "complete", "wait"],
-          `Review ${scope} ('teamImplementations') against the task and the agreed interfaces. Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.`,
+          `Review ${scope} ('teamImplementations': their changed files and commits) against the task and the agreement: judge the code, not what its authors say about it. Work done in another branch is in its commits (git show <hash>); if a change listed in filesChanged is not visible to you, ask its author with send_message to commit it and wait() for the reply instead of reporting it missing.${task.syncRound > 1 ? " 'fixedFindings' lists what the fixes had to address: check each one." : ""} Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.`,
           pending,
         );
       }

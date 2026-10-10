@@ -1,7 +1,8 @@
 import { isAbsolute, resolve } from "node:path";
 import { AppError } from "./errors.js";
+import { parseFreshPhases } from "./handoff.js";
 import { MAX_WAIT_MS } from "./service.js";
-import type { AgentIdentity } from "./types.js";
+import type { AgentIdentity, Phase } from "./types.js";
 import { assertAgentId } from "./validation.js";
 
 export interface Config {
@@ -11,6 +12,8 @@ export interface Config {
   networkDir: string;
   /** AGENT_NETWORK_WAIT_MS: default wait() timeout; must stay below the client's tool-call timeout (Codex: 60 s). */
   waitMs?: number;
+  /** AGENT_NETWORK_FRESH_PHASES (set by a runner): phases this session hands over to a fresh one when the task enters them. */
+  freshPhases?: Phase[];
 }
 
 /** Identity and network location come only from the process environment, never from tool input. */
@@ -40,7 +43,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       throw new AppError("INVALID_CONFIG", `AGENT_NETWORK_WAIT_MS must be an integer 1000..${MAX_WAIT_MS}`);
     }
   }
+  const freshPhases = parseFreshPhases(env.AGENT_NETWORK_FRESH_PHASES, "AGENT_NETWORK_FRESH_PHASES");
   const identity: AgentIdentity = { id: candidates[0]!, type: env.AGENT_TYPE || "unknown" };
   if (env.AGENT_ROLE) identity.role = env.AGENT_ROLE;
-  return { identity, candidates, networkDir: resolved, ...(waitMs ? { waitMs } : {}) };
+  return { identity, candidates, networkDir: resolved, ...(waitMs ? { waitMs } : {}), ...(freshPhases.length ? { freshPhases } : {}) };
 }

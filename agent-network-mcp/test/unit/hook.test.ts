@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { writeHandoffMarker } from "../../src/handoff.js";
 import { ancestors, resolveAgentByProcess, runHook, runHookCli, type HookDeps, type ProcessTable } from "../../src/hook.js";
 import { FileStore } from "../../src/storage/fileStore.js";
 import { AgentStore } from "../../src/stores/agentStore.js";
@@ -153,6 +154,16 @@ describe("runHook stop", () => {
     const withRequest = (await runHook("stop", {}, { networkDir }, deps)) as { reason: string };
     expect(withRequest.reason).toContain("reviewer wait(s) for your answer to a file request");
     expect(await runHook("stop", { stop_hook_active: true }, { networkDir }, deps)).toBeNull();
+  });
+
+  it("lets a session the server handed over stop; a marker from an earlier phase does not count", async () => {
+    const { networkDir, tasks, task, deps } = await setup();
+    const inSync = { ...task, phase: "SYNC" as const, phaseHistory: [...(task.phaseHistory ?? []), { phase: "IMPLEMENT" as const, at: "" }, { phase: "SYNC" as const, at: "" }] };
+    await tasks.save(inSync);
+    await writeHandoffMarker(await FileStore.open(networkDir), "backend", task.id, 3);
+    expect(await runHook("stop", {}, { networkDir }, deps)).toBeNull();
+    await tasks.save({ ...inSync, phase: "INTEGRATE", phaseHistory: [...inSync.phaseHistory, { phase: "INTEGRATE", at: "" }] });
+    expect(await runHook("stop", {}, { networkDir }, deps)).toMatchObject({ decision: "block" });
   });
 
   it("lets the agent stop when it has no active task", async () => {

@@ -9,7 +9,11 @@
 # - headless mode cannot ask for permission: --approval-mode auto-edit lets it edit files, --allowed-tools
 #   mcp__agent-network allows the swarm tools, run_shell_command(<cmd>) allows that command (read-only commands like ls
 #   are allowed anyway, anything else is declined); --approval-mode yolo allows everything, only in a sandbox;
-# - --allowed-tools takes several values, so the prompt goes first, right after qwen.
+# - --allowed-tools takes several values, so the prompt goes first, right after qwen;
+# - run_shell_command(git commit) allows only commands with that prefix: with the list below git reset --hard,
+#   git branch -D and git push are declined;
+# - the skill tool (not in --exclude-tools) loads skills from .qwen/skills/ in the agent's folder and needs no
+#   --allowed-tools; exclude it when the agents need no skills (every turn re-reads the skill list).
 set -euo pipefail
 
 AN=/abs/path/agent-network-mcp
@@ -22,10 +26,11 @@ agent() {
   local id=$1 model=$2
   node "$AN/dist/index.js" run --agent "$id" --model "$model" --network-dir "$NETWORK_DIR" --cwd "$PROJECT-$id" \
     --prompt-file "$AN/examples/runner/qwen-prompt.md" --system-prompt-file "$AN/examples/runner/swarm-system-prompt.md" -- \
-    qwen "{prompt}" -o stream-json --system-prompt "{systemPrompt}" --exclude-tools web_fetch agent list_agents skill get_goal update_goal manage_memory search_memory notebook_edit -m "{model}" \
+    qwen "{prompt}" -o stream-json --system-prompt "{systemPrompt}" --exclude-tools web_fetch agent list_agents get_goal update_goal manage_memory search_memory notebook_edit -m "{model}" \
       --mcp-config "$AN/examples/runner/qwen-mcp.json" \
       --approval-mode auto-edit \
-      --allowed-tools mcp__agent-network "run_shell_command(git)" "run_shell_command(./mvnw)" \
+      --allowed-tools mcp__agent-network "run_shell_command(./mvnw)" \
+        "run_shell_command(git status)" "run_shell_command(git diff)" "run_shell_command(git log)" "run_shell_command(git show)" "run_shell_command(git add)" "run_shell_command(git commit)" "run_shell_command(git merge)" "run_shell_command(git rev-parse)" \
       --max-session-turns 300 --max-wall-time 1h
 }
 

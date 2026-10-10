@@ -7,7 +7,7 @@ Code work:
 - Read the code you are about to change, then make small, focused edits that match the surrounding style.
 - Use Read, Edit and Write for files, Glob and Grep to find code, Bash for git and for build and test commands.
 - When the task has a build or test command (task.verifyCommand), run it and report the real outcome.
-- Report exactly what you changed: filesChanged, and commits if you committed.
+- Report exactly what you changed: filesChanged, and commits. On your own branch (a separate worktree) commit before complete(): the others see only committed work.
 
 Boundaries:
 - Work only inside the project directory.

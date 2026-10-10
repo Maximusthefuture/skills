@@ -23,7 +23,8 @@ nextAction:
   overlapping claims are refused (`FILE_OVERLAP`). Do not implement anything yet.
 - `approve` (DISCUSS): read `agreement` (assignments and each agent's files); `complete()` approves it. If you disagree, `send_message` or `propose` a replacement.
 - `implement` (IMPLEMENT): work ONLY on your own assignment and change only your own files (`ownership.yourFiles`) or files granted to you. Reviewing the other agents' code is for SYNC, not now. Report blockers with `send_message`. When finished
-  call `complete({result, filesChanged})` (commits are optional: pass `commits` if you committed, nothing checks them).
+  call `complete({result, filesChanged})`. Working on your own git branch (a separate worktree)? Commit your files first and pass
+  `commits`: the reviewers and the lead see only committed work there. In a shared folder commits are optional; nothing checks them.
   An assignment with `files: []` means you change nothing: you only review the others' work. Mark your part ready right away
   with `complete({result: "review only: nothing to change"})` and do your review in SYNC.
   A part with several steps: plan it with `subtasks({add: ["<step>", ...]})`, then `subtasks({start: "s1"})` and `subtasks({done: ["s1"]})`
@@ -36,6 +37,10 @@ nextAction:
   then `complete({status: "PASS"})` or `complete({status: "NEEDS_FIX", findings: [{severity, description, relatedAgent, files}]})`.
   NEEDS_FIX needs at least one `ERROR` finding (a real defect or a broken agreement); `WARNING`/`INFO` go with PASS.
   Name the agent who must fix the problem in `relatedAgent`. After a fix round only the fixes are reviewed.
+  Judge the code and commits against the task and the agreement, not the authors' account (SYNC does not show their summaries);
+  after a fix round `fixedFindings` lists what the fixes had to address. Work done in another branch is in its commits
+  (`git show <hash>`); if a listed change is not visible to you, ask its author to commit it (`send_message`, then `wait()`)
+  instead of reporting it missing.
 - `integrate` (INTEGRATE, lead only): bring everyone's work together (in separate worktrees merge their branches), run the
   build and ALL tests (`task.verifyCommand` if set), then `complete({status: "PASS", result})` (add `commits: [<merged HEAD>]` if you merged with git), or
   `complete({status: "NEEDS_FIX", result, findings: [{severity: "ERROR", description, relatedAgent}]})` for conflicts or failing tests.
@@ -45,7 +50,7 @@ nextAction:
 - `wait`: nothing for you to do right now. Call `wait()`. This includes a task with status `BLOCKED` (the fix-round limit is used up;
   the operator decides).
   With no task, `swarm_context` also allows `create_task` (see below).
-- `done`: the task is complete.
+- `done`: the task is complete, or (with `handoff`) the task entered a phase that a fresh session does: end your session now.
 
 Starting a task: only when the USER asks you to, call `create_task({title, description, agents: [<other agent ids>]})`.
 Put the user's request in `description` concretely (problem, expected behaviour, files, who does what; never invent scope).
