@@ -40,7 +40,8 @@ nextAction:
   Judge the code and commits against the task and the agreement, not the authors' account (SYNC does not show their summaries);
   after a fix round `fixedFindings` lists what the fixes had to address. Work done in another branch is in its commits
   (`git show <hash>`); if a listed change is not visible to you, ask its author to commit it (`send_message`, then `wait()`)
-  instead of reporting it missing.
+  instead of reporting it missing. `notInYourBranch` lists their commits your branch lacks: `git merge` them first, or you
+  review an older copy of their files.
 - `integrate` (INTEGRATE, lead only): bring everyone's work together (in separate worktrees merge their branches), run the
   build and ALL tests (`task.verifyCommand` if set), then `complete({status: "PASS", result})` (add `commits: [<merged HEAD>]` if you merged with git), or
   `complete({status: "NEEDS_FIX", result, findings: [{severity: "ERROR", description, relatedAgent}]})` for conflicts or failing tests.
@@ -48,7 +49,7 @@ nextAction:
   become new tasks when `followUps.remaining` > 0: add `followUps: [{title, description, agents?}]` to the PASS call. Each description must be
   concrete; the agents start them when this task is DONE. Never invent work; everything else goes into `result`.
 - `wait`: nothing for you to do right now. Call `wait()`. This includes a task with status `BLOCKED` (the fix-round limit is used up;
-  the operator decides).
+  the operator decides). A session started by a runner gets `done` on a `BLOCKED` task instead: end it, the runner waits.
   With no task, `swarm_context` also allows `create_task` (see below).
 - `done`: the task is complete, or (with `handoff`) the task entered a phase that a fresh session does: end your session now.
 

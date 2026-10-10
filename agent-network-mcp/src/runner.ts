@@ -212,8 +212,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
 
   const attempts = new Map<string, number>();
   const freshPhases = opts.freshPhases ?? [];
-  /** taskId -> sessions that ended by a handoff; they do not count against maxRestarts. */
-  const handoffs = new Map<string, number>();
+  /** taskId -> sessions that ended by design (a handoff, or the task became BLOCKED); they do not count against maxRestarts. */
+  const plannedEnds = new Map<string, number>();
   /** taskId -> the phase the next session takes over after a handoff. */
   const handedTo = new Map<string, Phase>();
   /** taskId -> state signature when the runner gave up; retried as soon as the state changes. */
@@ -276,7 +276,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const instructions = opts.instructionsFile ? await readText(opts.instructionsFile, "instructions file", log) : undefined;
     const prompt = withInstructions(renderPrompt(template, vars), instructions, vars);
     const env = {
-      ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt),
+      ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt), AGENT_NETWORK_RUNNER: "1",
       ...(freshPhases.length ? { AGENT_NETWORK_FRESH_PHASES: freshPhases.join(",") } : {}),
     };
     say(`${task.id}: starting session ${attempt} (phase ${task.phase}${handoff ? ", fresh after a handoff" : ""}${model ? `, model ${model}` : ""})`);
@@ -309,22 +309,26 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       const tokens = result?.usage ? `, ${result.usage.total} tokens` : "";
       say(`${task.id}: ${after?.status ?? "gone"}${also.length ? `; in the same session also ${also.join(", ")}` : ""} (session exit ${code}${tokens})`);
       attempts.delete(task.id);
-      handoffs.delete(task.id);
+      plannedEnds.delete(task.id);
       if (opts.once) return 0;
       continue;
     }
-    if (after.status === "BLOCKED") continue; // handled at the top: wait for the operator
+    if (after.status === "BLOCKED") {
+      // the server ends runner sessions on a BLOCKED task; the top of the loop waits for the operator without a model
+      plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
+      continue;
+    }
     // the server told the session to end because the task moved on into a fresh phase: start the fresh one right away
     const movedOn = (after.phaseHistory?.length ?? 0) > (task.phaseHistory?.length ?? 0);
     if (freshPhases.length && movedOn && (await isHandedOver(fs, agent, after).catch(() => false))) {
-      handoffs.set(task.id, (handoffs.get(task.id) ?? 0) + 1);
+      plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
       handedTo.set(task.id, after.phase);
       say(`${task.id}: handoff to a fresh session for ${after.phase} (session exit ${code})`);
       continue;
     }
-    if (attempt - (handoffs.get(task.id) ?? 0) > maxRestarts) {
+    if (attempt - (plannedEnds.get(task.id) ?? 0) > maxRestarts) {
       gaveUp.set(task.id, await signature(after));
-      handoffs.delete(task.id);
+      plannedEnds.delete(task.id);
       say(`${task.id}: ${attempt} sessions ended before the task was done (last exit ${code}); giving up until the task changes`);
       if (opts.once) return 1;
       continue;

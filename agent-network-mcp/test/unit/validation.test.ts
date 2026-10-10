@@ -47,6 +47,10 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...env, AGENT_NETWORK_FRESH_PHASES: "DISCUSS" })).toThrow(/AGENT_NETWORK_FRESH_PHASES/);
     expect(() => loadConfig({ ...env, AGENT_NETWORK_FRESH_PHASES: "sync" })).toThrow(/AGENT_NETWORK_FRESH_PHASES/);
   });
+  it("knows when a runner started the session", () => {
+    expect(loadConfig({ ...env, AGENT_NETWORK_RUNNER: "1" }).underRunner).toBe(true);
+    expect(loadConfig(env)).not.toHaveProperty("underRunner");
+  });
   it("reads the default wait timeout", () => {
     expect(loadConfig({ ...env, AGENT_NETWORK_WAIT_MS: "50000" }).waitMs).toBe(50000);
     expect(loadConfig(env).waitMs).toBeUndefined();

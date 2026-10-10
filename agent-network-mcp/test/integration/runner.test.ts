@@ -19,6 +19,7 @@ interface Launch {
   taskId: string;
   attempt: number;
   fresh: string | null;
+  runner: string | null;
   args: string[];
 }
 
@@ -83,6 +84,22 @@ describe("agent runner", () => {
     expect(runs[1]!.args[0]).toContain("This is a fresh session for phase SYNC");
     expect(runs[1]!.args[0]).not.toContain("previous one ended");
     expect(r.lines).toContain(`${t.id}: handoff to a fresh session for SYNC (session exit 0)`);
+  });
+
+  it("a session that ends on a BLOCKED task is not a failed attempt: after unblock a new one starts", async () => {
+    const s = await setup();
+    // session 2 exits early once more: with the BLOCKED session counted as a failure, maxRestarts 1 would give up there
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "block:3"], { maxRestarts: 1 });
+    const t = await s.newTask("Blocked, then unblocked");
+    await until(async () => (await s.tasks.get(t.id)).status === "BLOCKED", "blocked");
+    await until(() => r.lines.some((l) => l.includes("is BLOCKED")), "runner waits for the operator");
+    expect(s.launches().map((l) => [l.attempt, l.runner])).toEqual([[1, "1"]]); // sessions know a runner started them
+    const blocked = await s.tasks.get(t.id);
+    await s.tasks.save({ ...blocked, status: "ACTIVE" }); // the operator unblocks
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "task done");
+    expect(await r.stop()).toBe(0);
+    expect(s.launches().map((l) => l.attempt)).toEqual([1, 2, 3]);
+    expect(r.lines.some((l) => l.includes("giving up"))).toBe(false);
   });
 
   it("an early exit after a handoff still counts; without freshPhases the same exit is a plain failure", async () => {

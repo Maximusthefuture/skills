@@ -358,7 +358,7 @@ node dist/index.js task create --network-dir <dir> --agents backend,reviewer --t
 
 | Tool | Аргументы | Что делает |
 |---|---|---|
-| `swarm_context` | — | Всё для решения «что дальше»: задача (с `lead`, `maxFixRounds`, `verifyCommand`, `blockedReason`), фаза, ваше assignment, другие агенты, `pendingMessages`, agreement, implementations коллег (`teamImplementations`; в SYNC без авторского `summary`), в SYNC `reviewTargets` и после исправлений `fixedFindings`, `integration`, `fixRequests`, `handoff` (сессию сменяет свежая), `allowedActions`, `nextAction`, `hint`, `exampleCall` (для `propose` и `respond`). Только чтение, можно звать когда угодно |
+| `swarm_context` | — | Всё для решения «что дальше»: задача (с `lead`, `maxFixRounds`, `verifyCommand`, `blockedReason`), фаза, ваше assignment, другие агенты, `pendingMessages`, agreement, implementations коллег (`teamImplementations`; в SYNC без авторского `summary`), в SYNC `reviewTargets`, после исправлений `fixedFindings`, а в `teamImplementations` — `notInYourBranch` (коммиты автора, которых нет в вашей ветке), `integration`, `fixRequests`, `handoff` (сессию сменяет свежая), `allowedActions`, `nextAction`, `hint`, `exampleCall` (для `propose` и `respond`). Только чтение, можно звать когда угодно |
 | `create_task` | `title`, `description`, `agents` (обязательны), `verifyCommand?` | Начать новую задачу, **только если пользователь попросил**. Создатель становится lead; `agents` — id *других* зарегистрированных агентов. Подробнее ниже |
 | `send_message` | `to`, `message` (обязательны), `requestFiles?`, `grantFiles?` | Сообщение одному другому агенту задачи; через `requestFiles`/`grantFiles` ведутся переговоры о чужих файлах |
 | `propose` | `summary`, `assignments[{agentId, responsibility, files}]` (обязательны), `decisions?`, `interfaces?` | Только DISCUSS: предложить/заменить agreement. У каждого агента заявлены **файлы** (пути или маски), заявки не должны пересекаться |
@@ -548,6 +548,13 @@ node dist/index.js run --agent backend --network-dir /abs/project/.agent-network
   ей, что проверять. Цена — одна лишняя сессия (≈ 7k базовых токенов при [короткой базе](#экономия-токенов-короткая-база-и-компактный-swarm_context))
   на агента и раунд SYNC. Допустимы `IMPLEMENT`, `SYNC`, `INTEGRATE`; проверялось на `SYNC`. Независимо от опции, в SYNC
   `teamImplementations` не показывают `summary` авторов: ревьюер судит по коду и коммитам, а не по пересказу.
+- **`BLOCKED` под runner'ом.** Сессия, запущенная runner'ом (`AGENT_NETWORK_RUNNER=1`), на заблокированной задаче получает
+  `nextAction: "done"` и заканчивается, а не крутит `wait()` до решения оператора; попыткой это не считается. В
+  интерактивной сессии агент по-прежнему ждёт.
+- **Свежая копия в SYNC.** Сервер проверяет в папке ревьюера, есть ли в его ветке коммиты из `implementation.commits`
+  автора (`git merge-base --is-ancestor`). Чего нет — в `teamImplementations[].notInYourBranch`, и подсказка говорит
+  «сначала `git merge <hash>`». Иначе ревьюер читает и тестирует старую копию (например, слитую в прошлом раунде) и
+  повторяет уже исправленные находки — так прогон на Haiku упёрся в лимит раундов.
 - **Не запускает сессию**, пока задача `BLOCKED` (ждёт `task unblock`) и пока id агента держит живой процесс (например,
   интерактивная сессия с тем же `AGENT_ID` или не успевший выйти MCP-сервер прошлой сессии).
 - Ctrl+C: SIGTERM сессии, через 10 с SIGKILL; второй Ctrl+C — выход сразу. `--once`: одна задача и выход (для CI).
@@ -762,6 +769,7 @@ ln -s /abs/path/agent-network-mcp/skills/agent-network/SKILL.md /abs/project/.qw
 | `AGENT_ROLE` | нет | роль (метка) |
 | `AGENT_NETWORK_WAIT_MS` | нет | таймаут `wait` по умолчанию, 1000..300000 (по умолчанию 120000); ниже таймаута tool у клиента |
 | `AGENT_NETWORK_ADVANCED` | нет | `1` включает расширенные tools |
+| `AGENT_NETWORK_RUNNER` | нет | `1` ставит runner: на `BLOCKED` сессия заканчивается, а не ждёт |
 | `AGENT_NETWORK_FRESH_PHASES` | нет | ставит runner (`--fresh-phases`): фазы, которые сессия, видевшая задачу раньше, передаёт свежей (`SYNC`, `IMPLEMENT`, `INTEGRATE`) |
 
 Добавьте `.agent-network/` в `.gitignore` проекта. Процесс при старте регистрирует агента сам (отдельного `agent_register`
@@ -857,7 +865,7 @@ npm run test:integration
 npm run typecheck
 ```
 
-296 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
+300 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
 
 - **unit**: `FileStore` (атомарная запись, конкурентные создания, path traversal, lock), сторы, `PhaseManager` (все пары
   переходов, сбор раунда, ревью исправленного, лимит раундов), точное пересечение масок (с fuzz-проверкой), `EventHub`,

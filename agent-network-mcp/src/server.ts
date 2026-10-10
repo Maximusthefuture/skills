@@ -14,12 +14,14 @@ export interface ServerOptions {
   waitMs?: number;
   /** Phases this session hands over to a fresh session (see handoff.ts). */
   freshPhases?: Phase[];
+  /** The session was started by a runner: it ends on a BLOCKED task. */
+  underRunner?: boolean;
 }
 
 export function createServer(service: NetworkService, opts: ServerOptions = {}): McpServer {
   const log = opts.log ?? (() => undefined);
   const server = new McpServer({ name: "agent-network-mcp", version: "0.2.0" }, { instructions: SWARM_INSTRUCTIONS });
-  registerSwarmTools(server, new Swarm(service, log, { defaultWaitMs: opts.waitMs, freshPhases: opts.freshPhases }));
+  registerSwarmTools(server, new Swarm(service, log, { defaultWaitMs: opts.waitMs, freshPhases: opts.freshPhases, underRunner: opts.underRunner }));
   if (opts.advanced) registerAdvancedTools(server, service, log);
   return server;
 }

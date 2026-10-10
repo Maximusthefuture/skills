@@ -790,3 +790,64 @@ describe("commits on an own branch", () => {
     expect(reviewer.hint).not.toContain("own branch");
   });
 });
+
+describe("SYNC on an older copy of the reviewee's work", () => {
+  it("names the reviewee's commits the reviewer's branch lacks and asks to merge them first", async () => {
+    const repo = await tmpDir();
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.email", "t@example.com");
+    git(repo, "config", "user.name", "t");
+    writeFileSync(join(repo, "README.md"), "demo");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "init");
+    const wt = { backend: `${repo}-backend`, reviewer: `${repo}-reviewer` };
+    git(repo, "worktree", "add", "-q", wt.backend, "-b", "swarm-backend");
+    git(repo, "worktree", "add", "-q", wt.reviewer, "-b", "swarm-reviewer");
+    const commit = (cwd: string, file: string) => {
+      writeFileSync(join(cwd, file), file);
+      git(cwd, "add", file);
+      git(cwd, "commit", "-q", "-m", file);
+      return git(cwd, "rev-parse", "HEAD");
+    };
+    const dir = join(repo, ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const service = (id: string) => NetworkService.create(dir, { id, type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }) });
+    const s = {
+      backend: new Swarm(await service("backend"), undefined, { workdir: wt.backend }),
+      reviewer: new Swarm(await service("reviewer"), undefined, { workdir: wt.reviewer }),
+    };
+    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    await toImplement(s);
+    const api = commit(wt.backend, "Api.java");
+    await s.backend.complete({ result: "api", filesChanged: ["src/main/Api.java"], commits: [api] });
+    const test = commit(wt.reviewer, "ApiTest.java");
+    await s.reviewer.complete({ result: "tests", filesChanged: ["src/test/ApiTest.java"], commits: [test] });
+
+    const stale = await s.reviewer.context();
+    expect(stale.nextAction).toBe("sync");
+    expect(stale.teamImplementations).toEqual([expect.objectContaining({ agentId: "backend", notInYourBranch: [api] })]);
+    expect(stale.hint).toContain(`Your branch lacks their latest commits (backend: ${api})`);
+    expect(stale.hint).toContain(`first run git merge ${api}`);
+
+    git(wt.reviewer, "merge", "-q", "--no-edit", api);
+    const current = await s.reviewer.context();
+    expect(current.teamImplementations).toEqual([expect.not.objectContaining({ notInYourBranch: expect.anything() })]);
+    expect(current.hint).not.toContain("lacks");
+  });
+});
+
+describe("a BLOCKED task under a runner", () => {
+  it("ends the runner's session instead of waiting; an interactive session waits as before", async () => {
+    const { s, services, operator } = await setup();
+    await operator.createTaskAsOperator({ title: "limited", description: "d", agents: ["backend", "reviewer"], maxFixRounds: 0 });
+    await toSync(s);
+    await s.backend.complete({ status: "PASS" });
+    await s.reviewer.complete({ status: "NEEDS_FIX", findings: [{ severity: "ERROR", description: "broken", relatedAgent: "backend" }] });
+    const runnerSession = new Swarm(services.backend!, undefined, { underRunner: true });
+    expect(await runnerSession.context()).toMatchObject({ nextAction: "done", allowedActions: [], task: { status: "BLOCKED" } });
+    expect((await runnerSession.context()).hint).toContain("end your session now");
+    expect((await runnerSession.wait({ timeoutMs: 1000 })).status).toBe("DONE");
+    expect(await s.backend.context()).toMatchObject({ nextAction: "wait", waitingOn: ["operator"] });
+  });
+});

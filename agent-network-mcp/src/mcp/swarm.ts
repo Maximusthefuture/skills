@@ -1,5 +1,5 @@
 import { AppError, isAppError } from "../errors.js";
-import { readGitContext } from "../git.js";
+import { containsCommit, readGitContext } from "../git.js";
 import { phaseEpoch } from "../handoff.js";
 import { normalizePath, ownersOf } from "../ownership.js";
 import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, type NetworkService } from "../service.js";
@@ -43,6 +43,8 @@ interface Snapshot {
   fixedFindings?: (SyncFinding & { reportedBy: string })[];
   /** IMPLEMENT: the agent's own git branch when it works apart from the task's checkout (a worktree); null otherwise. */
   ownBranch?: string | null;
+  /** SYNC: reviewee -> its reported commits that this session's branch does not contain (its copy of their files is older). */
+  missingCommits?: Record<string, string[]>;
 }
 
 /** "2/5 done, s3 in progress" */
@@ -86,6 +88,8 @@ export interface SwarmOptions {
   freshPhases?: readonly Phase[];
   /** The agent's working folder (default: this process's cwd, which the CLI sets to the agent's project or worktree). */
   workdir?: string;
+  /** Started by a runner (AGENT_NETWORK_RUNNER=1): on a BLOCKED task the session ends instead of waiting; the runner waits without a model. */
+  underRunner?: boolean;
 }
 
 export class Swarm {
@@ -100,6 +104,7 @@ export class Swarm {
   private markedHandoff = "";
   private readonly freshPhases: readonly Phase[];
   private readonly workdir: string;
+  private readonly underRunner: boolean;
   /** Git context of the working folder, read once per session. */
   private workGit?: Promise<GitContext | null>;
   readonly defaultWaitMs: number;
@@ -112,6 +117,7 @@ export class Swarm {
     this.defaultWaitMs = Math.min(Math.max(opts.defaultWaitMs ?? DEFAULT_WAIT_MS, 0), MAX_WAIT_MS);
     this.freshPhases = opts.freshPhases ?? [];
     this.workdir = opts.workdir ?? process.cwd();
+    this.underRunner = opts.underRunner ?? false;
   }
 
   private get me(): string {
@@ -436,7 +442,26 @@ export class Swarm {
       handoff: await this.handoffPhase(task),
       ...(task.phase === "SYNC" && task.syncRound > 1 ? { fixedFindings: await this.fixedFindings(task) } : {}),
       ...(task.phase === "IMPLEMENT" ? { ownBranch: await this.ownBranch(task) } : {}),
+      ...(task.phase === "SYNC" ? { missingCommits: await this.missingCommits(task, impls) } : {}),
     };
+  }
+
+  /**
+   * SYNC: the reviewees' reported commits that this session's branch does not contain. Without them the reviewer reads
+   * and tests an older copy of their files (e.g. one it merged in an earlier round) and reports fixed problems again.
+   */
+  private async missingCommits(task: Task, impls: Implementation[]): Promise<Record<string, string[]>> {
+    this.workGit ??= readGitContext(this.workdir).catch(() => null);
+    if (!(await this.workGit)) return {};
+    const targets = this.service.phases.reviewees(task).filter((a) => a !== this.me);
+    const missing: Record<string, string[]> = {};
+    for (const i of impls) {
+      if (!targets.includes(i.agentId)) continue;
+      const absent: string[] = [];
+      for (const c of i.commits ?? []) if ((await containsCommit(this.workdir, c)) === false) absent.push(c); // null: git cannot tell
+      if (absent.length) missing[i.agentId] = absent;
+    }
+    return missing;
   }
 
   /**
@@ -585,7 +610,7 @@ export class Swarm {
             teamImplementations: impls.filter((i) => i.agentId !== this.me).map((i) => {
               const steps = listOf(i.agentId)?.items ?? [];
               // in SYNC the reviewer judges the code, not its author's account of it (also with full: weak models ask for it first)
-              return { agentId: i.agentId, status: i.status, ...(phase !== "SYNC" ? { summary: i.summary } : {}), filesChanged: i.filesChanged, ...nonEmpty("commits", i.commits), ...(steps.length ? { subtasks: steps.map((st) => `${st.id} [${st.status}] ${st.title}${st.note ? ` (${st.note})` : ""}`) } : {}) };
+              return { agentId: i.agentId, status: i.status, ...(phase !== "SYNC" ? { summary: i.summary } : {}), filesChanged: i.filesChanged, ...nonEmpty("commits", i.commits), ...nonEmpty("notInYourBranch", snap.missingCommits?.[i.agentId] ?? []), ...(steps.length ? { subtasks: steps.map((st) => `${st.id} [${st.status}] ${st.title}${st.note ? ` (${st.note})` : ""}`) } : {}) };
             }),
           }
         : {}),
@@ -678,7 +703,10 @@ export class Swarm {
     const done = (nextAction: NextAction, allowed: string[], hint: string, waitingOn: string[]): Decision => ({ nextAction, allowedActions: allowed, hint, waitingOn });
 
     if (task.status === "BLOCKED") {
-      return done("wait", ["send_message", "wait"], `BLOCKED: ${task.blockedReason ?? "the fix-round limit was reached"}. The operator decides; call wait().`, ["operator"]);
+      const why = `BLOCKED: ${task.blockedReason ?? "the fix-round limit was reached"}. The operator decides`;
+      return this.underRunner
+        ? done("done", [], `${why}: end your session now; the runner starts a new one when the task is unblocked.`, [])
+        : done("wait", ["send_message", "wait"], `${why}; call wait().`, ["operator"]);
     }
     const phases = this.service.phases;
     switch (task.phase) {
@@ -729,10 +757,14 @@ export class Swarm {
           return done("wait", ["send_message", "wait"], `Report submitted. Waiting for: ${pending.join(", ")}.`, pending);
         }
         const scope = task.syncRound > 1 ? `the fixes of ${targets.join(", ")}` : `the work of ${targets.join(", ")}`;
+        const absent = Object.entries(s.missingCommits ?? {});
+        const fresh = absent.length
+          ? `Your branch lacks their latest commits (${absent.map(([a, cs]) => `${a}: ${cs.join(", ")}`).join("; ")}), so your copy of their files is older: first run git merge ${absent.flatMap(([, cs]) => cs).join(" ")}. `
+          : "";
         return done(
           "sync",
           ["send_message", "complete", "wait"],
-          `Review ${scope} ('teamImplementations': their changed files and commits) against the task and the agreement: judge the code, not what its authors say about it. Work done in another branch is in its commits (git show <hash>); if a change listed in filesChanged is not visible to you, ask its author with send_message to commit it and wait() for the reply instead of reporting it missing.${task.syncRound > 1 ? " 'fixedFindings' lists what the fixes had to address: check each one." : ""} Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.`,
+          `${fresh}Review ${scope} ('teamImplementations': their changed files and commits) against the task and the agreement: judge the code, not what its authors say about it. Work done in another branch is in its commits (git show <hash>); if a change listed in filesChanged is not visible to you, ask its author with send_message to commit it and wait() for the reply instead of reporting it missing.${task.syncRound > 1 ? " 'fixedFindings' lists what the fixes had to address: check each one." : ""} Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.`,
           pending,
         );
       }

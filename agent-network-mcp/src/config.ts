@@ -14,6 +14,8 @@ export interface Config {
   waitMs?: number;
   /** AGENT_NETWORK_FRESH_PHASES (set by a runner): phases this session hands over to a fresh one when the task enters them. */
   freshPhases?: Phase[];
+  /** AGENT_NETWORK_RUNNER=1: the session was started by a runner. */
+  underRunner?: boolean;
 }
 
 /** Identity and network location come only from the process environment, never from tool input. */
@@ -46,5 +48,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const freshPhases = parseFreshPhases(env.AGENT_NETWORK_FRESH_PHASES, "AGENT_NETWORK_FRESH_PHASES");
   const identity: AgentIdentity = { id: candidates[0]!, type: env.AGENT_TYPE || "unknown" };
   if (env.AGENT_ROLE) identity.role = env.AGENT_ROLE;
-  return { identity, candidates, networkDir: resolved, ...(waitMs ? { waitMs } : {}), ...(freshPhases.length ? { freshPhases } : {}) };
+  return { identity, candidates, networkDir: resolved, ...(waitMs ? { waitMs } : {}), ...(freshPhases.length ? { freshPhases } : {}), ...(env.AGENT_NETWORK_RUNNER === "1" ? { underRunner: true } : {}) };
 }

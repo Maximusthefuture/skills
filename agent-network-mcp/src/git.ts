@@ -21,3 +21,16 @@ export async function readGitContext(cwd: string): Promise<GitContext | null> {
   const commit = await git(cwd, "rev-parse", "HEAD").catch(() => ""); // empty repo has no commits
   return { repositoryRoot, branch, commit };
 }
+
+/**
+ * Is `commit` already in the branch checked out in `cwd`? true / false; null when git cannot tell
+ * (not a repository, or a commit this repository does not know).
+ */
+export async function containsCommit(cwd: string, commit: string): Promise<boolean | null> {
+  try {
+    await run("git", ["merge-base", "--is-ancestor", commit, "HEAD"], { cwd, timeout: 5000 });
+    return true;
+  } catch (e) {
+    return (e as { code?: unknown }).code === 1 ? false : null;
+  }
+}
