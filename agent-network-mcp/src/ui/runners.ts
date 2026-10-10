@@ -1,9 +1,10 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { AppError } from "../errors.js";
 import { parseFreshPhases } from "../handoff.js";
-import { isValidModel, runRunner, usesModel, type RunnerOptions } from "../runner.js";
+import { isValidModel, runRunner, usesModel, type RunnerOptions, type RunningSession } from "../runner.js";
 import type { Phase } from "../types.js";
+import type { ModelPrice, Prices } from "../stats.js";
 import { assertAgentId } from "../validation.js";
 
 /**
@@ -44,13 +45,15 @@ export interface RunnersConfig {
   agents: RunnerAgentConfig[];
   /** Where the config came from: the UI writes the instructions file it sets back there. */
   path?: string;
+  /** USD per 1M tokens per model, for sessions whose CLI reports no cost. */
+  prices?: Prices;
 }
 
 type RawAgent = Partial<RunnerAgentConfig>;
 
 export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; defaults?: RawAgent; agents?: RawAgent[] };
+  let raw: { networkDir?: unknown; defaults?: RawAgent; agents?: RawAgent[]; prices?: unknown };
   try {
     raw = JSON.parse(await readFile(file, "utf8"));
   } catch (e) {
@@ -95,7 +98,52 @@ export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
       autostart: merged.autostart !== false,
     });
   }
-  return { ...(typeof raw.networkDir === "string" ? { networkDir: abs(raw.networkDir) } : {}), agents, path: file };
+  const prices = parsePrices(raw.prices, file);
+  return { ...(typeof raw.networkDir === "string" ? { networkDir: abs(raw.networkDir) } : {}), agents, path: file, ...(prices ? { prices } : {}) };
+}
+
+/**
+ * "prices": {"<model>": {"input": 0.1, "output": 0.4, "cacheRead"?: 0.01, "cacheWrite"?: 0.125}} in USD per 1M tokens.
+ * The model is the name the session reports (the "[session] model …" line of the runner log). Keys starting with "_"
+ * are comments.
+ */
+export function parsePrices(raw: unknown, file: string): Prices | undefined {
+  if (raw === undefined) return undefined;
+  const shape = `${file}: "prices" must be {"<model>": {"input": <USD per 1M tokens>, "output": <USD per 1M tokens>}}`;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new AppError("INVALID_CONFIG", shape);
+  const prices: Prices = {};
+  for (const [model, p] of Object.entries(raw)) {
+    if (model.startsWith("_")) continue;
+    const price = p as Record<string, unknown>;
+    const ok = (v: unknown, required: boolean) => (v === undefined ? !required : typeof v === "number" && Number.isFinite(v) && v >= 0);
+    if (!price || typeof price !== "object" || !ok(price.input, true) || !ok(price.output, true) || !ok(price.cacheRead, false) || !ok(price.cacheWrite, false)) {
+      throw new AppError("INVALID_CONFIG", `${shape}; "${model}" is ${JSON.stringify(p)} (numbers >= 0; cacheRead and cacheWrite are optional)`);
+    }
+    prices[model] = Object.fromEntries(Object.entries(price).filter(([k]) => ["input", "output", "cacheRead", "cacheWrite"].includes(k))) as unknown as ModelPrice;
+  }
+  return prices;
+}
+
+/**
+ * The prices of a config file, read again whenever the file changes, so editing them needs no restart. A file that
+ * does not parse keeps the last good prices and reports the error.
+ */
+export function watchPrices(file: string): () => Promise<{ prices?: Prices; error?: string }> {
+  let mtime = -1;
+  let last: { prices?: Prices; error?: string } = {};
+  return async () => {
+    try {
+      const m = (await stat(file)).mtimeMs;
+      if (m !== mtime) {
+        mtime = m;
+        const prices = parsePrices((JSON.parse(await readFile(file, "utf8")) as { prices?: unknown }).prices, file);
+        last = prices ? { prices } : {};
+      }
+    } catch (e) {
+      last = { ...(last.prices ? { prices: last.prices } : {}), error: (e as Error).message };
+    }
+    return last;
+  };
 }
 
 export interface RunnerView {
@@ -111,6 +159,8 @@ export interface RunnerView {
   model: string | null;
   /** What the page offers: the configured list plus the current model. */
   models: string[];
+  /** The agent session the runner has open right now, if any. */
+  session: RunningSession | null;
 }
 
 export interface RunnerDetails extends RunnerView {
@@ -126,6 +176,7 @@ interface Managed {
   stoppedAt: string | null;
   lines: string[];
   partial: string;
+  session: RunningSession | null;
 }
 
 /** The runners the UI process owns: start/stop per agent, a log tail of the runner and its sessions. */
@@ -137,7 +188,7 @@ export class RunnerPool {
     agents: RunnersConfig["agents"],
     private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string } = {},
   ) {
-    for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "" });
+    for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null });
   }
 
   ids(): string[] {
@@ -156,6 +207,7 @@ export class RunnerPool {
       instructionsFile: m.config.instructionsFile ?? null,
       model: usesModel(m.config.command) ? m.config.model ?? null : null,
       models: usesModel(m.config.command) ? [...new Set([...(m.config.models ?? []), ...(m.config.model ? [m.config.model] : [])])] : [],
+      session: m.session,
     }));
   }
 
@@ -234,6 +286,9 @@ export class RunnerPool {
       ...(m.config.instructionsFile ? { instructionsFile: m.config.instructionsFile } : {}),
       ...(m.config.systemPromptFile ? { systemPromptFile: m.config.systemPromptFile } : {}),
       model: () => m.config.model,
+      onSession: (session) => {
+        m.session = session;
+      },
       ...(m.config.maxRestarts !== undefined ? { maxRestarts: m.config.maxRestarts } : {}),
       ...(m.config.freshPhases ? { freshPhases: m.config.freshPhases } : {}),
       signal: controller.signal,
@@ -244,6 +299,7 @@ export class RunnerPool {
       (e: unknown) => this.push(m, `[ui] runner failed: ${(e as Error).message}\n`),
     ).finally(() => {
       m.controller = undefined;
+      m.session = null;
       m.stoppedAt = new Date().toISOString();
     });
     return this.view(id);

@@ -3,7 +3,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { RunnerOptions } from "../../src/runner.js";
-import { loadRunnersConfig, RunnerPool } from "../../src/ui/runners.js";
+import { loadRunnersConfig, parsePrices, RunnerPool, watchPrices } from "../../src/ui/runners.js";
+import { NetworkService } from "../../src/service.js";
+import { FileStore } from "../../src/storage/fileStore.js";
+import { SessionStore } from "../../src/stores/sessionStore.js";
 import { startUiServer } from "../../src/ui/server.js";
 import { tmpDir } from "../helpers/tmp.js";
 
@@ -26,6 +29,7 @@ describe("runners config", () => {
     expect(claude.agents.map((a) => a.id)).toEqual(["backend", "reviewer", "tester"]);
     expect(claude.agents[0]!.command.slice(0, 3)).toEqual(["claude", "-p", "{prompt}"]);
     expect(qwen.agents.map((a) => a.model)).toEqual(["qwen/qwen3.5-9b", "qwen/qwen3.5-9b", "qwen/qwen3.5-9b"]); // {model} in the command
+    expect(qwen.prices).toEqual({ "qwen/qwen3.5-9b": { input: 0, output: 0 }, "qwen/qwen3-coder-30b": { input: 0, output: 0 } });
     expect(claude.agents.map((a) => a.model)).toEqual(["sonnet", "sonnet", "haiku"]);
   });
 
@@ -167,5 +171,50 @@ describe("model per agent", () => {
       await ui.close();
     }
     await pool.stopAll();
+  });
+});
+
+describe("token prices", () => {
+  it("come from \"prices\" in runners.json (USD per 1M tokens) and are read again when the file changes", async () => {
+    expect(parsePrices(undefined, "f")).toBeUndefined();
+    expect(parsePrices({ _comment: "per 1M tokens", "qwen/qwen3.5-9b": { input: 0.1, output: 0.4 }, haiku: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, note: "x" } }, "f")).toEqual({
+      "qwen/qwen3.5-9b": { input: 0.1, output: 0.4 },
+      haiku: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+    });
+    expect(() => parsePrices({ m: { input: 1 } }, "f")).toThrow(/"m"/);
+    expect(() => parsePrices({ m: { input: -1, output: 1 } }, "f")).toThrow(/numbers >= 0/);
+    expect(() => parsePrices([], "f")).toThrow(/"prices" must be/);
+
+    const dir = await tmpDir();
+    const file = join(dir, "runners.json");
+    await writeFile(file, JSON.stringify({ defaults: { command: ["x"] }, agents: [{ id: "a" }], prices: { m: { input: 1, output: 2 } } }));
+    expect((await loadRunnersConfig(file)).prices).toEqual({ m: { input: 1, output: 2 } });
+    const read = watchPrices(file);
+    expect(await read()).toEqual({ prices: { m: { input: 1, output: 2 } } });
+    await new Promise((r) => setTimeout(r, 20)); // a new mtime
+    await writeFile(file, JSON.stringify({ agents: [], prices: { m: { input: 3, output: 4 } } }));
+    expect(await read()).toEqual({ prices: { m: { input: 3, output: 4 } } }); // no restart needed
+    await new Promise((r) => setTimeout(r, 20));
+    await writeFile(file, "{ half saved");
+    expect(await read()).toEqual({ prices: { m: { input: 3, output: 4 } }, error: expect.any(String) }); // keeps the last good prices
+  });
+
+  it("the page prices a Qwen session that reported tokens but no cost, and names models without a price", async () => {
+    const dir = join(await tmpDir(), ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    const sessions = new SessionStore(await FileStore.open(dir));
+    const usage = (input: number, output: number) => ({ input, output, cacheRead: 0, cacheCreation: 0, total: input + output });
+    const base = { taskId: task.id, attempt: 1, startedAt: task.createdAt, endedAt: task.createdAt, durationMs: 1000, exitCode: 0 };
+    await sessions.create({ ...base, agentId: "backend", model: "qwen/qwen3.5-9b", usage: usage(1_000_000, 100_000) });
+    await sessions.create({ ...base, agentId: "reviewer", model: "local:7b", usage: usage(5000, 100) });
+    const ui = await startUiServer(dir, { port: 0, prices: async () => ({ prices: { "qwen/qwen3.5-9b": { input: 0.1, output: 0.4 } } }) });
+    try {
+      const state = (await (await fetch(`${ui.url}/api/state`)).json()) as { prices: unknown; tasks: { stats: { costUsd: number; costEstimated: boolean; unpricedModels: string[] } }[] };
+      expect(state.prices).toEqual({ models: ["qwen/qwen3.5-9b"], error: null });
+      expect(state.tasks[0]!.stats).toMatchObject({ costUsd: expect.closeTo(0.14), costEstimated: true, unpricedModels: ["local:7b"] });
+    } finally {
+      await ui.close();
+    }
   });
 });

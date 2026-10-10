@@ -1,29 +1,31 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { AppError } from "./errors.js";
 import { parseFreshPhases } from "./handoff.js";
 import { runHookCli } from "./hook.js";
-import { pickNetworkDir } from "./networkDir.js";
+import { detectNetworkDir, pickNetworkDir } from "./networkDir.js";
 import { isValidModel, runRunner, usesModel } from "./runner.js";
 import { collectStats } from "./stats.js";
 import { FileStore } from "./storage/fileStore.js";
 import { NetworkService } from "./service.js";
-import { loadRunnersConfig, RunnerPool, type RunnersConfig } from "./ui/runners.js";
+import { loadRunnersConfig, RunnerPool, watchPrices, type RunnersConfig } from "./ui/runners.js";
 import { startUiServer } from "./ui/server.js";
 
 const USAGE = `Usage:
   agent-network-mcp task create --title <t> --agents <a,b[,c]> [--description <d>] [--verify <build/test command>]
                                 [--max-fix-rounds 3] [--follow-ups 0] [--openspec <change>] [--network-dir <abs path>]
   agent-network-mcp task list [--network-dir <abs path>]
-  agent-network-mcp task stats [--id <task-001>] [--network-dir <abs path>]   time per phase, sessions, tokens, cost
+  agent-network-mcp task stats [--id <task-001>] [--runners runners.json] [--network-dir <abs path>]
+                                time per phase, sessions, tokens, cost (--runners: price sessions without a CLI cost with its "prices")
   agent-network-mcp task cancel --id <task-001> [--reason <text>] [--network-dir <abs path>]
   agent-network-mcp task unblock --id <task-001> [--rounds 1] [--network-dir <abs path>]   more fix rounds for a BLOCKED task
   agent-network-mcp agent list [--network-dir <abs path>]
-  agent-network-mcp ui [--port 4777] [--network-dir <abs path>] [--runners runners.json]
+  agent-network-mcp ui [--port 4777] [--network-dir <abs path>] [--runners runners.json ...]
                         web page on http://127.0.0.1:<port>; read-only, or with --runners: a task form and the
-                        agents' runners (start/stop, log tail), started together with the page
+                        agents' runners (start/stop, log tail), started together with the page; repeat --runners
+                        for several projects on one page (each config names its "networkDir")
   agent-network-mcp hook <post-tool|stop> [--network-dir <abs path>] [--agent <id>]   Claude Code hook: new messages / stay in the loop
   agent-network-mcp run --agent <id> [--network-dir <abs path>] [--cwd <dir>] [--prompt-file <path>] [--instructions-file <path>] [--system-prompt-file <path>] [--model <name>]
                         [--max-restarts 3] [--restart-delay-ms 5000] [--poll-ms 2000] [--fresh-phases SYNC] [--once] -- <agent CLI> [args, "{prompt}"]
@@ -64,6 +66,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       "no-commits": { type: "boolean" }, // obsolete: commits are never required; accepted so old scripts keep working
       "follow-ups": { type: "string" },
       openspec: { type: "string" },
+      runners: { type: "string" },
       rounds: { type: "string" },
       "network-dir": { type: "string" },
     },
@@ -101,7 +104,13 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
         out(`error: no task ${values.id}`);
         return 1;
       }
-      const stats = await collectStats(await FileStore.open(resolve(dir)), tasks);
+      // sessions whose CLI reports no cost (Qwen, a local model) are priced with "prices" of the runners config
+      const pricing = values.runners ? await watchPrices(resolve(values.runners))() : {};
+      if (pricing.error) {
+        out(`error: ${pricing.error}`);
+        return 1;
+      }
+      const stats = await collectStats(await FileStore.open(resolve(dir)), tasks, new Date(), pricing.prices);
       out(JSON.stringify(tasks.map((t) => ({ id: t.id, title: t.title, status: t.status, phase: t.phase, stats: stats.get(t.id) ?? null })), null, 2));
       return 0;
     }
@@ -143,39 +152,69 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
 }
 
 async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string): Promise<number> {
-  const { values } = parseArgs({ args, options: { port: { type: "string" }, "network-dir": { type: "string" }, runners: { type: "string" } } });
-  let config: RunnersConfig | undefined;
+  const { values } = parseArgs({ args, options: { port: { type: "string" }, "network-dir": { type: "string" }, runners: { type: "string", multiple: true } } });
+  const configs: RunnersConfig[] = [];
   try {
-    if (values.runners) config = await loadRunnersConfig(values.runners);
+    for (const file of values.runners ?? []) configs.push(await loadRunnersConfig(file));
   } catch (e) {
     out(`error: ${(e as Error).message}`);
     return 2;
   }
-  const { dir, detected } = pickNetworkDir(values["network-dir"], env, cwd, config?.networkDir);
-  if (!dir || !isAbsolute(dir)) {
-    out(`error: an absolute --network-dir (or NETWORK_DIR, or "networkDir" in the runners config) is required${detected ? `, or run this inside a git repository (${cwd} is not in one)` : ""}`);
-    return 2;
-  }
-  if (detected) out(`network: ${dir} (found from the git repository)`);
   const port = values.port === undefined ? 4777 : Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     out("error: --port must be 0..65535");
     return 2;
   }
+  // one project per runners config; without one, a read-only page for one network
+  const projects: { dir: string; config?: RunnersConfig }[] = [];
+  if (configs.length <= 1) {
+    const config = configs[0];
+    const { dir, detected } = pickNetworkDir(values["network-dir"], env, cwd, config?.networkDir);
+    if (!dir || !isAbsolute(dir)) {
+      out(`error: an absolute --network-dir (or NETWORK_DIR, or "networkDir" in the runners config) is required${detected ? `, or run this inside a git repository (${cwd} is not in one)` : ""}`);
+      return 2;
+    }
+    if (detected) out(`network: ${dir} (found from the git repository)`);
+    projects.push({ dir: resolve(dir), ...(config ? { config } : {}) });
+  } else {
+    if (values["network-dir"]) {
+      out('error: --network-dir names one network; with several --runners every config names its own ("networkDir")');
+      return 2;
+    }
+    for (const config of configs) {
+      // "networkDir" of the config, else the repository of its first agent's folder (worktrees share their repository's network)
+      const dir = config.networkDir ?? detectNetworkDir(config.agents[0]?.cwd ?? cwd);
+      if (!dir) {
+        out(`error: ${config.path}: set "networkDir" (or give its agents a "cwd" inside a git repository)`);
+        return 2;
+      }
+      projects.push({ dir: resolve(dir), config });
+    }
+  }
   try {
-    const runners = config ? new RunnerPool(resolve(dir), config.agents, config.path ? { configPath: config.path } : {}) : undefined;
-    const ui = await startUiServer(resolve(dir), { port, ...(runners ? { runners } : {}) });
-    out(`Agent Network UI: ${ui.url}  (network: ${resolve(dir)})  Ctrl+C to stop`);
-    if (runners && config) {
+    const specs = projects.map(({ dir, config }) => ({
+      networkDir: dir,
+      ...(config ? { runners: new RunnerPool(dir, config.agents, config.path ? { configPath: config.path } : {}) } : {}),
+      ...(config?.path ? { prices: watchPrices(config.path) } : {}),
+    }));
+    const ui = await startUiServer(specs, { port });
+    out(`Agent Network UI: ${ui.url}  (${projects.length === 1 ? `network: ${projects[0]!.dir}` : `projects: ${projects.map((p) => basename(dirname(p.dir))).join(", ")}`})  Ctrl+C to stop`);
+    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)) }] : []));
+    for (const { pool, config, name } of pools) {
       const auto = config.agents.filter((a) => a.autostart !== false).map((a) => a.id);
-      for (const id of auto) runners.start(id);
-      out(`runners: ${config.agents.map((a) => a.id).join(", ")}${auto.length ? `; started: ${auto.join(", ")}` : "; none started (autostart: false)"}`);
+      for (const id of auto) pool.start(id);
+      const where = pools.length > 1 ? ` (${name})` : "";
+      out(`runners${where}: ${config.agents.map((a) => a.id).join(", ")}${auto.length ? `; started: ${auto.join(", ")}` : "; none started (autostart: false)"}`);
+    }
+    if (pools.length) {
       let stopping = false;
       const shutdown = (): void => {
         if (stopping) process.exit(130); // second Ctrl+C: leave now
         stopping = true;
         out("stopping the runners...");
-        void runners.stopAll().then(() => ui.close()).then(() => process.exit(0));
+        void Promise.all(pools.map(({ pool }) => pool.stopAll()))
+          .then(() => ui.close())
+          .then(() => process.exit(0));
       };
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);

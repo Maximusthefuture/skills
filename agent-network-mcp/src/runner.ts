@@ -90,6 +90,13 @@ export function pickTask(tasks: Task[], agent: string): Task | null {
   return [...tasks].sort((a, b) => seq(a) - seq(b)).find((t) => t.agents.includes(agent) && (t.status === "ACTIVE" || t.status === "BLOCKED")) ?? null;
 }
 
+export interface RunningSession {
+  taskId: string;
+  attempt: number;
+  startedAt: string;
+  model?: string;
+}
+
 export interface RunnerOptions {
   agent: string;
   networkDir: string;
@@ -126,6 +133,8 @@ export interface RunnerOptions {
   /** Receive the session's stdout/stderr instead of inheriting them (e.g. to show a log tail in the UI). */
   output?: (text: string) => void;
   isProcessAlive?: (pid: number) => boolean;
+  /** Told when a session starts and (with null) when it ends: the UI shows what each runner is doing right now. */
+  onSession?: (session: RunningSession | null) => void;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -283,11 +292,13 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const finishedBefore = new Set((await tasks.listForAgent(agent)).filter(isFinished).map((t) => t.id));
     const sink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
     const startedAt = new Date();
+    opts.onSession?.({ taskId: task.id, attempt, startedAt: startedAt.toISOString(), ...(model ? { model } : {}) });
     const wantsSystem = opts.command.some((a) => a.includes("{systemPrompt}"));
     const systemText = wantsSystem ? (opts.systemPromptFile ? await readText(opts.systemPromptFile, "system prompt file", log) : undefined) : undefined;
     const system = wantsSystem ? renderPrompt(systemText?.trim() || FALLBACK_SYSTEM_PROMPT, vars) : undefined;
     const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal);
     const endedAt = new Date();
+    opts.onSession?.(null);
     // a session may go on to the next task by itself (e.g. a follow-up): its time and tokens are counted for this task
     const alsoTasks = (await tasks.listForAgent(agent)).filter((t) => isFinished(t) && t.id !== task.id && !finishedBefore.has(t.id));
     await sessions

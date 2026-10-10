@@ -2,13 +2,14 @@ import { dirname } from "node:path";
 import { isAppError } from "../errors.js";
 import { changePath, readChange } from "../openspec.js";
 import { defaultIsProcessAlive } from "../stores/agentStore.js";
+import { queueStates } from "./runs.js";
 import { AgentStore } from "../stores/agentStore.js";
 import { GrantStore } from "../stores/grantStore.js";
 import { AgreementStore } from "../stores/agreementStore.js";
 import { ImplementationStore } from "../stores/implementationStore.js";
 import { IntegrationStore } from "../stores/integrationStore.js";
 import { PhaseManager } from "../phase/phaseManager.js";
-import { collectStats } from "../stats.js";
+import { collectStats, type Prices } from "../stats.js";
 import { MessageStore } from "../stores/messageStore.js";
 import { SubtaskStore } from "../stores/subtaskStore.js";
 import { SyncStore } from "../stores/syncStore.js";
@@ -16,13 +17,14 @@ import { TaskStore } from "../stores/taskStore.js";
 import type { FileStore } from "../storage/fileStore.js";
 import type { Agent, Agreement, Implementation, Message, NetworkEvent, Task } from "../types.js";
 
-const TAIL = 30;
+/** Messages and events per task the page gets: the newest ones (it scrolls them in their own boxes). */
+const TAIL = 50;
 const phases = new PhaseManager();
 
 export type EffectiveStatus = Agent["status"] | "DEAD";
 
 /** Read-only snapshot of the network for the UI. Everything comes from the filesystem. */
-export async function buildUiState(fs: FileStore, isAlive: (pid: number) => boolean = defaultIsProcessAlive) {
+export async function buildUiState(fs: FileStore, isAlive: (pid: number) => boolean = defaultIsProcessAlive, pricing: { prices?: Prices; error?: string } = {}) {
   const agentStore = new AgentStore(fs);
   const taskStore = new TaskStore(fs);
   const agreements = new AgreementStore(fs);
@@ -34,7 +36,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
   const messageStore = new MessageStore(fs);
 
   const [agents, tasks] = await Promise.all([agentStore.list(), taskStore.list()]);
-  const stats = await collectStats(fs, tasks);
+  const stats = await collectStats(fs, tasks, new Date(), pricing.prices);
+  const queue = queueStates(tasks);
 
   const taskViews = await Promise.all(
     tasks.map(async (task) => {
@@ -45,8 +48,11 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         integrations.list(task.id),
       ]);
       const current = reports.filter((r) => r.round === task.syncRound);
+      const [msgs, evs] = await Promise.all([tail<Message>(fs, ["tasks", task.id, "messages"], "msg"), tail<NetworkEvent>(fs, ["tasks", task.id, "events"], "event")]);
       return {
         ...pickTask(task),
+        /** running / queued / blocked / done / cancelled: whether one of its agents works on it now. */
+        queue: queue.get(task.id) ?? "queued",
         stats: stats.get(task.id) ?? null,
         agreement,
         implementations: impls,
@@ -54,8 +60,10 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         integrations: integrationReports,
         grants: await grants.list(task.id),
         waitingOn: waitingOn(task, agreement?.assignments.map((a) => a.agentId) ?? [], agreement?.approvedBy ?? [], impls, current.map((r) => r.agentId), !!agreement),
-        messages: await tail<Message>(fs, ["tasks", task.id, "messages"], "msg"),
-        events: await tail<NetworkEvent>(fs, ["tasks", task.id, "events"], "event"),
+        messages: msgs.items,
+        messagesTotal: msgs.total,
+        events: evs.items,
+        eventsTotal: evs.total,
         subtasks: Object.fromEntries((await Promise.all(task.agents.map((a) => subtasks.get(task.id, a)))).map((l) => [l.agentId, l.items])),
         followUps: tasks.filter((t) => t.parentTaskId === task.id).map((t) => t.id),
         questions: operatorQuestions(await messageStore.list(task.id)),
@@ -77,6 +85,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
 
   return {
     generatedAt: new Date().toISOString(),
+    /** The operator's prices (runners.json "prices"): the models they cover, or why the file's prices cannot be read. */
+    prices: { models: Object.keys(pricing.prices ?? {}), error: pricing.error ?? null },
     networkDir: fs.root,
     agents: agentViews,
     notStarted: missing,
@@ -132,6 +142,8 @@ function pickTask(t: Task) {
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
     parentTaskId: parentTaskId ?? null, baseCommit: baseCommit ?? null,
     followUpBudget: maxFollowUps ? { max: maxFollowUps, used: followUpsUsed ?? 0 } : null,
+    /** When the task entered its current phase. */
+    phaseSince: t.phaseHistory?.at(-1)?.at ?? t.updatedAt,
   };
 }
 
@@ -152,8 +164,9 @@ export function waitingOn(task: Task, assigned: string[], approvedBy: string[], 
   }
 }
 
-async function tail<T>(fs: FileStore, dir: string[], prefix: string): Promise<T[]> {
-  const entries = (await fs.listNumbered(dir, prefix)).slice(-TAIL);
-  const docs = await Promise.all(entries.map((e) => fs.readJson<T>([...dir, e.name])));
-  return docs.filter((d) => d !== null) as T[];
+/** The newest TAIL documents and how many there are in all. */
+async function tail<T>(fs: FileStore, dir: string[], prefix: string): Promise<{ items: T[]; total: number }> {
+  const all = await fs.listNumbered(dir, prefix);
+  const docs = await Promise.all(all.slice(-TAIL).map((e) => fs.readJson<T>([...dir, e.name])));
+  return { items: docs.filter((d) => d !== null) as T[], total: all.length };
 }

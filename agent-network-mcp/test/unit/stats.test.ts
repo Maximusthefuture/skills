@@ -59,9 +59,25 @@ describe("taskStats", () => {
     expect(st.phases).toEqual([{ phase: "DISCUSS", ms: 2 * 60_000 }, { phase: "IMPLEMENT", ms: 11 * 60_000 }, { phase: "SYNC", ms: 4 * 60_000 }, { phase: "INTEGRATE", ms: 3 * 60_000 }]);
     expect(st.usage?.total).toBe(1500);
     expect(st.agents).toEqual([
-      { agentId: "a", models: ["haiku", "sonnet"], sessions: 3, ms: 90_001, usage: { input: 1480, output: 20, cacheRead: 0, cacheCreation: 0, total: 1500 }, costUsd: expect.closeTo(0.03) },
-      { agentId: "b", models: [], sessions: 1, ms: 10_000, usage: null, costUsd: null },
+      { agentId: "a", models: ["haiku", "sonnet"], sessions: 3, ms: 90_001, usage: { input: 1480, output: 20, cacheRead: 0, cacheCreation: 0, total: 1500 }, costUsd: expect.closeTo(0.03), costEstimated: false },
+      { agentId: "b", models: [], sessions: 1, ms: 10_000, usage: null, costUsd: null, costEstimated: false },
     ]);
+    expect(st).toMatchObject({ costEstimated: false, unpricedModels: [] });
+  });
+
+  it("prices sessions without a CLI cost with the operator's prices; the CLI's own cost wins", () => {
+    const qwen = (agentId: string, input: number, output: number, cacheRead = 0): SessionRecord => ({
+      id: "s", taskId: "task-001", agentId, attempt: 1, startedAt: at(0), endedAt: at(1), durationMs: 1000, exitCode: 0, model: "qwen/qwen3.5-9b",
+      usage: { input, output, cacheRead, cacheCreation: 0, total: input + output },
+    });
+    const prices = { "Qwen/Qwen3.5-9B": { input: 0.1, output: 0.4, cacheRead: 0.01 } }; // names match without case
+    const st = taskStats(task(), [qwen("a", 1_000_000, 100_000, 400_000), qwen("b", 2_000_000, 0), session("c", 1000, 1, 0.5, "haiku")], [], new Date(), prices)!;
+    // a: 600k fresh * 0.1 + 400k cached * 0.01 + 100k out * 0.4 = 0.06 + 0.004 + 0.04; b: 2M * 0.1; c: as the CLI reported
+    expect(st.agents.map((a) => [a.agentId, a.costUsd, a.costEstimated])).toEqual([["a", expect.closeTo(0.104), true], ["b", expect.closeTo(0.2), true], ["c", 0.5, false]]);
+    expect(st).toMatchObject({ costUsd: expect.closeTo(0.804), costEstimated: true, unpricedModels: [] });
+
+    const without = taskStats(task(), [qwen("a", 1000, 10), session("b", 500, 1, undefined, "local:7b"), session("c", 0, 1)], [], new Date(), {})!;
+    expect(without).toMatchObject({ costUsd: null, costEstimated: false, unpricedModels: ["qwen/qwen3.5-9b", "local:7b"] }); // c has no tokens: nothing to price
   });
 
   it("a running task counts up to now; an old task without phaseHistory has no statistics", () => {

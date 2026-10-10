@@ -66,7 +66,8 @@
   "agents": [
     {
       "id": "backend",
-      "cwd": "/abs/path/project-backend"
+      "cwd": "/abs/path/project-backend",
+      "instructionsFile": "instructions/backend.md"
     },
     {
       "id": "reviewer",
@@ -77,7 +78,8 @@
       "id": "tester",
       "cwd": "/abs/path/project-tester",
       "autostart": false,
-      "model": "haiku"
+      "model": "haiku",
+      "instructionsFile": "instructions/tester.md"
     }
   ]
 }

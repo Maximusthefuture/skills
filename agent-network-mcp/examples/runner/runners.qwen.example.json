@@ -11,6 +11,7 @@
     "Lean context: a short system prompt ({systemPrompt} <- systemPromptFile) and only the tools the agent needs; every turn re-reads them, so this cuts tokens per turn several times. The skill tool is not excluded, so the agents can load skills from .qwen/skills/ in their folder (java-dev-flow); add \"skill\" to --exclude-tools when they need none: every turn re-reads the skill list.",
     "git: only the commands the protocol needs (status, diff, log, show, add, commit, merge, rev-parse); reset, branch -D, push are declined in headless mode (checked on Qwen Code 0.24.7). Add a command only when an agent really needs it.",
     "Model: the command has {model}; \"model\" is the default (an agent can have its own), \"models\" is the choice in the runner card on the page (applies from the next session). Ids as the model server lists them, e.g. curl http://<lm-studio>:1234/v1/models.",
+    "prices: USD per 1M tokens for the models whose CLI reports no cost (Qwen); 0 = a free local model, or put a provider's prices to see what the work would cost there. Read again when the file changes.",
     "autostart: false = start that agent with the button on the page."
   ],
   "networkDir": "/abs/path/project/.agent-network",
@@ -71,7 +72,8 @@
   "agents": [
     {
       "id": "backend",
-      "cwd": "/abs/path/project-backend"
+      "cwd": "/abs/path/project-backend",
+      "instructionsFile": "instructions/backend.md"
     },
     {
       "id": "reviewer",
@@ -81,7 +83,18 @@
     {
       "id": "tester",
       "cwd": "/abs/path/project-tester",
-      "autostart": false
+      "autostart": false,
+      "instructionsFile": "instructions/tester.md"
     }
-  ]
+  ],
+  "prices": {
+    "qwen/qwen3.5-9b": {
+      "input": 0,
+      "output": 0
+    },
+    "qwen/qwen3-coder-30b": {
+      "input": 0,
+      "output": 0
+    }
+  }
 }
