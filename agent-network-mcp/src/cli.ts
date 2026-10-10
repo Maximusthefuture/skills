@@ -1,9 +1,11 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { isAbsolute, resolve } from "node:path";
 import { AppError } from "./errors.js";
 import { parseFreshPhases } from "./handoff.js";
 import { runHookCli } from "./hook.js";
+import { pickNetworkDir } from "./networkDir.js";
 import { isValidModel, runRunner, usesModel } from "./runner.js";
 import { collectStats } from "./stats.js";
 import { FileStore } from "./storage/fileStore.js";
@@ -28,7 +30,8 @@ const USAGE = `Usage:
                         keeps one agent working: starts a session per task, restarts it until DONE, then waits again;
                         --fresh-phases SYNC: the review is done by a fresh session that did not see the discussion
 
-NETWORK_DIR is used when --network-dir is not given. Tasks created here are picked up automatically by
+NETWORK_DIR is used when --network-dir is not given; without both (or with "auto") the network is <root of the git
+repository of the current folder>/.agent-network, the same for all its worktrees. Tasks created here are picked up automatically by
 the agents' swarm_context / wait. The first agent of --agents is the lead (proposes first, integrates at the end).
 Commits are optional (agents may report them; nothing checks them); --verify is the command the lead runs on the
 merged result. After --max-fix-rounds failed reviews the task is BLOCKED until "task unblock" or "task cancel".
@@ -36,11 +39,11 @@ merged result. After --max-fix-rounds failed reviews the task is BLOCKED until "
 integrate with PASS (work that is left); the agents pick them up after the task is DONE. Default 0: no follow-ups.`;
 
 /** Operator commands run outside any LLM. Returns the process exit code, or -1 when a long-running server was started. */
-export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: string) => void): Promise<number> {
+export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string = process.cwd()): Promise<number> {
   const [group, command, ...rest] = argv;
-  if (group === "ui") return runUi(command ? [command, ...rest] : rest, env, out);
-  if (group === "hook") return runHookCli(command, rest, env, out);
-  if (group === "run") return runAgentRunner(command === undefined ? rest : [command, ...rest], env, out);
+  if (group === "ui") return runUi(command ? [command, ...rest] : rest, env, out, cwd);
+  if (group === "hook") return runHookCli(command, rest, env, out, undefined, cwd);
+  if (group === "run") return runAgentRunner(command === undefined ? rest : [command, ...rest], env, out, cwd);
   const known = (group === "task" && (command === "create" || command === "list" || command === "stats" || command === "cancel" || command === "unblock")) || (group === "agent" && command === "list");
   if (!known) {
     out(USAGE);
@@ -62,11 +65,17 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       "network-dir": { type: "string" },
     },
   });
-  const dir = values["network-dir"] ?? env.NETWORK_DIR;
+  const { dir, detected } = pickNetworkDir(values["network-dir"], env, cwd);
   if (!dir || !isAbsolute(dir)) {
-    out("error: an absolute --network-dir (or NETWORK_DIR) is required");
+    out(`error: an absolute --network-dir (or NETWORK_DIR) is required${detected ? `, or run this inside a git repository (${cwd} is not in one)` : ""}`);
     return 2;
   }
+  if (detected && !existsSync(dir) && !(group === "task" && command === "create")) {
+    // a look around must not leave a new network behind in whatever repository the operator happens to be in
+    out(`error: no agent network at ${dir} yet (found from the git repository); create a task there first, or give --network-dir`);
+    return 2;
+  }
+  if (detected && group === "task" && command === "create") out(`network: ${dir}`);
   try {
     const service = await NetworkService.create(resolve(dir), { id: "operator", type: "cli" });
     if (group === "agent") {
@@ -129,7 +138,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
   }
 }
 
-async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void): Promise<number> {
+async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string): Promise<number> {
   const { values } = parseArgs({ args, options: { port: { type: "string" }, "network-dir": { type: "string" }, runners: { type: "string" } } });
   let config: RunnersConfig | undefined;
   try {
@@ -138,11 +147,12 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
     out(`error: ${(e as Error).message}`);
     return 2;
   }
-  const dir = values["network-dir"] ?? env.NETWORK_DIR ?? config?.networkDir;
+  const { dir, detected } = pickNetworkDir(values["network-dir"], env, cwd, config?.networkDir);
   if (!dir || !isAbsolute(dir)) {
-    out("error: an absolute --network-dir (or NETWORK_DIR, or \"networkDir\" in the runners config) is required");
+    out(`error: an absolute --network-dir (or NETWORK_DIR, or "networkDir" in the runners config) is required${detected ? `, or run this inside a git repository (${cwd} is not in one)` : ""}`);
     return 2;
   }
+  if (detected) out(`network: ${dir} (found from the git repository)`);
   const port = values.port === undefined ? 4777 : Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     out("error: --port must be 0..65535");
@@ -180,7 +190,7 @@ function positiveInt(value: string | undefined, name: string, fallback: number, 
   return n;
 }
 
-async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void): Promise<number> {
+async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string): Promise<number> {
   const split = args.indexOf("--");
   const command = split < 0 ? [] : args.slice(split + 1);
   if (!command.length) {
@@ -204,11 +214,13 @@ async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: s
       once: { type: "boolean" },
     },
   });
-  const dir = values["network-dir"] ?? env.NETWORK_DIR;
+  // the agent's folder decides the project: its worktree and the main checkout share one network
+  const { dir, detected } = pickNetworkDir(values["network-dir"], env, values.cwd ? resolve(cwd, values.cwd) : cwd);
   if (!values.agent || !dir || !isAbsolute(dir)) {
-    out("error: --agent and an absolute --network-dir (or NETWORK_DIR) are required");
+    out(`error: --agent and an absolute --network-dir (or NETWORK_DIR) are required${detected && values.agent ? ", or a --cwd inside a git repository" : ""}`);
     return 2;
   }
+  if (detected) out(`network: ${dir} (found from the git repository)`);
   if (values.model !== undefined && !isValidModel(values.model)) {
     out(`error: --model ${JSON.stringify(values.model)}: a model name without spaces, not starting with "-"`);
     return 2;
@@ -242,7 +254,7 @@ async function runAgentRunner(args: string[], env: NodeJS.ProcessEnv, out: (s: s
         agent: values.agent,
         networkDir: resolve(dir),
         command,
-        ...(values.cwd ? { cwd: resolve(values.cwd) } : {}),
+        ...(values.cwd ? { cwd: resolve(cwd, values.cwd) } : {}),
         ...(values["prompt-file"] ? { promptFile: resolve(values["prompt-file"]) } : {}),
         ...(values["instructions-file"] ? { instructionsFile: resolve(values["instructions-file"]) } : {}),
         ...(values["system-prompt-file"] ? { systemPromptFile: resolve(values["system-prompt-file"]) } : {}),

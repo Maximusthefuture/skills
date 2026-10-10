@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { isHandedOver } from "./handoff.js";
 import { openFileRequests } from "./mcp/swarm.js";
+import { pickNetworkDir } from "./networkDir.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore, defaultIsProcessAlive } from "./stores/agentStore.js";
 import { MessageStore } from "./stores/messageStore.js";
@@ -206,14 +207,15 @@ async function readStdin(): Promise<string> {
 }
 
 /** `agent-network-mcp hook <post-tool|stop> [--network-dir <abs>] [--agent <id>]`; always exits 0. */
-export async function runHookCli(mode: string | undefined, args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, stdin: () => Promise<string> = readStdin): Promise<number> {
+export async function runHookCli(mode: string | undefined, args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, stdin: () => Promise<string> = readStdin, cwd: string = process.cwd()): Promise<number> {
   if (mode !== "post-tool" && mode !== "stop") {
     out("Usage: agent-network-mcp hook <post-tool|stop> [--network-dir <abs path>] [--agent <id>]");
     return 2;
   }
   try {
     const { values } = parseArgs({ args, options: { "network-dir": { type: "string" }, agent: { type: "string" } } });
-    const networkDir = values["network-dir"] ?? env.NETWORK_DIR;
+    // without a path: the network of the session's git repository; runHook does nothing when it does not exist
+    const networkDir = pickNetworkDir(values["network-dir"], env, cwd).dir;
     if (!networkDir) return 0;
     let input: HookInput = {};
     try {

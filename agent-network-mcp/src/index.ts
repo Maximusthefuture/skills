@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   const advanced = process.env.AGENT_NETWORK_ADVANCED === "1";
   const server = createServer(service, { advanced, log, waitMs: config.waitMs, freshPhases: config.freshPhases, underRunner: config.underRunner });
   await server.connect(new StdioServerTransport());
-  log(`started: agent=${identity.id} network=${config.networkDir}${advanced ? " (advanced tools)" : ""}${config.freshPhases ? ` (fresh sessions: ${config.freshPhases.join(",")})` : ""}`);
+  log(`started: agent=${identity.id} network=${config.networkDir}${config.networkDirDetected ? " (auto, from git)" : ""}${advanced ? " (advanced tools)" : ""}${config.freshPhases ? ` (fresh sessions: ${config.freshPhases.join(",")})` : ""}`);
 
   let closing = false;
   const shutdown = async (): Promise<void> => {
