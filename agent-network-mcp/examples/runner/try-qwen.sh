@@ -13,6 +13,7 @@
 # Settings (environment):
 #   SCENARIO      followups | basic                    (default followups)
 #   MODEL         model id from LM Studio            (default qwen/qwen3.5-9b)
+#   REVIEWER_MODEL  the reviewer's model, to try two models in one swarm (default MODEL)
 #   BASE_URL      OpenAI-compatible endpoint          (default http://192.168.31.7:1234/v1)
 #   USE_SETTINGS  1 = take the provider for MODEL from ~/.qwen/settings.json instead of BASE_URL (default 0)
 #   TASK_TIMEOUT  seconds to wait for each task       (default 1800)
@@ -21,6 +22,7 @@ set -u
 
 AN="$(cd "$(dirname "$0")/../.." && pwd)"
 MODEL="${MODEL:-qwen/qwen3.5-9b}"
+REVIEWER_MODEL="${REVIEWER_MODEL:-$MODEL}"
 BASE_URL="${BASE_URL:-http://192.168.31.7:1234/v1}"
 USE_SETTINGS="${USE_SETTINGS:-0}"
 TASK_TIMEOUT="${TASK_TIMEOUT:-1800}"
@@ -31,12 +33,14 @@ BIN=(node "$AN/dist/index.js")
 # 1. Preconditions
 command -v qwen >/dev/null || { echo "qwen is not installed"; exit 1; }
 if [ "$USE_SETTINGS" != 1 ]; then
-  if ! curl -sS -m 5 "$BASE_URL/models" | grep -q "\"$MODEL\""; then
-    echo "The model server does not answer or has no $MODEL:"
-    curl -sS -m 5 "$BASE_URL/models" | head -c 300; echo
-    echo "LM Studio: Developer → Start Server, Server Settings → Serve on Local Network; load $MODEL."
-    exit 1
-  fi
+  for m in "$MODEL" "$REVIEWER_MODEL"; do
+    if ! curl -sS -m 5 "$BASE_URL/models" | grep -q "\"$m\""; then
+      echo "The model server does not answer or has no $m:"
+      curl -sS -m 5 "$BASE_URL/models" | head -c 300; echo
+      echo "LM Studio: Developer → Start Server, Server Settings → Serve on Local Network; load $m."
+      exit 1
+    fi
+  done
 fi
 [ -f "$AN/dist/index.js" ] || (cd "$AN" && npm run build >/dev/null) || exit 1
 
@@ -48,7 +52,7 @@ sed "s#/abs/path/agent-network-mcp#$AN#" "$AN/examples/runner/qwen-mcp.json" > "
 echo "stand: $RUN"
 echo "watch it live in another terminal: node $AN/dist/index.js ui --network-dir $NET"
 
-MODEL_FLAGS=(-m "$MODEL")
+MODEL_FLAGS=(-m "{model}")   # the runner puts the agent's --model here
 [ "$USE_SETTINGS" = 1 ] || MODEL_FLAGS+=(--auth-type openai --openai-base-url "$BASE_URL" --openai-api-key lm-studio)
 
 PIDS=()
@@ -59,8 +63,8 @@ cleanup() {
 trap 'echo; echo "stopping..."; cleanup; echo "logs: $RUN"; exit 130' INT TERM
 
 runner() {
-  local id=$1
-  "${BIN[@]}" run --agent "$id" --network-dir "$NET" --cwd "$PROJECT" \
+  local id=$1 model=$2
+  "${BIN[@]}" run --agent "$id" --model "$model" --network-dir "$NET" --cwd "$PROJECT" \
     --prompt-file "$AN/examples/runner/qwen-prompt.md" --system-prompt-file "$AN/examples/runner/swarm-system-prompt.md" --max-restarts 2 -- \
     qwen "{prompt}" -o stream-json --system-prompt "{systemPrompt}" --exclude-tools web_fetch agent list_agents skill get_goal update_goal manage_memory search_memory notebook_edit "${MODEL_FLAGS[@]}" \
       --mcp-config "$RUN/qwen-mcp.json" \
@@ -97,9 +101,9 @@ else
   "${BIN[@]}" task create --network-dir "$NET" --agents backend,reviewer --title "Greeting files" \
     --description "Create two text files in the project root. Agent backend creates hello.txt containing exactly one line: hello. Agent reviewer creates bye.txt containing exactly one line: bye. No other files. In SYNC each agent checks the other agent's file content." >/dev/null
 fi
-runner backend
-runner reviewer
-echo "scenario $SCENARIO; runners started (backend, reviewer); model $MODEL"
+runner backend "$MODEL"
+runner reviewer "$REVIEWER_MODEL"
+echo "scenario $SCENARIO; runners started (backend on $MODEL, reviewer on $REVIEWER_MODEL)"
 wait_task task-001; ok1=$?
 
 ok2=1

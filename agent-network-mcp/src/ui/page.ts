@@ -156,6 +156,7 @@ function renderControl(s){
     c.info.textContent=r.running&&r.startedAt?"запущен "+ago(r.startedAt):r.stoppedAt?"остановлен "+ago(r.stoppedAt):"не запускался";
     c.cwd.textContent=r.cwd?"папка: "+r.cwd:"папка: текущая";c.cwd.title=r.cwd||"";
     c.cmd.textContent=r.command;c.cmd.title=r.command;
+    c.modelHint.textContent=r.model&&r.models.length<2?"Список моделей для выбора — поле \"models\" в runners.json (в defaults или у агента).":"";c.modelHint.hidden=!c.modelHint.textContent;
     c.modelState.textContent=r.model?"модель: "+r.model:"модель: задана в command (поставьте {model} в command и \"model\" в runners.json, чтобы выбирать здесь)";c.modelForm.hidden=!r.model;
     const msig=r.models.join("|")+"#"+(r.model||"");
     if(r.model&&document.activeElement!==c.modelSel&&c.modelSel.dataset.server!==msig){c.modelSel.replaceChildren(...r.models.map(m=>new Option(m,m)),new Option("другая…","__other__"));c.modelSel.value=r.model;c.modelSel.dataset.server=msig}
@@ -174,9 +175,10 @@ function makeRunnerCard(id){
   btn.type="button";btn.onclick=async()=>{btn.disabled=true;try{await post("/api/runners/"+encodeURIComponent(id)+"/"+btn.dataset.action);await tick()}catch(e){alert(e.message)}finally{btn.disabled=false}};
   top.append(el("span","",id),badgeEl,btn);const info=el("div","muted","");const cwd=el("div","muted line","");const cmd=el("div","muted mono line","");
   const modelState=el("div","note line","");
+  const modelHint=el("div","muted","");modelHint.hidden=true;
   const modelForm=el("form","inst");const modelSel=document.createElement("select");const modelBtn=el("button","ghost","Применить");modelBtn.type="submit";modelForm.append(modelSel,modelBtn);
   modelForm.onsubmit=async ev=>{ev.preventDefault();let m=modelSel.value;
-    if(m==="__other__"){m=(prompt("Модель, как её называет CLI агента (например qwen/qwen3.5-9b или haiku)")||"").trim();if(!m){modelSel.dataset.server="";await tick();return}}
+    if(m==="__other__"){m=(prompt("Модель, как её называет CLI агента (например qwen/qwen3.5-9b или haiku). Чтобы она всегда была в списке, добавьте её в \"models\" в runners.json.")||"").trim();if(!m){modelSel.dataset.server="";await tick();return}}
     modelBtn.disabled=true;try{await post("/api/runners/"+encodeURIComponent(id)+"/model",{model:m});modelSel.dataset.server="";modelSel.blur();await tick()}catch(e){alert(e.message)}finally{modelBtn.disabled=false}};
   const instState=el("div","note line","");
   const instDetails=el("details");instDetails.append(el("summary","","Текст инструкций"));const instPre=el("pre","log","");instDetails.append(instPre);
@@ -186,7 +188,7 @@ function makeRunnerCard(id){
     try{await post("/api/runners/"+encodeURIComponent(id)+"/instructions",{file:instInput.value});instInput.dataset.server="";instInput.blur();await tick()}catch(e){alert(e.message)}finally{instBtn.disabled=false}};
   const details=el("details");details.append(el("summary","","Лог"));const pre=el("pre","log","");details.append(pre);
   details.addEventListener("toggle",()=>{if(details.open)loadLog(id,c)});
-  root.append(top,info,cwd,cmd,modelState,modelForm,instState,inst,instDetails,details);const c={root,badge:badgeEl,btn,info,cwd,cmd,details,pre,modelState,modelForm,modelSel,instState,instInput,instPre,instDetails};return c}
+  root.append(top,info,cwd,cmd,modelState,modelForm,modelHint,instState,inst,instDetails,details);const c={root,badge:badgeEl,btn,info,cwd,cmd,details,pre,modelState,modelForm,modelSel,modelHint,instState,instInput,instPre,instDetails};return c}
 async function loadLog(id,c){try{const r=await fetch("/api/runners/"+encodeURIComponent(id)+"/log",{cache:"no-store"});const j=await r.json();
   const atEnd=c.pre.scrollTop+c.pre.clientHeight>=c.pre.scrollHeight-8;c.pre.textContent=j.lines.length?j.lines.join("\n"):"(пусто)";if(atEnd)c.pre.scrollTop=c.pre.scrollHeight}catch(e){}}
 $("lead").addEventListener("change",()=>renderOthers(knownIds.split(",")));

@@ -15,20 +15,21 @@ set -euo pipefail
 AN=/abs/path/agent-network-mcp
 PROJECT=/abs/path/project               # main checkout; worktrees ../project-backend and ../project-reviewer
 NETWORK_DIR=$PROJECT/.agent-network
-MODEL=qwen/qwen3.5-9b                   # a model from modelProviders in ~/.qwen/settings.json
+BACKEND_MODEL=qwen/qwen3.5-9b           # each agent can run on its own model: a model from modelProviders in
+REVIEWER_MODEL=qwen/qwen3.5-9b          # ~/.qwen/settings.json, put where the command has {model}
 
 agent() {
-  local id=$1
-  node "$AN/dist/index.js" run --agent "$id" --network-dir "$NETWORK_DIR" --cwd "$PROJECT-$id" \
+  local id=$1 model=$2
+  node "$AN/dist/index.js" run --agent "$id" --model "$model" --network-dir "$NETWORK_DIR" --cwd "$PROJECT-$id" \
     --prompt-file "$AN/examples/runner/qwen-prompt.md" --system-prompt-file "$AN/examples/runner/swarm-system-prompt.md" -- \
-    qwen "{prompt}" -o stream-json --system-prompt "{systemPrompt}" --exclude-tools web_fetch agent list_agents skill get_goal update_goal manage_memory search_memory notebook_edit -m "$MODEL" \
+    qwen "{prompt}" -o stream-json --system-prompt "{systemPrompt}" --exclude-tools web_fetch agent list_agents skill get_goal update_goal manage_memory search_memory notebook_edit -m "{model}" \
       --mcp-config "$AN/examples/runner/qwen-mcp.json" \
       --approval-mode auto-edit \
       --allowed-tools mcp__agent-network "run_shell_command(git)" "run_shell_command(./mvnw)" \
       --max-session-turns 300 --max-wall-time 1h
 }
 
-agent backend &
-agent reviewer &
+agent backend "$BACKEND_MODEL" &
+agent reviewer "$REVIEWER_MODEL" &
 trap 'kill 0' INT TERM
 wait

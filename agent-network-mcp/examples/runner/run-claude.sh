@@ -8,18 +8,20 @@ PROJECT=/abs/path/project               # main checkout; worktrees ../project-ba
 NETWORK_DIR=$PROJECT/.agent-network
 MCP=$AN/examples/runner/mcp.json        # AGENT_ID and NETWORK_DIR are filled in by the runner
 SETTINGS=$AN/examples/claude-hooks/settings.json   # optional: hooks for messages and the Stop reminder
+BACKEND_MODEL=sonnet                    # each agent can run on its own model (put where the command has {model})
+REVIEWER_MODEL=haiku
 
 agent() {
-  local id=$1
-  node "$AN/dist/index.js" run --agent "$id" --network-dir "$NETWORK_DIR" --cwd "$PROJECT-$id" \
+  local id=$1 model=$2
+  node "$AN/dist/index.js" run --agent "$id" --model "$model" --network-dir "$NETWORK_DIR" --cwd "$PROJECT-$id" \
     --system-prompt-file "$AN/examples/runner/swarm-system-prompt.md" -- \
-    claude -p "{prompt}" --output-format stream-json --verbose --tools Read,Write,Edit,Glob,Grep,Bash --system-prompt "{systemPrompt}" --model sonnet --max-turns 200 \
+    claude -p "{prompt}" --output-format stream-json --verbose --tools Read,Write,Edit,Glob,Grep,Bash --system-prompt "{systemPrompt}" --model "{model}" --max-turns 200 \
       --mcp-config "$MCP" --strict-mcp-config --settings "$SETTINGS" \
       --permission-mode acceptEdits \
       --allowedTools mcp__agent-network Read Write Edit Glob Grep "Bash(git:*)" "Bash(./mvnw:*)"
 }
 
-agent backend &
-agent reviewer &
+agent backend "$BACKEND_MODEL" &
+agent reviewer "$REVIEWER_MODEL" &
 trap 'kill 0' INT TERM
 wait
