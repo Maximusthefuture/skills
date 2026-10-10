@@ -273,8 +273,10 @@ export class Swarm {
         if (!input.result?.trim()) throw invalid("complete() during IMPLEMENT requires 'result': a short summary of what you implemented");
         const existing = await this.service.implementations.find(task.id, this.me);
         if (!existing) await this.service.startImplementation(task.id);
-        const done = await this.service.completeImplementation({ taskId: task.id, summary: input.result, filesChanged: input.filesChanged, commits: input.commits });
-        warnings = done.warnings;
+        const unreported = input.commits?.length ? undefined : await this.unreportedWork(task, existing?.commits ?? []);
+        const commits = unreported?.head ? [unreported.head] : input.commits;
+        const done = await this.service.completeImplementation({ taskId: task.id, summary: input.result, filesChanged: input.filesChanged, commits });
+        warnings = [...(done.warnings ?? []), ...(unreported ? [unreported.note] : [])];
         action = "IMPLEMENTATION_COMPLETED";
         break;
       }
@@ -496,6 +498,25 @@ export class Swarm {
       }
     }
     return task.phase;
+  }
+
+  /**
+   * complete() in IMPLEMENT without commits, by an agent on its own branch: the reviewers and the lead see only committed
+   * work there, and agents often commit and then forget the hash. Records the branch head (read now, not the cached
+   * context) and says so; warns when nothing new is committed. Nothing for an agent in the task's checkout or a review-only one.
+   */
+  private async unreportedWork(task: Task, reported: string[]): Promise<{ head?: string; note: string } | undefined> {
+    const branch = await this.ownBranch(task);
+    if (!branch || !task.git || (await this.service.ownership(task.id)).reviewOnly) return undefined;
+    const head = (await readGitContext(this.workdir).catch(() => null))?.commit;
+    if (!head) return undefined;
+    if (head === (task.baseCommit ?? task.git.commit)) {
+      return { note: `Your branch ${branch} has no commits since the task started, so the reviewers and the lead cannot see your changes: commit them and send the hash to the others (send_message).` };
+    }
+    if (task.syncRound > 0 && reported.includes(head)) {
+      return { head, note: `Your branch ${branch} has no new commits since your last report, so the reviewers will see the old version: commit your fix and send the hash to the others (send_message).` };
+    }
+    return { head, note: `You reported no commits: recorded the head of your branch ${branch} (${head}) so the reviewers and the lead can find your work.` };
   }
 
   /** What the previous round asked the agents under review to fix, in the reviewers' words. */

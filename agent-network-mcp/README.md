@@ -276,6 +276,29 @@ CLI не бывает.
 Это включается только явным `auto`: без `NETWORK_DIR` сервер по-прежнему не стартует, чтобы `.agent-network` не
 появлялась в каждом репозитории, где вы открыли CLI. Добавьте `.agent-network/` в `.gitignore` проектов.
 
+**Что поправить, чтобы включить** (один раз, в глобальном конфиге MCP; проверено на Claude Code и Qwen Code 0.24.7):
+
+- **Qwen** — `~/.qwen/settings.json`, значение `mcpServers.agent-network.env.NETWORK_DIR`:
+  ```json
+  "mcpServers": {
+    "agent-network": {
+      "command": "node",
+      "args": ["/abs/path/agent-network-mcp/dist/index.js"],
+      "env": { "AGENT_ID": "backend,reviewer", "AGENT_TYPE": "qwen", "NETWORK_DIR": "auto" }
+    }
+  }
+  ```
+- **Claude Code** — сервер уровня пользователя (то же самое можно написать в `~/.claude.json`, раздел `mcpServers`):
+  ```bash
+  claude mcp add agent-network -s user -e AGENT_ID=backend,reviewer -e AGENT_TYPE=claude -e NETWORK_DIR=auto -- node /abs/path/agent-network-mcp/dist/index.js
+  ```
+
+Проверка: откройте CLI в папке проекта (или в его подпапке, или в worktree) и выполните там
+`node /abs/path/agent-network-mcp/dist/index.js agent list` — агент должен быть в списке. Чтобы вернуть прежнее, поставьте
+вместо `auto` абсолютный путь. Папка вне git-репозитория с `auto` не работает (сервер не стартует, клиент покажет его
+отключённым): для неё задайте путь явно — запуском `NETWORK_DIR=/abs/path/.agent-network qwen` или конфигом в самом проекте.
+Runner'ы и `runners.json` от этой настройки не зависят: runner передаёт каждой сессии явный путь.
+
 Операторские команды (`task`, `agent`, `ui`, `run`, `hook`) без `--network-dir` и `NETWORK_DIR` находят сеть так же —
 по репозиторию текущей папки (`run` — по `--cwd` агента). Команды, которые только смотрят (`task list`, `task stats`,
 `agent list`), сеть не создают, а сообщают, что её ещё нет; `task create` создаёт. Для runner'ов удобнее всего свой
@@ -358,7 +381,9 @@ node dist/index.js task create --network-dir <dir> --agents backend,reviewer --t
 ### Коммиты
 
 Коммиты сервером не проверяются. Агент может передать их в `complete({..., commits})` — они записываются как есть и
-видны остальным в `teamImplementations`. **В отдельном worktree коммит нужен до `complete()`**: незакоммиченные правки
+видны остальным в `teamImplementations`. Если агент в своей ветке забыл передать хэш, сервер записывает HEAD его ветки
+сам и пишет об этом в `warnings`; если в ветке с начала задачи (или с прошлого отчёта, в раунде исправлений) нет новых
+коммитов — предупреждает, что ревьюеры его изменений не увидят. **В отдельном worktree коммит нужен до `complete()`**: незакоммиченные правки
 лежат только в папке автора, ревьюер их не видит, а lead сливает ветки только по коммитам. Сервер сравнивает папку агента
 с checkout'ом, где создана задача; если у агента своя ветка, подсказка `implement`/`fix` говорит «закоммить перед
 `complete()`». Ревьюер, не увидевший изменения из `filesChanged`, просит автора закоммитить, а не пишет NEEDS_FIX. В
@@ -883,7 +908,7 @@ npm run test:integration
 npm run typecheck
 ```
 
-304 теста, vitest 3 (vitest 4 требует Node ≥ 20.19):
+306 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
 
 - **unit**: `FileStore` (атомарная запись, конкурентные создания, path traversal, lock), сторы, `PhaseManager` (все пары
   переходов, сбор раунда, ревью исправленного, лимит раундов), точное пересечение масок (с fuzz-проверкой), `EventHub`,

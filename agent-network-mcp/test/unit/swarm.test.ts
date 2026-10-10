@@ -851,3 +851,52 @@ describe("a BLOCKED task under a runner", () => {
     expect(await s.backend.context()).toMatchObject({ nextAction: "wait", waitingOn: ["operator"] });
   });
 });
+
+describe("complete() without commits on an own branch", () => {
+  /** A repository, backend and reviewer in their own worktrees, a task in IMPLEMENT. */
+  async function inWorktrees() {
+    const repo = await tmpDir();
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.email", "t@example.com");
+    git(repo, "config", "user.name", "t");
+    writeFileSync(join(repo, "README.md"), "demo");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "init");
+    const wt = { backend: `${repo}-backend`, reviewer: `${repo}-reviewer` };
+    git(repo, "worktree", "add", "-q", wt.backend, "-b", "swarm-backend");
+    git(repo, "worktree", "add", "-q", wt.reviewer, "-b", "swarm-reviewer");
+    const dir = join(repo, ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const service = (id: string) => NetworkService.create(dir, { id, type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }) });
+    const services = { backend: await service("backend"), reviewer: await service("reviewer") };
+    const s = { backend: new Swarm(services.backend, undefined, { workdir: wt.backend }), reviewer: new Swarm(services.reviewer, undefined, { workdir: wt.reviewer }) };
+    const t = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    await toImplement(s);
+    const commit = (cwd: string, file: string) => {
+      writeFileSync(join(cwd, file), file);
+      git(cwd, "add", file);
+      git(cwd, "commit", "-q", "-m", file);
+      return git(cwd, "rev-parse", "HEAD");
+    };
+    return { s, services, wt, commit, taskId: t.id };
+  }
+
+  it("records the head of the branch, so the reviewer is told to merge it", async () => {
+    const { s, services, wt, commit, taskId } = await inWorktrees();
+    const head = commit(wt.backend, "Api.java");
+    const done = await s.backend.complete({ result: "api", filesChanged: ["src/main/Api.java"] }); // committed, forgot the hash
+    expect(done.warnings).toEqual(expect.arrayContaining([expect.stringContaining(`recorded the head of your branch swarm-backend (${head})`)]));
+    expect((await services.backend.implementations.find(taskId, "backend"))!.commits).toEqual([head]);
+    commit(wt.reviewer, "ApiTest.java");
+    await s.reviewer.complete({ result: "tests", filesChanged: ["src/test/ApiTest.java"] });
+    expect((await s.reviewer.context()).teamImplementations).toEqual([expect.objectContaining({ agentId: "backend", notInYourBranch: [head] })]);
+  });
+
+  it("warns when nothing is committed on the branch", async () => {
+    const { s, services, taskId } = await inWorktrees();
+    const done = await s.backend.complete({ result: "api", filesChanged: ["src/main/Api.java"] });
+    expect(done.warnings).toEqual(expect.arrayContaining([expect.stringContaining("swarm-backend has no commits since the task started")]));
+    expect((await services.backend.implementations.find(taskId, "backend"))!.commits).toEqual([]);
+  });
+});

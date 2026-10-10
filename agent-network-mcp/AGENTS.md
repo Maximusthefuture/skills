@@ -24,7 +24,8 @@ nextAction:
 - `approve` (DISCUSS): read `agreement` (assignments and each agent's files); `complete()` approves it. If you disagree, `send_message` or `propose` a replacement.
 - `implement` (IMPLEMENT): work ONLY on your own assignment and change only your own files (`ownership.yourFiles`) or files granted to you. Reviewing the other agents' code is for SYNC, not now. Report blockers with `send_message`. When finished
   call `complete({result, filesChanged})`. Working on your own git branch (a separate worktree)? Commit your files first and pass
-  `commits`: the reviewers and the lead see only committed work there. In a shared folder commits are optional; nothing checks them.
+  `commits`: the reviewers and the lead see only committed work there (forgot the hash? the server records your branch head and
+  says so in `warnings`). In a shared folder commits are optional; nothing checks them.
   An assignment with `files: []` means you change nothing: you only review the others' work. Mark your part ready right away
   with `complete({result: "review only: nothing to change"})` and do your review in SYNC.
   A part with several steps: plan it with `subtasks({add: ["<step>", ...]})`, then `subtasks({start: "s1"})` and `subtasks({done: ["s1"]})`
