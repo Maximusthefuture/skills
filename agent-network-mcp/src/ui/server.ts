@@ -27,7 +27,7 @@ const json = (status: number, value: unknown): Reply => ({ status, type: "applic
 const text = (status: number, body: string): Reply => ({ status, type: "text/plain; charset=utf-8", body });
 
 /**
- * GET / (page), GET /api/state (JSON). With `runners` also: POST /api/tasks, POST /api/runners/<id>/start|stop|instructions, POST /api/questions/answer,
+ * GET / (page), GET /api/state (JSON). With `runners` also: POST /api/tasks, POST /api/runners/<id>/start|stop|instructions|model, POST /api/questions/answer,
  * GET /api/runners/<id>/log. Bound to loopback; foreign Host headers are refused, and state-changing requests must be
  * same-origin JSON (a page on another site cannot create tasks for the agents).
  */
@@ -94,6 +94,8 @@ export async function startUiServer(networkDir: string, opts: UiOptions = {}): P
       const file = (body as { file?: unknown }).file;
       return json(200, await pool.setInstructionsFile(decodeURIComponent(inst[1]!), typeof file === "string" ? file : null));
     }
+    const mdl = /^\/api\/runners\/([^/]+)\/model$/.exec(path);
+    if (mdl) return json(200, await pool.setModel(decodeURIComponent(mdl[1]!), String((body as { model?: unknown }).model ?? "")));
     const act = /^\/api\/runners\/([^/]+)\/(start|stop)$/.exec(path);
     if (act) {
       const id = decodeURIComponent(act[1]!);

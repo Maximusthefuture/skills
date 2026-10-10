@@ -40,7 +40,7 @@ button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:
 pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px;margin:6px 0 0;font:11px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
 .stats{display:flex;flex-wrap:wrap;gap:4px 12px;margin:6px 0;font-size:12px;color:var(--muted)}.stats b{color:var(--text);font-weight:600}
 .q{border-left:3px solid var(--warn)}.q .who{font-weight:600}.q textarea{min-height:60px;margin-top:8px}.q .row2{display:flex;gap:8px;align-items:center;margin-top:6px}
-.inst{display:flex;gap:6px;margin-top:6px}.inst input{flex:1;min-width:0}.inst button{padding:4px 10px}
+.inst{display:flex;gap:6px;margin-top:6px}.inst[hidden]{display:none}.inst input,.inst select{flex:1;min-width:0}.inst button{padding:4px 10px}
 .runner .top{display:flex;align-items:center;gap:8px;font-weight:600}.runner .top button{margin-left:auto}.runner .line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sub{font-size:12px}.sub .DONE{color:var(--ok)}.sub .DOING{color:var(--accent);font-weight:600}.sub .DROPPED{color:var(--idle);text-decoration:line-through}
 </style>
@@ -146,6 +146,8 @@ function renderControl(s){
   if(ids.join(",")!==knownIds){knownIds=ids.join(",");const lead=$("lead");const keep=lead.value;lead.replaceChildren();ids.forEach(id=>lead.append(new Option(id,id)));if(ids.includes(keep))lead.value=keep;renderOthers(ids)}
   const box=$("runners");
   if(!s.control.runners.length&&!box.childElementCount)box.append(el("div","empty","В runners.json нет агентов."));
+  const live=new Set(s.control.runners.map(r=>r.id)); // the UI restarted with another runners.json: drop the old cards
+  for(const [id,c] of runnerCards)if(!live.has(id)){c.root.remove();runnerCards.delete(id)}
   for(const r of s.control.runners){
     let c=runnerCards.get(r.id);
     if(!c){c=makeRunnerCard(r.id);runnerCards.set(r.id,c);box.append(c.root)}
@@ -154,6 +156,9 @@ function renderControl(s){
     c.info.textContent=r.running&&r.startedAt?"запущен "+ago(r.startedAt):r.stoppedAt?"остановлен "+ago(r.stoppedAt):"не запускался";
     c.cwd.textContent=r.cwd?"папка: "+r.cwd:"папка: текущая";c.cwd.title=r.cwd||"";
     c.cmd.textContent=r.command;c.cmd.title=r.command;
+    c.modelState.textContent=r.model?"модель: "+r.model:"модель: задана в command (поставьте {model} в command и \"model\" в runners.json, чтобы выбирать здесь)";c.modelForm.hidden=!r.model;
+    const msig=r.models.join("|")+"#"+(r.model||"");
+    if(r.model&&document.activeElement!==c.modelSel&&c.modelSel.dataset.server!==msig){c.modelSel.replaceChildren(...r.models.map(m=>new Option(m,m)),new Option("другая…","__other__"));c.modelSel.value=r.model;c.modelSel.dataset.server=msig}
     c.instState.className="note line"+(r.instructions&&r.instructions.error?" err":"");
     c.instState.textContent=!r.instructionsFile?"инструкции: нет (только стандартный промпт)":r.instructions&&r.instructions.error?"инструкции: не читается "+r.instructionsFile+" ("+r.instructions.error+")":"инструкции: "+r.instructionsFile;
     c.instState.title=r.instructionsFile||"";
@@ -168,6 +173,11 @@ function makeRunnerCard(id){
   const root=el("div","card runner");const top=el("div","top");const badgeEl=el("span","badge","");const btn=el("button","","");
   btn.type="button";btn.onclick=async()=>{btn.disabled=true;try{await post("/api/runners/"+encodeURIComponent(id)+"/"+btn.dataset.action);await tick()}catch(e){alert(e.message)}finally{btn.disabled=false}};
   top.append(el("span","",id),badgeEl,btn);const info=el("div","muted","");const cwd=el("div","muted line","");const cmd=el("div","muted mono line","");
+  const modelState=el("div","note line","");
+  const modelForm=el("form","inst");const modelSel=document.createElement("select");const modelBtn=el("button","ghost","Применить");modelBtn.type="submit";modelForm.append(modelSel,modelBtn);
+  modelForm.onsubmit=async ev=>{ev.preventDefault();let m=modelSel.value;
+    if(m==="__other__"){m=(prompt("Модель, как её называет CLI агента (например qwen/qwen3.5-9b или haiku)")||"").trim();if(!m){modelSel.dataset.server="";await tick();return}}
+    modelBtn.disabled=true;try{await post("/api/runners/"+encodeURIComponent(id)+"/model",{model:m});modelSel.dataset.server="";modelSel.blur();await tick()}catch(e){alert(e.message)}finally{modelBtn.disabled=false}};
   const instState=el("div","note line","");
   const instDetails=el("details");instDetails.append(el("summary","","Текст инструкций"));const instPre=el("pre","log","");instDetails.append(instPre);
   const inst=el("form","inst");const instInput=document.createElement("input");instInput.placeholder="файл инструкций, напр. instructions/backend.md";
@@ -176,7 +186,7 @@ function makeRunnerCard(id){
     try{await post("/api/runners/"+encodeURIComponent(id)+"/instructions",{file:instInput.value});instInput.dataset.server="";instInput.blur();await tick()}catch(e){alert(e.message)}finally{instBtn.disabled=false}};
   const details=el("details");details.append(el("summary","","Лог"));const pre=el("pre","log","");details.append(pre);
   details.addEventListener("toggle",()=>{if(details.open)loadLog(id,c)});
-  root.append(top,info,cwd,cmd,instState,inst,instDetails,details);const c={root,badge:badgeEl,btn,info,cwd,cmd,details,pre,instState,instInput,instPre,instDetails};return c}
+  root.append(top,info,cwd,cmd,modelState,modelForm,instState,inst,instDetails,details);const c={root,badge:badgeEl,btn,info,cwd,cmd,details,pre,modelState,modelForm,modelSel,instState,instInput,instPre,instDetails};return c}
 async function loadLog(id,c){try{const r=await fetch("/api/runners/"+encodeURIComponent(id)+"/log",{cache:"no-store"});const j=await r.json();
   const atEnd=c.pre.scrollTop+c.pre.clientHeight>=c.pre.scrollHeight-8;c.pre.textContent=j.lines.length?j.lines.join("\n"):"(пусто)";if(atEnd)c.pre.scrollTop=c.pre.scrollHeight}catch(e){}}
 $("lead").addEventListener("change",()=>renderOthers(knownIds.split(",")));
@@ -203,8 +213,8 @@ function renderStats(t){
   if(st.costUsd!==null)item("стоимость","$"+st.costUsd.toFixed(st.costUsd<1?3:2));
   if(st.sessions)item("сессий",String(st.sessions)+(st.sessionsWithoutUsage&&st.usage?" ("+st.sessionsWithoutUsage+" без токенов)":""));
   box.append(line);
-  if(st.agents.length){const d=el("details");d.append(el("summary","","Статистика по агентам"));const tb=el("table");const hr=el("tr");["Агент","Сессий","Время сессий","Токены","Вход / выход","Стоимость"].forEach(h=>hr.append(el("th","",h)));tb.append(hr);
-    st.agents.forEach(a=>{const r=el("tr");[a.agentId,String(a.sessions),fmtMs(a.ms),a.usage?fmtTok(a.usage.total):"—",a.usage?fmtTok(a.usage.input)+" / "+fmtTok(a.usage.output):"—",a.costUsd!==null?"$"+a.costUsd.toFixed(3):"—"].forEach(v=>r.append(el("td","",v)));tb.append(r)});
+  if(st.agents.length){const d=el("details");d.append(el("summary","","Статистика по агентам"));const tb=el("table");const hr=el("tr");["Агент","Модель","Сессий","Время сессий","Токены","Вход / выход","Стоимость"].forEach(h=>hr.append(el("th","",h)));tb.append(hr);
+    st.agents.forEach(a=>{const r=el("tr");[a.agentId,a.models&&a.models.length?a.models.join(", "):"—",String(a.sessions),fmtMs(a.ms),a.usage?fmtTok(a.usage.total):"—",a.usage?fmtTok(a.usage.input)+" / "+fmtTok(a.usage.output):"—",a.costUsd!==null?"$"+a.costUsd.toFixed(3):"—"].forEach(v=>r.append(el("td","",v)));tb.append(r)});
     d.append(tb);box.append(d)}
   return box;
 }

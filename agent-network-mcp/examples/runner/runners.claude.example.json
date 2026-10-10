@@ -9,6 +9,7 @@
     "instructionsFile (per agent, relative to this file): the agent's own instructions, appended to the standard prompt and read again before every session; can also be set on the page.",
     "stream-json output lets the runner count tokens and cost per session (task statistics) and still show a readable log.",
     "Lean context: a short system prompt ({systemPrompt} <- systemPromptFile) and only the tools the agent needs; every turn re-reads them, so this cuts tokens per turn several times.",
+    "Model: the command has {model}; \"model\" is the default (the tester runs on haiku), \"models\" is the choice in the runner card on the page (applies from the next session).",
     "autostart: false = start that agent with the button on the page."
   ],
   "networkDir": "/abs/path/project/.agent-network",
@@ -25,7 +26,7 @@
       "--system-prompt",
       "{systemPrompt}",
       "--model",
-      "sonnet",
+      "{model}",
       "--max-turns",
       "200",
       "--mcp-config",
@@ -45,6 +46,12 @@
       "Bash(git:*)",
       "Bash(./mvnw:*)"
     ],
+    "model": "sonnet",
+    "models": [
+      "haiku",
+      "sonnet",
+      "opus"
+    ],
     "maxRestarts": 2,
     "systemPromptFile": "swarm-system-prompt.md"
   },
@@ -61,7 +68,8 @@
     {
       "id": "tester",
       "cwd": "/abs/path/project-tester",
-      "autostart": false
+      "autostart": false,
+      "model": "haiku"
     }
   ]
 }

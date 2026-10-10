@@ -9,6 +9,7 @@
     "instructionsFile (per agent, relative to this file): the agent's own instructions, appended to the standard prompt and read again before every session; can also be set on the page.",
     "stream-json output lets the runner count tokens and cost per session (task statistics) and still show a readable log.",
     "Lean context: a short system prompt ({systemPrompt} <- systemPromptFile) and only the tools the agent needs; every turn re-reads them, so this cuts tokens per turn several times.",
+    "Model: the command has {model}; \"model\" is the default (an agent can have its own), \"models\" is the choice in the runner card on the page (applies from the next session). Ids as the model server lists them, e.g. curl http://<lm-studio>:1234/v1/models.",
     "autostart: false = start that agent with the button on the page."
   ],
   "networkDir": "/abs/path/project/.agent-network",
@@ -31,7 +32,7 @@
       "search_memory",
       "notebook_edit",
       "-m",
-      "qwen/qwen3.5-9b",
+      "{model}",
       "--auth-type",
       "openai",
       "--openai-base-url",
@@ -50,6 +51,11 @@
       "300",
       "--max-wall-time",
       "1h"
+    ],
+    "model": "qwen/qwen3.5-9b",
+    "models": [
+      "qwen/qwen3.5-9b",
+      "qwen/qwen3-coder-30b"
     ],
     "promptFile": "qwen-prompt.md",
     "maxRestarts": 2,

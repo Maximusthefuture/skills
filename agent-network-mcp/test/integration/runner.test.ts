@@ -144,6 +144,29 @@ describe("agent runner", () => {
     expect(s.launches()[0]!.args.slice(1)).toEqual(["--system-prompt", "You are backend, a headless swarm agent."]);
   });
 
+  it("puts the model where the command has {model} and asks for it before every session", async () => {
+    const s = await setup();
+    let model = "small/model";
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "2", "{prompt}", "-m", "{model}"], { model: () => model, restartDelayMs: 300 });
+    const t = await s.newTask("Model");
+    await until(() => s.launches().length === 1, "first session");
+    model = "big/model"; // chosen on the page while the first session runs
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "done on the second session");
+    await r.stop();
+    expect(s.launches().map((l) => l.args.slice(1))).toEqual([["-m", "small/model"], ["-m", "big/model"]]);
+    expect(r.lines).toContain(`${t.id}: starting session 1 (phase DISCUSS, model small/model)`);
+    expect((await new SessionStore(await FileStore.open(s.networkDir)).list(t.id)).map((x) => x.model)).toEqual(["small/model", "big/model"]);
+  });
+
+  it("does not start a session while the command has {model} and no model is set", async () => {
+    const s = await setup();
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "1", "{prompt}", "-m", "{model}"], { model: () => undefined });
+    await s.newTask("No model");
+    await until(() => r.lines.some((l) => l.includes("no model is set")), "the runner says why it waits");
+    await r.stop();
+    expect(s.launches()).toHaveLength(0);
+  });
+
   it("goes on without an unreadable instructions file and says so", async () => {
     const s = await setup();
     const r = start(s.networkDir, [process.execPath, FAKE, s.log, "1", "{prompt}"], { instructionsFile: join(dirname(s.log), "missing.md") });

@@ -433,7 +433,8 @@ node dist/index.js run --agent backend --network-dir /abs/project/.agent-network
   агентом. Промпт (`{prompt}`, по умолчанию — «ты агент X, задача Y, вызови `swarm_context`, иди по `nextAction` до `done`»)
   подставляется вместо `{prompt}` в любом аргументе или добавляется последним. Свой шаблон — `--prompt-file` с
   `{agent}`, `{taskId}`, `{title}`, `{attempt}`, `{resume}`; инструкции агента поверх стандартного промпта —
-  `--instructions-file`. Оба файла читаются перед каждой сессией.
+  `--instructions-file`. Оба файла читаются перед каждой сессией. Модель: `{model}` в команде (`-m "{model}"`,
+  `--model "{model}"`) и `--model <имя>`.
 - **Сессии передаются** `AGENT_ID`, `NETWORK_DIR`, `AGENT_NETWORK_TASK_ID`, `AGENT_NETWORK_ATTEMPT`. Claude Code подставляет
   `${AGENT_ID}` и `${NETWORK_DIR}` в MCP-конфиг, поэтому один [examples/runner/mcp.json](examples/runner/mcp.json) годится
   всем агентам.
@@ -488,7 +489,7 @@ runner'а запускают агентов с короткой базой:
   вход + выход. У Qwen туда входят и фоновые вызовы (агент памяти).
 - Сессия, которая сама перешла на follow-up задачу, учитывается в задаче, ради которой её запустили; у follow-up так и
   написано: «токены учтены в task-001».
-- Где смотреть: строка статистики и таблица по агентам в карточке задачи на странице, `task stats [--id task-001]` в CLI.
+- Где смотреть: строка статистики и таблица по агентам (с моделями сессий) в карточке задачи на странице, `task stats [--id task-001]` в CLI.
 - `--json-file` у Qwen (dual output) в неинтерактивном режиме 0.24.7 ничего не пишет, поэтому runner читает `stdout`.
 
 #### Qwen Code
@@ -545,8 +546,8 @@ node dist/index.js ui --runners runners.json [--port 4777]
 
 - форма **«Новая задача»**: название, описание, lead и остальные агенты, `--verify`, бюджет follow-up задач, лимит раундов
   исправлений; runner'ы подхватывают задачу за пару секунд;
-- **runner'ы**: статус `RUNNING`/`STOPPED`, кнопки «Старт»/«Стоп», папка, команда, **файл инструкций агента** (поле
-  ввода, «Сохранить», начало текста) и хвост лога (строки runner'а и вывод сессий CLI, последние 400 строк);
+- **runner'ы**: статус `RUNNING`/`STOPPED`, кнопки «Старт»/«Стоп», папка, команда, **модель агента** (список и
+  «Применить»), **файл инструкций агента** (поле ввода, «Сохранить», начало текста) и хвост лога (строки runner'а и вывод сессий CLI, последние 400 строк);
 - в карточке задачи — **подзадачи** каждого агента (`2/3`, ✓ ▶ · ✕) и **цепочка follow-up**: «follow-up от task-001»,
   «follow-up задачи: …», бюджет.
 
@@ -562,15 +563,17 @@ node dist/index.js ui --runners runners.json [--port 4777]
 {
   "networkDir": "/abs/project/.agent-network",
   "defaults": {
-    "command": ["qwen", "{prompt}", "-m", "qwen/qwen3.5-9b", "--mcp-config", "/abs/agent-network-mcp/examples/runner/qwen-mcp.json",
+    "command": ["qwen", "{prompt}", "-m", "{model}", "--mcp-config", "/abs/agent-network-mcp/examples/runner/qwen-mcp.json",
                 "--approval-mode", "auto-edit", "--allowed-tools", "mcp__agent-network", "run_shell_command(git)", "run_shell_command(./mvnw)",
                 "--max-session-turns", "300", "--max-wall-time", "1h"],
+    "model": "qwen/qwen3.5-9b",
+    "models": ["qwen/qwen3.5-9b", "qwen/qwen3-coder-30b"],
     "promptFile": "/abs/agent-network-mcp/examples/runner/qwen-prompt.md",
     "maxRestarts": 2
   },
   "agents": [
     { "id": "backend", "cwd": "/abs/project-backend" },
-    { "id": "reviewer", "cwd": "/abs/project-reviewer", "autostart": false }
+    { "id": "reviewer", "cwd": "/abs/project-reviewer", "model": "qwen/qwen3-coder-30b", "autostart": false }
   ]
 }
 ```
@@ -582,6 +585,13 @@ node dist/index.js ui --runners runners.json [--port 4777]
 вопрос в DISCUSS без ответа, `nextAction` агента — `wait` (не `propose`/`approve`), чтобы он не додумывал задачу; в других
 фазах вопрос не останавливает работу, а лишь напоминает, что ответ ещё не пришёл. Ответить можно только из UI с
 `--runners`; без него вопросы видны, но только для чтения. `operator` — зарезервированное имя, агента так назвать нельзя.
+
+**Модель для каждого агента.** Поставьте `"{model}"` в `command` туда, где CLI ждёт имя модели (`"-m", "{model}"` у
+Qwen, `"--model", "{model}"` у Claude Code), `"model"` — модель по умолчанию (в `defaults` или у агента), `"models"` —
+список, из которого её выбирают на странице. В карточке runner'а модель выбирается из списка («другая…» — ввести имя) и
+применяется со следующей сессии, без перезапуска; значение записывается в `runners.json`. Имя — как его понимает CLI
+(у LM Studio — id из `GET /v1/models`), без пробелов и не с `-`. Без `{model}` в команде модель задаёт сама команда, и
+выбора на странице нет. Какая модель реально работала, видно в логе (`[session] model …`) и в статистике по агентам.
 
 **Свои инструкции каждому агенту** — `instructionsFile` (у агента или в `defaults`): роль, правила, стиль. Текст
 **добавляется** к стандартному промпту после строки «Instructions from the operator for you (<id>)», подстановки
@@ -597,7 +607,7 @@ node dist/index.js ui --runners runners.json [--port 4777]
 runner'ы (их сессиям — SIGTERM) и страницу.
 
 Без `--runners` страница остаётся только для чтения. С ним изменяющие запросы (`POST /api/tasks`,
-`POST /api/runners/<id>/start|stop`) принимаются только как JSON с той же страницы: запрос с чужим `Origin` или
+`POST /api/runners/<id>/start|stop|instructions|model`, `POST /api/questions/answer`) принимаются только как JSON с той же страницы: запрос с чужим `Origin` или
 `Sec-Fetch-Site: cross-site` получает 403, обычная HTML-форма — 415. Иначе любой сайт, открытый в том же браузере, мог бы
 поставить агентам задачу. Страница по-прежнему слушает только `127.0.0.1`.
 
@@ -726,7 +736,7 @@ npm run test:integration
 npm run typecheck
 ```
 
-282 теста, vitest 3 (vitest 4 требует Node ≥ 20.19):
+287 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
 
 - **unit**: `FileStore` (атомарная запись, конкурентные создания, path traversal, lock), сторы, `PhaseManager` (все пары
   переходов, сбор раунда, ревью исправленного, лимит раундов), точное пересечение масок (с fuzz-проверкой), `EventHub`,

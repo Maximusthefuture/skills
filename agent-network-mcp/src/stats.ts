@@ -18,7 +18,8 @@ export interface TaskStats {
   sessionsWithoutUsage: number;
   usage: TokenUsage | null;
   costUsd: number | null;
-  agents: { agentId: string; sessions: number; ms: number; usage: TokenUsage | null; costUsd: number | null }[];
+  /** models: what the sessions reported (the runner's choice may differ from what the CLI actually used). */
+  agents: { agentId: string; models: string[]; sessions: number; ms: number; usage: TokenUsage | null; costUsd: number | null }[];
   /** Tasks whose sessions also finished this one: its tokens are counted there. */
   countedIn: string[];
 }
@@ -53,7 +54,8 @@ export function taskStats(task: Task, sessions: SessionRecord[], countedIn: stri
   for (const s of sessions) {
     usage = add(usage, s.usage);
     if (s.costUsd !== undefined) costUsd = (costUsd ?? 0) + s.costUsd;
-    const a = agents.get(s.agentId) ?? { agentId: s.agentId, sessions: 0, ms: 0, usage: null, costUsd: null };
+    const a = agents.get(s.agentId) ?? { agentId: s.agentId, models: [], sessions: 0, ms: 0, usage: null, costUsd: null };
+    if (s.model && !a.models.includes(s.model)) a.models.push(s.model);
     a.sessions += 1;
     a.ms += s.durationMs;
     a.usage = add(a.usage, s.usage);

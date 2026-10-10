@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { AppError } from "../errors.js";
-import { runRunner, type RunnerOptions } from "../runner.js";
+import { isValidModel, runRunner, usesModel, type RunnerOptions } from "../runner.js";
 import { assertAgentId } from "../validation.js";
 
 /**
@@ -9,7 +9,7 @@ import { assertAgentId } from "../validation.js";
  *
  *   {
  *     "networkDir": "/abs/project/.agent-network",          optional: --network-dir / NETWORK_DIR win
- *     "defaults": { "command": ["qwen", "{prompt}", ...], "promptFile": "qwen-prompt.md", "maxRestarts": 2 },
+ *     "defaults": { "command": ["qwen", "{prompt}", "-m", "{model}", ...], "model": "qwen/qwen3.5-9b", "models": ["qwen/qwen3.5-9b", "qwen/qwen3-coder-30b"], "promptFile": "qwen-prompt.md" },
  *     "agents": [ { "id": "backend", "cwd": "../project-backend", "instructionsFile": "backend.md" }, { "id": "reviewer", "cwd": "../project-reviewer", "autostart": false } ]
  *   }
  *
@@ -26,6 +26,10 @@ export interface RunnerAgentConfig {
   instructionsFile?: string;
   /** File with the system prompt, put where the command has {systemPrompt}; read before every session. */
   systemPromptFile?: string;
+  /** Put where the command has {model}; the UI can change it (applies from the next session). */
+  model?: string;
+  /** The choice offered on the page. */
+  models?: string[];
   maxRestarts?: number;
   /** Start together with the UI. Default true. */
   autostart?: boolean;
@@ -61,6 +65,11 @@ export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
     if (!Array.isArray(merged.command) || merged.command.length === 0 || !merged.command.every((c) => typeof c === "string")) {
       throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" needs "command": the agent CLI as an array, e.g. ["qwen", "{prompt}", "-m", "qwen/qwen3.5-9b"]`);
     }
+    if (merged.model !== undefined && !isValidModel(merged.model)) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" model ${JSON.stringify(merged.model)}: a model name without spaces, not starting with "-"`);
+    if (merged.models !== undefined && (!Array.isArray(merged.models) || !merged.models.every(isValidModel))) {
+      throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" "models" must be a list of model names`);
+    }
+    if (usesModel(merged.command) && !merged.model) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" command has {model}: set "model" (in the agent or in "defaults")`);
     const promptFile = merged.promptFile ? abs(merged.promptFile) : undefined;
     const instructionsFile = merged.instructionsFile ? abs(merged.instructionsFile) : undefined;
     const systemPromptFile = merged.systemPromptFile ? abs(merged.systemPromptFile) : undefined;
@@ -74,6 +83,8 @@ export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
       ...(promptFile ? { promptFile } : {}),
       ...(instructionsFile ? { instructionsFile } : {}),
       ...(systemPromptFile ? { systemPromptFile } : {}),
+      ...(merged.model ? { model: merged.model } : {}),
+      ...(merged.models?.length ? { models: [...new Set(merged.models)] } : {}),
       ...(merged.maxRestarts !== undefined ? { maxRestarts: Number(merged.maxRestarts) } : {}),
       autostart: merged.autostart !== false,
     });
@@ -90,6 +101,10 @@ export interface RunnerView {
   command: string;
   promptFile: string | null;
   instructionsFile: string | null;
+  /** The command has {model}: the model can be chosen; null otherwise (the command names it itself, if at all). */
+  model: string | null;
+  /** What the page offers: the configured list plus the current model. */
+  models: string[];
 }
 
 export interface RunnerDetails extends RunnerView {
@@ -133,6 +148,8 @@ export class RunnerPool {
       command: m.config.command.map((c) => (/\s/.test(c) ? JSON.stringify(c) : c)).join(" "),
       promptFile: m.config.promptFile ?? null,
       instructionsFile: m.config.instructionsFile ?? null,
+      model: usesModel(m.config.command) ? m.config.model ?? null : null,
+      models: usesModel(m.config.command) ? [...new Set([...(m.config.models ?? []), ...(m.config.model ? [m.config.model] : [])])] : [],
     }));
   }
 
@@ -173,6 +190,21 @@ export class RunnerPool {
     return this.view(id);
   }
 
+  /**
+   * Choose the agent's model: put where its command has {model} from the next session on (a running session keeps its
+   * model). With a config file the value is written back there, so it survives a restart.
+   */
+  async setModel(id: string, raw: string): Promise<RunnerView> {
+    const m = this.get(id);
+    const model = raw.trim();
+    if (!usesModel(m.config.command)) throw new AppError("INVALID_INPUT", `The command of '${id}' has no {model}: put "{model}" where it names the model (e.g. "-m", "{model}") and set "model"`);
+    if (!isValidModel(model)) throw new AppError("INVALID_INPUT", `Not a model name: ${JSON.stringify(raw)} (no spaces, not starting with "-")`);
+    m.config.model = model;
+    if (this.opts.configPath) await saveAgentField(this.opts.configPath, id, "model", model);
+    this.push(m, `[ui] model: ${model}${m.controller ? " (applies from the next session)" : ""}\n`);
+    return this.view(id);
+  }
+
   log(id: string): string[] {
     const m = this.get(id);
     return m.partial ? [...m.lines, m.partial] : [...m.lines];
@@ -195,6 +227,7 @@ export class RunnerPool {
       ...(m.config.promptFile ? { promptFile: m.config.promptFile } : {}),
       ...(m.config.instructionsFile ? { instructionsFile: m.config.instructionsFile } : {}),
       ...(m.config.systemPromptFile ? { systemPromptFile: m.config.systemPromptFile } : {}),
+      model: () => m.config.model,
       ...(m.config.maxRestarts !== undefined ? { maxRestarts: m.config.maxRestarts } : {}),
       signal: controller.signal,
       log: (line) => this.push(m, `[runner] ${line}\n`),

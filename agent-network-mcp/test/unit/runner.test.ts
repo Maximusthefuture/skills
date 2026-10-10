@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildArgv, DEFAULT_PROMPT, pickTask, renderPrompt } from "../../src/runner.js";
+import { buildArgv, DEFAULT_PROMPT, isValidModel, pickTask, renderPrompt, usesModel, withModel } from "../../src/runner.js";
 import type { Task } from "../../src/types.js";
 
 const task = (id: string, status: Task["status"], agents = ["backend", "reviewer"]): Task => ({
@@ -36,6 +36,17 @@ describe("buildArgv", () => {
     expect(buildArgv(["tool", "--input={prompt}"], "x")).toEqual(["tool", "--input=x"]);
     expect(buildArgv(["codex", "exec"], "do it")).toEqual(["codex", "exec", "do it"]);
     expect(buildArgv(["claude", "-p", "{prompt}", "--system-prompt", "{systemPrompt}"], "task", "be brief")).toEqual(["claude", "-p", "task", "--system-prompt", "be brief"]);
+  });
+});
+
+describe("model", () => {
+  it("fills {model} in any argument; names with spaces or a leading dash are refused", () => {
+    expect(usesModel(["qwen", "{prompt}", "-m", "{model}"])).toBe(true);
+    expect(usesModel(["claude", "-p", "{prompt}", "--model", "haiku"])).toBe(false);
+    expect(withModel(["qwen", "-m", "{model}", "--x={model}"], "qwen/qwen3.5-9b")).toEqual(["qwen", "-m", "qwen/qwen3.5-9b", "--x=qwen/qwen3.5-9b"]);
+    expect(withModel(["qwen", "-m", "{model}"], undefined)).toEqual(["qwen", "-m", "{model}"]);
+    for (const ok of ["haiku", "claude-haiku-4-5", "qwen/qwen3.5-9b", "qwen2.5-coder:7b", "org/model@q4"]) expect(isValidModel(ok)).toBe(true);
+    for (const bad of ["", "-rf", "--yolo", "two words", "a\nb", 42]) expect(isValidModel(bad)).toBe(false);
   });
 });
 

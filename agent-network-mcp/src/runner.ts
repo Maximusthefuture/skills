@@ -60,6 +60,18 @@ export function buildArgv(command: string[], prompt: string, systemPrompt?: stri
   return args.some((a) => a.includes("{prompt}")) ? args.map((a) => a.replaceAll("{prompt}", prompt)) : [...args, prompt];
 }
 
+/** `{model}` in the command (e.g. `-m "{model}"`) lets the operator pick the model per agent without rewriting the command. */
+export const usesModel = (command: string[]): boolean => command.some((a) => a.includes("{model}"));
+
+export function withModel(command: string[], model: string | undefined): string[] {
+  return model === undefined ? command : command.map((a) => a.replaceAll("{model}", model));
+}
+
+/** A model name as it goes into the argv: no spaces, and it cannot be taken for a flag. */
+export function isValidModel(model: unknown): model is string {
+  return typeof model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(model);
+}
+
 /** Used for {systemPrompt} when the system prompt file cannot be read: the CLI must not get an empty system prompt. */
 export const FALLBACK_SYSTEM_PROMPT = "You are a headless coding agent in an agent-network swarm. Follow nextAction from the agent-network tools.";
 
@@ -85,6 +97,8 @@ export interface RunnerOptions {
   instructionsFile?: string;
   /** Read before every session and put where the command has {systemPrompt} (e.g. --system-prompt "{systemPrompt}"). */
   systemPromptFile?: string;
+  /** Put where the command has {model}. A function is asked before every session, so a change applies to the next one. */
+  model?: string | (() => string | undefined);
   /** Extra sessions for one task after the first before the runner gives up until the task changes. Default 3. */
   maxRestarts?: number;
   /** How often the idle runner looks at the network directory. Default 2000 ms. */
@@ -229,6 +243,13 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       continue;
     }
 
+    const model = usesModel(opts.command) ? (typeof opts.model === "function" ? opts.model() : opts.model) : undefined;
+    if (usesModel(opts.command) && !model) {
+      say("the command has {model} but no model is set; waiting");
+      await sleep(pollMs, signal);
+      continue;
+    }
+
     const attempt = (attempts.get(task.id) ?? 0) + 1;
     attempts.set(task.id, attempt);
     const vars = { agent, taskId: task.id, title: task.title, attempt };
@@ -236,14 +257,14 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const instructions = opts.instructionsFile ? await readText(opts.instructionsFile, "instructions file", log) : undefined;
     const prompt = withInstructions(renderPrompt(template, vars), instructions, vars);
     const env = { ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt) };
-    say(`${task.id}: starting session ${attempt} (phase ${task.phase})`);
+    say(`${task.id}: starting session ${attempt} (phase ${task.phase}${model ? `, model ${model}` : ""})`);
     const finishedBefore = new Set((await tasks.listForAgent(agent)).filter(isFinished).map((t) => t.id));
     const sink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
     const startedAt = new Date();
     const wantsSystem = opts.command.some((a) => a.includes("{systemPrompt}"));
     const systemText = wantsSystem ? (opts.systemPromptFile ? await readText(opts.systemPromptFile, "system prompt file", log) : undefined) : undefined;
     const system = wantsSystem ? renderPrompt(systemText?.trim() || FALLBACK_SYSTEM_PROMPT, vars) : undefined;
-    const { code, result } = await runSession(buildArgv(opts.command, prompt, system), env, opts.cwd, sink, signal);
+    const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal);
     const endedAt = new Date();
     // a session may go on to the next task by itself (e.g. a follow-up): its time and tokens are counted for this task
     const alsoTasks = (await tasks.listForAgent(agent)).filter((t) => isFinished(t) && t.id !== task.id && !finishedBefore.has(t.id));
@@ -254,7 +275,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
         ...(result?.usage ? { usage: result.usage } : {}),
         ...(result?.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
         ...(result?.numTurns !== undefined ? { numTurns: result.numTurns } : {}),
-        ...(result?.model ? { model: result.model } : {}),
+        ...(result?.model || model ? { model: result?.model ?? model } : {}), // what the CLI reported, else what it was asked for
         ...(alsoTasks.length ? { alsoFinished: alsoTasks.map((t) => t.id) } : {}),
       })
       .catch((e: Error) => log(`cannot record the session: ${e.message}`));

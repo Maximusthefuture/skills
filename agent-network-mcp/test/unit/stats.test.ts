@@ -45,21 +45,22 @@ const task = (over: Partial<Task> = {}): Task => ({
   phaseHistory: [{ phase: "DISCUSS", at: at(0) }, { phase: "IMPLEMENT", at: at(2) }, { phase: "SYNC", at: at(10) }, { phase: "IMPLEMENT", at: at(12) }, { phase: "SYNC", at: at(15) }, { phase: "INTEGRATE", at: at(17) }, { phase: "DONE", at: at(20) }],
   ...over,
 });
-const session = (agentId: string, total: number, ms: number, costUsd?: number): SessionRecord => ({
+const session = (agentId: string, total: number, ms: number, costUsd?: number, model?: string): SessionRecord => ({
   id: "s", taskId: "task-001", agentId, attempt: 1, startedAt: at(0), endedAt: at(1), durationMs: ms, exitCode: 0,
   ...(total ? { usage: { input: total - 10, output: 10, cacheRead: 0, cacheCreation: 0, total } } : {}),
   ...(costUsd !== undefined ? { costUsd } : {}),
+  ...(model ? { model } : {}),
 });
 
 describe("taskStats", () => {
   it("sums time per phase across fix rounds and tokens per agent", () => {
-    const st = taskStats(task(), [session("a", 1000, 60_000, 0.01), session("a", 500, 30_000, 0.02), session("b", 0, 10_000)], [])!;
-    expect(st).toMatchObject({ elapsedMs: 20 * 60_000, finishedAt: at(20), sessions: 3, sessionsWithoutUsage: 1, costUsd: 0.03 });
+    const st = taskStats(task(), [session("a", 1000, 60_000, 0.01, "haiku"), session("a", 500, 30_000, 0.02, "sonnet"), session("a", 0, 1, undefined, "haiku"), session("b", 0, 10_000)], [])!;
+    expect(st).toMatchObject({ elapsedMs: 20 * 60_000, finishedAt: at(20), sessions: 4, sessionsWithoutUsage: 2, costUsd: 0.03 });
     expect(st.phases).toEqual([{ phase: "DISCUSS", ms: 2 * 60_000 }, { phase: "IMPLEMENT", ms: 11 * 60_000 }, { phase: "SYNC", ms: 4 * 60_000 }, { phase: "INTEGRATE", ms: 3 * 60_000 }]);
     expect(st.usage?.total).toBe(1500);
     expect(st.agents).toEqual([
-      { agentId: "a", sessions: 2, ms: 90_000, usage: { input: 1480, output: 20, cacheRead: 0, cacheCreation: 0, total: 1500 }, costUsd: expect.closeTo(0.03) },
-      { agentId: "b", sessions: 1, ms: 10_000, usage: null, costUsd: null },
+      { agentId: "a", models: ["haiku", "sonnet"], sessions: 3, ms: 90_001, usage: { input: 1480, output: 20, cacheRead: 0, cacheCreation: 0, total: 1500 }, costUsd: expect.closeTo(0.03) },
+      { agentId: "b", models: [], sessions: 1, ms: 10_000, usage: null, costUsd: null },
     ]);
   });
 
