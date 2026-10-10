@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { dirname, resolve } from "node:path";
 import { AppError, isAppError } from "../errors.js";
+import { assertChangeName, changePath, hasChange, listChanges, type Exec } from "../openspec.js";
 import { NetworkService } from "../service.js";
 import { FileStore } from "../storage/fileStore.js";
 import { PAGE_HTML } from "./page.js";
@@ -18,6 +20,8 @@ export interface UiOptions {
   host?: string;
   /** Control mode: the page may create tasks and start/stop these runners. Without it the UI is read-only. */
   runners?: RunnerPool;
+  /** Runs the openspec CLI for "archive" (tests replace it). */
+  openspecExec?: Exec;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -27,7 +31,8 @@ const json = (status: number, value: unknown): Reply => ({ status, type: "applic
 const text = (status: number, body: string): Reply => ({ status, type: "text/plain; charset=utf-8", body });
 
 /**
- * GET / (page), GET /api/state (JSON). With `runners` also: POST /api/tasks, POST /api/runners/<id>/start|stop|instructions|model, POST /api/questions/answer,
+ * GET / (page), GET /api/state (JSON), GET /api/openspec/changes. With `runners` also: POST /api/tasks,
+ * POST /api/runners/<id>/start|stop|instructions|model, POST /api/questions/answer, POST /api/openspec/archive,
  * GET /api/runners/<id>/log. Bound to loopback; foreign Host headers are refused, and state-changing requests must be
  * same-origin JSON (a page on another site cannot create tasks for the agents).
  */
@@ -36,6 +41,22 @@ export async function startUiServer(networkDir: string, opts: UiOptions = {}): P
   const host = opts.host ?? "127.0.0.1";
   const pool = opts.runners;
   const operator = pool ? await NetworkService.create(networkDir, { id: "operator", type: "ui" }) : undefined;
+  const projectDir = dirname(resolve(networkDir));
+
+  /** Agents in their own worktree see only committed work: the change must be in each runner's folder already. */
+  async function checkAgentFolders(change: string, agents: string[]): Promise<void> {
+    const missing: string[] = [];
+    for (const r of pool?.list() ?? []) {
+      if (!agents.includes(r.id) || !r.cwd || resolve(r.cwd) === projectDir) continue;
+      if (!(await hasChange(r.cwd, change))) missing.push(`${r.id} (${r.cwd})`);
+    }
+    if (missing.length) {
+      throw new AppError(
+        "OPENSPEC_NOT_FOUND",
+        `${changePath(change)} is not in the folder of ${missing.join(", ")}: commit the change and merge it into those agents' branches (an agent in its own worktree sees only committed work).`,
+      );
+    }
+  }
 
   const server = createServer((req, res) => {
     void handle(req).then(
@@ -59,6 +80,7 @@ export async function startUiServer(networkDir: string, opts: UiOptions = {}): P
 
     if (method === "GET") {
       if (path === "/") return { status: 200, type: "text/html; charset=utf-8", body: PAGE_HTML };
+      if (path === "/api/openspec/changes") return json(200, { projectDir, changes: await listChanges(projectDir) });
       if (path === "/api/state") return json(200, { ...(await buildUiState(fs)), control: pool ? { runners: await pool.details() } : null });
       const log = /^\/api\/runners\/([^/]+)\/log$/.exec(path);
       if (log && pool) return json(200, { id: log[1], lines: pool.log(decodeURIComponent(log[1]!)) });
@@ -74,16 +96,23 @@ export async function startUiServer(networkDir: string, opts: UiOptions = {}): P
     const body = await readJson(req);
 
     if (path === "/api/tasks") {
-      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown };
+      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown };
+      const agents = Array.isArray(b.agents) ? b.agents.map(String) : [];
+      const openspec = typeof b.openspec === "string" && b.openspec.trim() ? assertChangeName(b.openspec.trim()) : undefined;
+      if (openspec) await checkAgentFolders(openspec, agents);
       const task = await operator.createTaskAsOperator({
         title: String(b.title ?? ""),
         description: String(b.description ?? ""),
-        agents: Array.isArray(b.agents) ? b.agents.map(String) : [],
+        agents,
+        ...(openspec ? { openspec } : {}),
         ...(typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? { verifyCommand: b.verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
       });
       return json(201, { task });
+    }
+    if (path === "/api/openspec/archive") {
+      return json(200, await operator.archiveOpenspec({ taskId: String((body as { taskId?: unknown }).taskId ?? "") }, opts.openspecExec));
     }
     if (path === "/api/questions/answer") {
       const b = body as { taskId?: unknown; messageId?: unknown; answer?: unknown };

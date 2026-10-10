@@ -3,7 +3,8 @@ import { AppError } from "./errors.js";
 import { EventHub } from "./events/eventHub.js";
 import { readGitContext } from "./git.js";
 import { writeHandoffMarker } from "./handoff.js";
-import { anyDeclared, covers, findOverlaps, matches, normalizePath, ownersOf } from "./ownership.js";
+import { archiveChange, changePath, readChange, type Exec } from "./openspec.js";
+import { anyDeclared, covers, findOverlaps, matches, normalizePath, overlaps, ownersOf } from "./ownership.js";
 import { DEFAULT_MAX_FIX_ROUNDS, isHalt, PhaseManager, type Halt, type Transition } from "./phase/phaseManager.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore } from "./stores/agentStore.js";
@@ -64,11 +65,22 @@ export interface NewTaskInput {
   verifyCommand?: string;
   /** How many follow-up tasks the leads of this chain may create when they integrate. Default 0 (none). */
   maxFollowUps?: number;
+  /** The task implements this OpenSpec change of the project (openspec/changes/<name>/). */
+  openspec?: string;
 }
 
 /** An assignment that declares an empty file list: the agent changes nothing and reviews the others' work. */
 export function isReviewOnly(a: Assignment | undefined): boolean {
-  return !!a && Array.isArray(a.files) && a.files.length === 0;
+  // an OpenSpec lead without tasks of its own only holds the change folder (to tick tasks.md at INTEGRATE): still a reviewer
+  return !!a && Array.isArray(a.files) && a.files.every((f) => CHANGE_DIR.test(f)) && !a.tasks?.length;
+}
+
+const CHANGE_DIR = /^openspec\/changes\/[a-z0-9][a-z0-9-]*\/\*\*$/;
+
+/** The text an OpenSpec task starts with: where the WHAT is. The operator's own words follow it. */
+export function openspecDescription(change: string, operatorText: string): string {
+  const head = `Implement the OpenSpec change ${changePath(change)}/: proposal.md (why and what), design.md (how), specs/ (each scenario is a test), tasks.md (the numbered tasks to split between the agents).`;
+  return operatorText.trim() ? `${head}\n\n${operatorText.trim()}` : head;
 }
 
 /** NEEDS_FIX means "an ERROR must be fixed"; WARNING / INFO findings travel with PASS as notes. */
@@ -181,8 +193,14 @@ export class NetworkService {
     return this.createTaskCore("operator", input, false);
   }
 
+  /** The project the network belongs to (<project>/.agent-network): OpenSpec changes are read from there. */
+  get projectDir(): string {
+    return dirname(this.fs.root);
+  }
+
   private async createTaskCore(createdBy: string, input: NewTaskInput, asAgent: boolean): Promise<Task> {
-    const title = input.title.trim();
+    const change = input.openspec?.trim() ? await readChange(this.projectDir, input.openspec.trim()) : null;
+    const title = input.title.trim() || change?.name || "";
     if (!title) throw new AppError("INVALID_INPUT", "title must not be empty");
     const agents = [...new Set(input.agents.map((a) => assertAgentId(a)))];
     if (agents.length < 2) throw new AppError("INVALID_INPUT", "A task needs at least two distinct agents");
@@ -198,8 +216,9 @@ export class NetworkService {
     const maxFollowUps = input.maxFollowUps ?? 0;
     if (!Number.isInteger(maxFollowUps) || maxFollowUps < 0 || maxFollowUps > 20) throw new AppError("INVALID_INPUT", "maxFollowUps must be an integer 0..20");
 
-    const git = await readGitContext(dirname(this.fs.root));
-    const task = await this.tasks.create({ title, description: input.description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps });
+    const git = await readGitContext(this.projectDir);
+    const description = change ? openspecDescription(change.name, input.description) : input.description;
+    const task = await this.tasks.create({ title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps, ...(change ? { openspec: change.name } : {}) });
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
   }
@@ -252,10 +271,12 @@ export class NetworkService {
       const missing = task.agents.filter((a) => !ids.includes(a));
       if (missing.length) throw new AppError("INVALID_INPUT", `Every task agent needs an assignment; missing: ${missing.join(", ")}`);
 
-      const assignments = input.assignments.map((a) => ({
+      const normalized = input.assignments.map(({ tasks, ...a }) => ({
         ...a,
         ...(a.files ? { files: [...new Set(a.files.map((f) => normalizePath(assertRelativeFilePath(f))))] } : {}),
+        ...(task.openspec && tasks !== undefined ? { tasks } : {}), // task numbers mean something only for an OpenSpec task
       }));
+      const assignments = task.openspec ? await this.splitOpenspec(task, normalized) : normalized;
       const overlaps = findOverlaps(assignments);
       if (overlaps.length) {
         const first = overlaps[0]!;
@@ -284,6 +305,50 @@ export class NetworkService {
       await this.emit({ type: "AGREEMENT_UPDATED", taskId: task.id, sourceAgent: this.me, payload: { proposedBy: this.me, version: agreement.version } });
       return { agreement };
     });
+  }
+
+  /**
+   * OpenSpec task: every open task of tasks.md goes to exactly one agent (assignments[].tasks); the change folder belongs
+   * to the lead, who gets it in its files, so nobody else may change it (the lead ticks tasks.md when it integrates).
+   */
+  private async splitOpenspec(task: Task, assignments: Assignment[]): Promise<Assignment[]> {
+    const change = await readChange(this.projectDir, task.openspec!.change);
+    const dir = `${change.path}/**`;
+    const lead = this.phases.integrator(task);
+    const noTasks = assignments.filter((a) => !Array.isArray(a.tasks)).map((a) => a.agentId);
+    if (noTasks.length) {
+      throw new AppError(
+        "OPENSPEC_TASKS",
+        `This task implements the OpenSpec change ${change.path}: every assignment needs 'tasks', the tasks.md numbers that agent implements ([] for an agent that only reviews). Missing for: ${noTasks.join(", ")}.`,
+        { openTasks: change.tasks.filter((t) => !t.done).map((t) => t.id) },
+      );
+    }
+    const cleaned = assignments.map((a) => ({ ...a, tasks: [...new Set(a.tasks!.map((t) => String(t).trim()))] }));
+    const known = new Map(change.tasks.map((t) => [t.id, t]));
+    const owners = new Map<string, string[]>();
+    for (const a of cleaned) for (const id of a.tasks) owners.set(id, [...(owners.get(id) ?? []), a.agentId]);
+    const unknown = [...owners.keys()].filter((id) => !known.has(id));
+    const alreadyDone = [...owners.keys()].filter((id) => known.get(id)?.done);
+    const duplicated = [...owners].filter(([, who]) => who.length > 1).map(([id, agents]) => ({ id, agents }));
+    const missing = change.tasks.filter((t) => !t.done && !owners.has(t.id)).map((t) => t.id);
+    if (unknown.length || alreadyDone.length || duplicated.length || missing.length) {
+      const problems = [
+        missing.length ? `open tasks nobody took: ${missing.join(", ")}` : "",
+        duplicated.length ? `tasks given to several agents: ${duplicated.map((d) => `${d.id} (${d.agents.join(", ")})`).join(", ")}` : "",
+        unknown.length ? `numbers that are not in tasks.md: ${unknown.join(", ")}` : "",
+        alreadyDone.length ? `tasks already ticked [x]: ${alreadyDone.join(", ")}` : "",
+      ].filter(Boolean);
+      throw new AppError("OPENSPEC_TASKS", `Split ${change.path}/tasks.md so that every open task has exactly one agent: ${problems.join("; ")}.`, { missing, duplicated, unknown, alreadyDone });
+    }
+    const intruders = cleaned.filter((a) => a.agentId !== lead && (a.files ?? []).some((f) => overlaps(f, dir))).map((a) => a.agentId);
+    if (intruders.length) {
+      throw new AppError(
+        "OPENSPEC_DIR_LEAD_ONLY",
+        `${change.path}/ belongs to the lead (${lead}), who ticks tasks.md when it integrates: take it out of the files of ${intruders.join(", ")}. If the design must change, ask the operator: send_message({to: "operator", message}).`,
+        { lead, agents: intruders },
+      );
+    }
+    return cleaned.map((a) => (a.agentId === lead && !(a.files ?? []).some((f) => covers(f, dir)) ? { ...a, files: [...(a.files ?? []), dir] } : a));
   }
 
   async approveAgreement(input: { taskId: string; version?: number }): Promise<{ agreement: Agreement; phase: Task["phase"] }> {
@@ -475,7 +540,7 @@ export class NetworkService {
     });
   }
 
-  async completeImplementation(input: { taskId: string; summary: string; filesChanged?: string[]; commits?: string[] }): Promise<{ implementation: Implementation; phase: Task["phase"]; warnings?: string[] }> {
+  async completeImplementation(input: { taskId: string; summary: string; filesChanged?: string[]; commits?: string[]; tasksDone?: string[] }): Promise<{ implementation: Implementation; phase: Task["phase"]; warnings?: string[] }> {
     const filesChanged = [...new Set((input.filesChanged ?? []).map((f) => normalizePath(assertRelativeFilePath(f))))].sort();
     // commits are optional and recorded as given (they help the lead merge separate branches); nothing checks them
     const commits = (input.commits ?? []).map(assertCommit);
@@ -492,11 +557,65 @@ export class NetworkService {
           { openSubtasks: open },
         );
       }
+      const tasksDone = task.openspec ? await this.checkTasksDone(task, input.tasksDone) : undefined;
       const warnings = await this.checkOwnership(task.id, filesChanged);
-      const implementation: Implementation = { ...existing, status: "READY_FOR_SYNC", summary: input.summary, filesChanged, commits, completedAt: new Date().toISOString() };
+      const implementation: Implementation = {
+        ...existing,
+        status: "READY_FOR_SYNC",
+        summary: input.summary,
+        filesChanged,
+        commits,
+        completedAt: new Date().toISOString(),
+        ...(tasksDone ? { tasksDone } : {}),
+      };
       await this.implementations.save(implementation);
       await this.emit({ type: "IMPLEMENTATION_COMPLETED", taskId: task.id, sourceAgent: this.me, payload: { agentId: this.me, filesChanged, commits } });
       return { implementation, ...(warnings.length ? { warnings } : {}) };
+    });
+  }
+
+  /** OpenSpec task: which of its own tasks.md numbers the agent finished (required when it has any). */
+  private async checkTasksDone(task: Task, given: string[] | undefined): Promise<string[] | undefined> {
+    const mine = (await this.agreements.find(task.id))?.assignments.find((a) => a.agentId === this.me)?.tasks ?? [];
+    if (!mine.length) return undefined; // review only
+    if (!given) {
+      throw new AppError(
+        "INVALID_INPUT",
+        `Say which of your OpenSpec tasks are done: complete({result, filesChanged, tasksDone: [...]}). Your tasks: ${mine.join(", ")}; list only the ones you finished and say in result why the others are not.`,
+        { yourTasks: mine },
+      );
+    }
+    const ids = [...new Set(given.map((t) => String(t).trim()))];
+    const notYours = ids.filter((id) => !mine.includes(id));
+    if (notYours.length) throw new AppError("OPENSPEC_TASK_NOT_YOURS", `Not your tasks: ${notYours.join(", ")}. Your tasks: ${mine.join(", ")}.`, { notYours, yourTasks: mine });
+    return mine.filter((id) => ids.includes(id));
+  }
+
+  /**
+   * Operator, after DONE: `openspec archive` in the project folder, once its tasks.md is fully ticked there (the lead
+   * ticks the tasks in its own checkout; its branch has to be merged into the project folder first).
+   */
+  async archiveOpenspec(input: { taskId: string }, exec?: Exec): Promise<{ task: Task; output: string }> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator archives an OpenSpec change");
+    const taskId = assertTaskId(input.taskId);
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      if (!task.openspec) throw new AppError("INVALID_INPUT", `${taskId} has no OpenSpec change`);
+      if (task.openspec.archivedAt) throw new AppError("ALREADY_COMPLETED", `${changePath(task.openspec.change)} was archived at ${task.openspec.archivedAt}`);
+      if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `Archive the change once the task is DONE; ${taskId} is ${task.phase} (${task.status})`);
+      const change = await readChange(this.projectDir, task.openspec.change);
+      const open = change.tasks.filter((t) => !t.done).map((t) => t.id);
+      if (open.length) {
+        throw new AppError(
+          "OPENSPEC_NOT_READY",
+          `${change.tasks.length - open.length}/${change.tasks.length} tasks are ticked in ${this.projectDir}/${change.path}/tasks.md (open: ${open.join(", ")}). Merge the lead's branch into this folder first: the lead ticks the tasks when it integrates.`,
+          { open },
+        );
+      }
+      const output = await archiveChange(this.projectDir, change.name, exec);
+      const saved = await this.tasks.save({ ...task, openspec: { ...task.openspec, archivedAt: new Date().toISOString() } });
+      await this.emit({ type: "OPENSPEC_ARCHIVED", taskId, sourceAgent: OPERATOR, payload: { change: change.name } });
+      return { task: saved, output };
     });
   }
 

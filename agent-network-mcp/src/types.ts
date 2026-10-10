@@ -61,6 +61,11 @@ export interface Task {
   followUpsUsed?: number;
   /** When the task entered each phase (for the time statistics). Absent on tasks created before it existed. */
   phaseHistory?: { phase: Phase; at: string }[];
+  /**
+   * The task implements this OpenSpec change (openspec/changes/<change>/ in the project folder): the agents split its
+   * tasks.md by task number, report done numbers, the lead ticks them; the operator archives the change after DONE.
+   */
+  openspec?: { change: string; archivedAt?: string };
 }
 
 /** A follow-up task the lead asks for when it integrates with PASS. */
@@ -97,6 +102,8 @@ export interface Assignment {
   responsibility: string;
   /** Files (paths or globs) this agent owns, i.e. will change. Declarations of different agents must not overlap. */
   files?: string[];
+  /** OpenSpec task: the tasks.md numbers this agent implements. Every open task has exactly one agent. */
+  tasks?: string[];
 }
 
 /** The owner of some files lets another agent change them. */
@@ -133,6 +140,8 @@ export interface Implementation {
   filesChanged: string[];
   commits: string[];
   completedAt?: string;
+  /** OpenSpec task: the numbers of the agent's tasks it reports done. */
+  tasksDone?: string[];
 }
 
 export type SyncStatus = "PASS" | "NEEDS_FIX";
@@ -205,6 +214,7 @@ export const EVENT_TYPES = [
   "TASK_CANCELLED",
   "TASK_BLOCKED",
   "TASK_UNBLOCKED",
+  "OPENSPEC_ARCHIVED",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

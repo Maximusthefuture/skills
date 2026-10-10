@@ -16,6 +16,7 @@ export interface NewTask {
   parentTaskId?: string;
   rootTaskId?: string;
   baseCommit?: string;
+  openspec?: string;
 }
 
 export class TaskStore {
@@ -47,6 +48,7 @@ export class TaskStore {
       ...(input.parentTaskId ? { parentTaskId: input.parentTaskId } : {}),
       ...(input.rootTaskId ? { rootTaskId: input.rootTaskId } : {}),
       ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
+      ...(input.openspec ? { openspec: { change: input.openspec } } : {}),
     };
     await this.fs.writeJson([...this.taskDir(id), "task.json"], task);
     return task;

@@ -1,3 +1,6 @@
+import { dirname } from "node:path";
+import { isAppError } from "../errors.js";
+import { changePath, readChange } from "../openspec.js";
 import { defaultIsProcessAlive } from "../stores/agentStore.js";
 import { AgentStore } from "../stores/agentStore.js";
 import { GrantStore } from "../stores/grantStore.js";
@@ -11,7 +14,7 @@ import { SubtaskStore } from "../stores/subtaskStore.js";
 import { SyncStore } from "../stores/syncStore.js";
 import { TaskStore } from "../stores/taskStore.js";
 import type { FileStore } from "../storage/fileStore.js";
-import type { Agent, Message, NetworkEvent, Task } from "../types.js";
+import type { Agent, Agreement, Implementation, Message, NetworkEvent, Task } from "../types.js";
 
 const TAIL = 30;
 const phases = new PhaseManager();
@@ -56,6 +59,7 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         subtasks: Object.fromEntries((await Promise.all(task.agents.map((a) => subtasks.get(task.id, a)))).map((l) => [l.agentId, l.items])),
         followUps: tasks.filter((t) => t.parentTaskId === task.id).map((t) => t.id),
         questions: operatorQuestions(await messageStore.list(task.id)),
+        openspec: task.openspec ? await openspecView(dirname(fs.root), task, agreement, impls) : null,
       };
     }),
   );
@@ -78,6 +82,32 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
     notStarted: missing,
     openQuestions: taskViews.flatMap((t) => t.questions.filter((q) => !q.answered).map((q) => ({ taskId: t.id, taskTitle: t.title, ...q }))),
     tasks: taskViews.sort((a, b) => Number(a.status !== "ACTIVE") - Number(b.status === "COMPLETED") || a.id.localeCompare(b.id)),
+  };
+}
+
+/**
+ * OpenSpec task: the change's progress in the project folder (what "archive" needs: every task ticked there) and who
+ * took which tasks.md numbers and reported which done.
+ */
+async function openspecView(projectDir: string, task: Task, agreement: Agreement | null, impls: Implementation[]) {
+  const { change, archivedAt } = task.openspec!;
+  let progress: { done: number; total: number } | null = null;
+  let error: string | null = null;
+  if (!archivedAt) {
+    try {
+      const tasks = (await readChange(projectDir, change)).tasks;
+      progress = { done: tasks.filter((t) => t.done).length, total: tasks.length };
+    } catch (e) {
+      error = isAppError(e) ? e.message : String(e);
+    }
+  }
+  return {
+    change,
+    path: changePath(change),
+    archivedAt: archivedAt ?? null,
+    progress,
+    error,
+    assigned: (agreement?.assignments ?? []).filter((a) => a.tasks).map((a) => ({ agentId: a.agentId, tasks: a.tasks!, done: impls.find((i) => i.agentId === a.agentId)?.tasksDone ?? [] })),
   };
 }
 

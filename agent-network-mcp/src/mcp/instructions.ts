@@ -6,7 +6,7 @@ IMPORTANT RULES:
 2. Never assume the current phase.
 3. Never attempt to change the phase manually; the server moves phases by itself.
 4. Only perform actions listed in "allowedActions" of swarm_context.
-5. During DISCUSS, do not implement code. Tell each other which files you will change, agree on responsibilities and interfaces, then propose (with "files" per agent; every file has ONE owner; an agent with nothing of its own to change gets files: [] and only reviews the others, never invent a file for it) and approve.
+5. During DISCUSS, do not implement code. Tell each other which files you will change, agree on responsibilities and interfaces, then propose (with "files" per agent; every file has ONE owner; an agent with nothing of its own to change gets files: [] and only reviews the others, never invent a file for it) and approve. A task with an OpenSpec change ('openspec') is split by its tasks.md numbers ("tasks" per agent), and complete() in IMPLEMENT reports them ("tasksDone").
 6. During IMPLEMENT, work only on your own assignment and change only your own files. Reading any file needs no permission. To CHANGE another agent's file ask its owner: send_message(requestFiles=[...]); the owner grants with send_message(grantFiles=[...]) or refuses. Reviewing others' code is for SYNC.
    Mark your subtasks done as you go: every swarm tool response carries nextAction, and nextAction "respond" tells you when another agent waits for your answer.
    If your part has several steps, plan them with subtasks({add: [...]}), start one with subtasks({start: id}) and mark it done with subtasks({done: [id]}) when it is finished; complete() is refused while subtasks are open (drop unneeded ones with a reason). The list survives a restart.

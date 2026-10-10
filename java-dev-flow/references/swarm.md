@@ -60,19 +60,19 @@ Bring everyone's work together (merge their branches when they use worktrees), r
 
 Three layers: OpenSpec owns **what** (requirements, scenarios, design, tasks), the swarm owns **when and who**, this orchestrator owns **how**. `references/openspec.md` stays valid except for the points below.
 
-**Before the swarm.** The change is created and reviewed by a human first: `/opsx:propose` → `/java-spec-review <name>` → `create_task` whose `description` names the change path `openspec/changes/<name>/`. A swarm on a change nobody reviewed is the same as a swarm on vague scope: do not propose, ask the user. Worth it for L; S and M are cheaper with one agent and `/opsx:apply`.
+**Before the swarm.** The change is created and reviewed by a human first: `/opsx:propose` → `/java-spec-review <name>` → commit → a task on that change: the operator picks it in the UI task form or runs `task create --openspec <name>`. The task then carries `openspec` (shown in `swarm_context`); a change only named in the `description` gets none of the checks below. A swarm on a change nobody reviewed is the same as a swarm on vague scope: do not propose, ask the user. Worth it for L; S and M are cheaper with one agent and `/opsx:apply`.
 
 **DISCUSS splits, it does not redesign.**
 - `decisions`: a link to `design.md` plus only what the split adds.
 - `interfaces`: the contracts from `design.md` and the specs the agents share, copied exactly.
-- `assignments[].responsibility`: task numbers from `tasks.md` ("groups 2 and 4, tasks 6.1–6.3").
-- `assignments[].files`: the code and tests of those tasks. **`openspec/changes/<name>/**` belongs to the lead.**
+- `assignments[].tasks`: the `tasks.md` numbers of each agent (`["2.1", "2.2", "6.1"]`; `[]` = review only). The server refuses a split that leaves an open task without exactly one agent. `responsibility` says the same in words ("groups 2 and 4").
+- `assignments[].files`: the code and tests of those tasks. **`openspec/changes/<name>/**` belongs to the lead** (the server adds it to the lead's files and refuses it in anyone else's).
 - Groups in `tasks.md` follow the build order (schema → entity → service → API). Handing them out as they are serializes the agents. Split by vertical slices whose contract is fixed in `design.md`. If that is impossible, say so in DISCUSS: the swarm will not be faster than one agent.
 - The design must change → only the lead runs `/opsx:update`, before `propose`; the others send their reasons with `send_message`.
 
 **IMPLEMENT.**
 - Do **not** run the `/opsx:apply` loop or the `openspec-apply-change` skill: it picks the next unticked task, which may be another agent's. Do exactly the task numbers of your assignment, each through `java-tdd` (scenario = behavior = test, as in `openspec.md`).
-- Do not edit anything in `openspec/changes/<name>/`: no checkboxes, no summaries, no findings. Put the done task numbers, the scenario → test mapping and divergences from `design.md` in `complete({result})`.
+- Do not edit anything in `openspec/changes/<name>/`: no checkboxes, no summaries, no findings. Report the done task numbers in `tasksDone` and put the scenario → test mapping and divergences from `design.md` in `complete({result})`.
 - The implementation diverges from the design or a spec: stop, `send_message` to the lead. Never widen the scope silently.
 
 **The "Verification" group of `tasks.md`** is spread over the phases:
@@ -83,7 +83,7 @@ Three layers: OpenSpec owns **what** (requirements, scenarios, design, tasks), t
 | `java-code-reviewer` | replaced by the SYNC review; the reviewer also gets the change path |
 | full run, `/opsx:verify` (if available) | the lead, INTEGRATE |
 
-**INTEGRATE (lead).** After the merge and a green `verifyCommand`, the lead ticks `[x]` in `tasks.md` from the agents' `result` texts and its own check, runs `/opsx:verify` if the profile has it, and commits that as part of the merge. `/opsx:archive` only after DONE and with the user's permission.
+**INTEGRATE (lead).** After the merge and a green `verifyCommand`, the lead ticks `[x]` in `tasks.md` from the agents' `tasksDone` (`openspec.tasks` shows who reported what) and its own check, runs `/opsx:verify` if the profile has it, and commits that as part of the merge. Archiving is the operator's, after DONE: the "Archive change" button on the task card (it runs `openspec archive <name> -y` once the project folder has every task ticked, i.e. after the lead's branch is merged), or `/opsx:archive` with the user's permission.
 
 ## Changed rules in swarm mode
 

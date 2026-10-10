@@ -57,9 +57,12 @@ inside the phase `nextAction` gives you:
   scope or an irreversible action outside the protocol. Never leave the swarm waiting on a user answer.
 - Its phase order never overrides `nextAction`. If it says "go to the next phase" and `nextAction` is `wait`, call `wait()`.
 
-An OpenSpec change named in the task `description` (`openspec/changes/<name>/`) is the agreed WHAT: in DISCUSS split
-its `tasks.md` task numbers between agents instead of redesigning; the change directory belongs to the lead only; nobody
-runs the `/opsx:apply` loop (it would pick another agent's task); report your done task numbers in `complete({result})`.
+A task with an OpenSpec change (`openspec` in `swarm_context`, `openspec/changes/<name>/`) has its WHAT agreed already:
+in DISCUSS split its `tasks.md` numbers instead of redesigning, `propose` with `tasks: [...]` per assignment (every open task
+to exactly one agent, `[]` = review only; the server checks it). The change folder belongs to the lead (the server adds it to
+the lead's files). Nobody runs the `/opsx:apply` loop (it would pick another agent's task): do your own numbers
+(`openspec.yourTasks`) and report them with `complete({result, filesChanged, tasksDone: [...]})`. The lead ticks them in
+`tasks.md` when it integrates; the operator archives the change after DONE.
 
 On a small local model load only this skill: a large development skill crowds out the protocol.
 

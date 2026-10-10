@@ -21,6 +21,9 @@ nextAction:
   each with the `files` (paths or globs like `src/main/**`) that agent will change; an agent with nothing of its own to change gets
   `files: []` (it only reviews; never invent a file for it). Every file has exactly ONE owner:
   overlapping claims are refused (`FILE_OVERLAP`). Do not implement anything yet.
+  With an OpenSpec change (`openspec` in `swarm_context`) every assignment also gets `tasks`: the `tasks.md` numbers that
+  agent implements; every open task goes to exactly one agent, the change folder stays with the lead. In IMPLEMENT report
+  your finished numbers with `complete({result, filesChanged, tasksDone: [...]})`; the lead ticks them in `tasks.md` when it integrates.
 - `approve` (DISCUSS): read `agreement` (assignments and each agent's files); `complete()` approves it. If you disagree, `send_message` or `propose` a replacement.
 - `implement` (IMPLEMENT): work ONLY on your own assignment and change only your own files (`ownership.yourFiles`) or files granted to you. Reviewing the other agents' code is for SYNC, not now. Report blockers with `send_message`. When finished
   call `complete({result, filesChanged})`. Working on your own git branch (a separate worktree)? Commit your files first and pass

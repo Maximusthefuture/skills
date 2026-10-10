@@ -37,6 +37,7 @@ textarea{min-height:90px;resize:vertical}.row{display:grid;grid-template-columns
 button{font:inherit;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:7px;padding:6px 14px;cursor:pointer}
 button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:.5;cursor:default}
 .note{font-size:13px}.note.err{color:var(--bad)}.note.ok{color:var(--ok)}
+.openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg);border-radius:4px}pre.log.err{color:var(--bad)}
 pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px;margin:6px 0 0;font:11px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
 .stats{display:flex;flex-wrap:wrap;gap:4px 12px;margin:6px 0;font-size:12px;color:var(--muted)}.stats b{color:var(--text);font-weight:600}
 .q{border-left:3px solid var(--warn)}.q .who{font-weight:600}.q textarea{min-height:60px;margin-top:8px}.q .row2{display:flex;gap:8px;align-items:center;margin-top:6px}
@@ -52,8 +53,9 @@ pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var
 <section id="control" hidden>
 <h2>Новая задача</h2>
 <form class="card" id="newtask">
-<label>Название<input name="title" required maxlength="200" placeholder="Отмена заказа: POST /orders/{id}/cancel"></label>
-<label>Описание — конкретно: что сделать, где, ожидаемое поведение, кто что делает<textarea name="description" required placeholder="Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты."></textarea></label>
+<label>OpenSpec change (необязательно): агенты делят его tasks.md по номерам задач<select name="openspec" id="openspec"><option value="">— без OpenSpec —</option></select></label>
+<label>Название<input name="title" maxlength="200" placeholder="Отмена заказа: POST /orders/{id}/cancel"></label>
+<label>Описание — конкретно: что сделать, где, ожидаемое поведение, кто что делает (с OpenSpec change — необязательно)<textarea name="description" placeholder="Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты."></textarea></label>
 <div class="row">
 <label>Lead (интегрирует)<select name="lead" id="lead"></select></label>
 <label>Остальные агенты<div class="checks" id="others"></div></label>
@@ -93,11 +95,29 @@ function renderAgents(s){
   for(const id of s.notStarted){const c=el("div","card agent");const top=el("div","top");top.append(el("span","dot"),el("span","",id),badge("не запущен"));c.append(top,el("div","muted","назначен на задачу, но ещё не зарегистрировался"));box.append(c)}
 }
 
+const archiveState=new Map();
+function renderOpenspec(t){
+  const o=t.openspec;const box=el("div","openspec");
+  const state=o.archivedAt?"в архиве с "+time(o.archivedAt):o.progress?"в папке проекта отмечено "+o.progress.done+"/"+o.progress.total:o.error?"не читается: "+o.error:"";
+  const line=el("div","");line.append(el("b","","OpenSpec: "),el("span","mono",o.path),el("span","muted"," · "+state));box.append(line);
+  o.assigned.forEach(a=>box.append(el("div","muted",a.agentId+": "+(a.tasks.length?a.tasks.join(", "):"только ревью")+(a.done.length?" · сделано: "+a.done.join(", "):""))));
+  if(controlMode&&t.status==="COMPLETED"&&!o.archivedAt){
+    const ready=o.progress&&o.progress.done===o.progress.total;const st=archiveState.get(t.id)||{};
+    const row=el("div","checks");const b=el("button","ghost",st.pending?"архивирую…":"Архивировать change");b.type="button";b.disabled=!ready||!!st.pending;
+    b.onclick=async()=>{if(!confirm("openspec archive "+o.change+" в папке проекта? Change переедет в openspec/changes/archive, его спеки — в openspec/specs."))return;
+      archiveState.set(t.id,{pending:true});await tick();
+      try{const r=await post("/api/openspec/archive",{taskId:t.id});archiveState.set(t.id,{output:r.output||"готово"})}catch(e){archiveState.set(t.id,{error:e.message})}await tick()};
+    row.append(b);if(!ready)row.append(el("span","note","сначала влейте ветку lead'а в папку проекта: lead отмечает задачи у себя"));box.append(row);
+  }
+  const st=archiveState.get(t.id);if(st&&(st.output||st.error)){const pre=el("pre","log"+(st.error?" err":""),st.error||st.output);box.append(pre)}
+  return box;
+}
 function renderTask(t){
   const c=el("div","card task"+(t.status!=="ACTIVE"?" done":""));
   const head=el("div");head.append(el("h3","",t.id+" · "+t.title+(t.status==="CANCELLED"?" (отменена)":"")));head.append(el("div","muted",t.description));
   const chain=[];if(t.parentTaskId)chain.push("follow-up от "+t.parentTaskId);if(t.followUps&&t.followUps.length)chain.push("follow-up задачи: "+t.followUps.join(", "));if(t.followUpBudget)chain.push("бюджет follow-up: "+t.followUpBudget.used+"/"+t.followUpBudget.max);
   if(chain.length)head.append(el("div","muted",chain.join(" · ")));
+  if(t.openspec)head.append(renderOpenspec(t));
   head.append(renderStats(t));
   if(t.status==="BLOCKED"){const b=el("div","");b.append(badge("BLOCKED")," "+(t.blockedReason||"")+" — нужен оператор: task unblock / task cancel");head.append(b)}
   c.append(head);
@@ -192,12 +212,18 @@ function makeRunnerCard(id){
 async function loadLog(id,c){try{const r=await fetch("/api/runners/"+encodeURIComponent(id)+"/log",{cache:"no-store"});const j=await r.json();
   const atEnd=c.pre.scrollTop+c.pre.clientHeight>=c.pre.scrollHeight-8;c.pre.textContent=j.lines.length?j.lines.join("\n"):"(пусто)";if(atEnd)c.pre.scrollTop=c.pre.scrollHeight}catch(e){}}
 $("lead").addEventListener("change",()=>renderOthers(knownIds.split(",")));
+async function loadChanges(){try{const r=await fetch("/api/openspec/changes",{cache:"no-store"});const j=await r.json();const sel=$("openspec");const keep=sel.value;
+  sel.replaceChildren(new Option("— без OpenSpec —",""),...j.changes.map(c=>{const o=new Option(c.name+(c.error?" (не читается: "+c.error+")":" ("+c.done+"/"+c.total+" задач отмечено)"),c.name);o.disabled=!!c.error;return o}));
+  if([...sel.options].some(o=>o.value===keep))sel.value=keep;sel.title=j.changes.length?"":"в "+j.projectDir+"/openspec/changes нет change'ей"}catch(e){}}
+$("openspec").addEventListener("focus",loadChanges);
+$("openspec").addEventListener("change",ev=>{const t=$("newtask").elements.namedItem("title");t.placeholder=ev.target.value||"Отмена заказа: POST /orders/{id}/cancel"});
 $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev.target;const note=$("formnote");const btn=f.querySelector("button");
   const others=[...$("others").querySelectorAll("input:checked")].map(i=>i.value);
-  btn.disabled=true;note.className="note";note.textContent="создаю…";
   const v=n=>f.elements.namedItem(n);
-  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value});
-    note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";await tick()}
+  if(!v("openspec").value&&(!v("title").value.trim()||!v("description").value.trim())){note.className="note err";note.textContent="Нужны название и описание (или выберите OpenSpec change).";return}
+  btn.disabled=true;note.className="note";note.textContent="создаю…";
+  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,openspec:v("openspec").value});
+    note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("openspec").value="";await tick()}
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
 
 const open=new Set();
@@ -234,7 +260,9 @@ function renderQuestions(s){
     qCards.set(key,c);box.append(c)}
   for(const [key,c] of qCards)if(!keep.has(key)){c.remove();qCards.delete(key)}
 }
+let controlMode=false;
 function render(s){
+  controlMode=!!s.control;
   $("dir").textContent=s.networkDir;$("upd").textContent="обновлено "+time(s.generatedAt);
   renderQuestions(s);
   renderControl(s);
@@ -246,7 +274,7 @@ function render(s){
   for(const t of s.tasks){const c=renderTask(t);c.dataset.id=t.id;c.querySelectorAll("details").forEach(d=>{if(open.has(t.id+"|"+d.firstChild.textContent.split(" ")[0]))d.open=true});box.append(c)}
 }
 async function tick(){try{const r=await fetch("/api/state",{cache:"no-store"});render(await r.json())}catch(e){$("upd").textContent="нет связи с сервером"}}
-tick();setInterval(tick,2000);
+tick();setInterval(tick,2000);loadChanges();
 </script>
 </body>
 </html>`;

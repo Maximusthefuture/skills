@@ -15,7 +15,7 @@ import { startUiServer } from "./ui/server.js";
 
 const USAGE = `Usage:
   agent-network-mcp task create --title <t> --agents <a,b[,c]> [--description <d>] [--verify <build/test command>]
-                                [--max-fix-rounds 3] [--follow-ups 0] [--network-dir <abs path>]
+                                [--max-fix-rounds 3] [--follow-ups 0] [--openspec <change>] [--network-dir <abs path>]
   agent-network-mcp task list [--network-dir <abs path>]
   agent-network-mcp task stats [--id <task-001>] [--network-dir <abs path>]   time per phase, sessions, tokens, cost
   agent-network-mcp task cancel --id <task-001> [--reason <text>] [--network-dir <abs path>]
@@ -36,7 +36,9 @@ the agents' swarm_context / wait. The first agent of --agents is the lead (propo
 Commits are optional (agents may report them; nothing checks them); --verify is the command the lead runs on the
 merged result. After --max-fix-rounds failed reviews the task is BLOCKED until "task unblock" or "task cancel".
 --follow-ups N lets the leads of this task and of the tasks it spawns create up to N follow-up tasks in total when they
-integrate with PASS (work that is left); the agents pick them up after the task is DONE. Default 0: no follow-ups.`;
+integrate with PASS (work that is left); the agents pick them up after the task is DONE. Default 0: no follow-ups.
+--openspec <change> makes the task implement openspec/changes/<change>/ of the project (the folder that holds the
+network): the agents split its tasks.md by task number, the lead ticks them; --title and --description become optional.`;
 
 /** Operator commands run outside any LLM. Returns the process exit code, or -1 when a long-running server was started. */
 export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string = process.cwd()): Promise<number> {
@@ -61,6 +63,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       "max-fix-rounds": { type: "string" },
       "no-commits": { type: "boolean" }, // obsolete: commits are never required; accepted so old scripts keep working
       "follow-ups": { type: "string" },
+      openspec: { type: "string" },
       rounds: { type: "string" },
       "network-dir": { type: "string" },
     },
@@ -118,13 +121,14 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       );
       return 0;
     }
-    if (!values.title || !values.agents) {
-      out("error: --title and --agents are required");
+    if ((!values.title && !values.openspec) || !values.agents) {
+      out("error: --agents and --title (or --openspec) are required");
       return 2;
     }
     const task = await service.createTaskAsOperator({
-      title: values.title,
-      description: values.description ?? values.title,
+      title: values.title ?? "",
+      description: values.description ?? (values.openspec ? "" : values.title!),
+      ...(values.openspec ? { openspec: values.openspec } : {}),
       agents: values.agents.split(",").map((a) => a.trim()).filter(Boolean),
       ...(values["max-fix-rounds"] !== undefined ? { maxFixRounds: Number(values["max-fix-rounds"]) } : {}),
       ...(values.verify ? { verifyCommand: values.verify } : {}),

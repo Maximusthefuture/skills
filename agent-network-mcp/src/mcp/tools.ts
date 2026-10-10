@@ -65,6 +65,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
             agentId: z.string().describe("Agent id, e.g. 'backend'"),
             responsibility: z.string().describe("What this agent implements"),
             files: z.array(z.string()).describe("Files or globs this agent will change, e.g. ['src/main/java/A.java', 'src/test/**']. Must not overlap with other agents. [] for an agent that changes nothing and only reviews the others' work (never invent a file for it)"),
+            tasks: z.array(z.string()).optional().describe("Only when the task has an OpenSpec change ('openspec' in swarm_context): the tasks.md numbers this agent implements, e.g. ['1.1', '1.2']. Every open task goes to exactly one agent; [] = review only"),
           }),
         )
         .describe("One entry for EVERY agent of the task, including yourself"),
@@ -86,11 +87,12 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   );
   tool(
     "complete",
-    "Finish your step; meaning depends on the phase. DISCUSS: no arguments, approves the current agreement. IMPLEMENT: {result, filesChanged?, commits?} marks your part ready (commits are optional). SYNC: {status: PASS|NEEDS_FIX, findings?} submits your review (NEEDS_FIX needs an ERROR finding naming the agent to fix in relatedAgent; WARNING/INFO go with PASS). INTEGRATE (lead): {status, result, commits?, findings?, followUps?} after bringing everything together and running the build and tests; with PASS, followUps (when the task allows them) creates new tasks for work that is left.",
+    "Finish your step; meaning depends on the phase. DISCUSS: no arguments, approves the current agreement. IMPLEMENT: {result, filesChanged?, commits?, tasksDone?} marks your part ready (commits are optional; tasksDone for an OpenSpec task). SYNC: {status: PASS|NEEDS_FIX, findings?} submits your review (NEEDS_FIX needs an ERROR finding naming the agent to fix in relatedAgent; WARNING/INFO go with PASS). INTEGRATE (lead): {status, result, commits?, findings?, followUps?} after bringing everything together and running the build and tests; with PASS, followUps (when the task allows them) creates new tasks for work that is left.",
     {
       result: z.string().optional().describe("IMPLEMENT: short summary of what you implemented. INTEGRATE: what was merged, where, build/test outcome"),
       filesChanged: z.array(z.string()).optional().describe("IMPLEMENT only: project-relative paths you changed"),
       commits: z.array(z.string()).optional().describe("Optional. IMPLEMENT: hashes of your commits, if you committed. INTEGRATE: HEAD of the merged result, if you merged with git"),
+      tasksDone: z.array(z.string()).optional().describe("IMPLEMENT, OpenSpec task only: the numbers of your tasks.md tasks you finished"),
       status: z.string().optional().describe("SYNC / INTEGRATE: PASS or NEEDS_FIX"),
       findings: z.array(finding).optional().describe("SYNC / INTEGRATE, required for NEEDS_FIX (at least one ERROR)"),
       followUps: z.array(followUp).optional().describe("INTEGRATE with PASS, lead only, when swarm_context shows followUps.remaining > 0: new tasks for work that is left; the agents start them after this task is DONE"),
