@@ -11,7 +11,7 @@ import { isValidModel, runRunner, usesModel } from "./runner.js";
 import { collectStats } from "./stats.js";
 import { FileStore } from "./storage/fileStore.js";
 import { NetworkService } from "./service.js";
-import { loadRunnersConfig, RunnerPool, watchPrices, type RunnersConfig } from "./ui/runners.js";
+import { loadRunnersConfig, projectRunnersConfig, RunnerPool, TEMPLATES, watchPrices, type RunnersConfig, type TemplateName } from "./ui/runners.js";
 import { startUiServer } from "./ui/server.js";
 import { Journal, type JournalEntry } from "./supervisor/journal.js";
 import { formatSessionLog, listSessionLogs, readSessionLog } from "./supervisor/sessionLog.js";
@@ -34,7 +34,9 @@ const USAGE = `Usage:
   agent-network-mcp supervisor sessions [--json] [--network-dir <abs path>]   its sessions: when, incidents, outcome, cost
   agent-network-mcp supervisor session <n|latest> [--full] [--json] [--network-dir <abs path>]
                                 one session in full: prompt, every tool call and result, its text (--full: arguments and results too)
-  agent-network-mcp ui [--port 4777] [--network-dir <abs path>] [--runners runners.json ...]
+  agent-network-mcp ui [--template qwen|claude] [--port 4777]   inside a project: its own runners in <project>/.agent-network/runners.json
+                                (copied from the template the first time, Qwen by default)
+  agent-network-mcp ui [--port 4777] [--network-dir <abs path>] [--runners runners.json ...] [--read-only]
                         web page on http://127.0.0.1:<port>; read-only, or with --runners: a task form and the
                         agents' runners (start/stop, log tail), started together with the page; repeat --runners
                         for several projects on one page (each config names its "networkDir")
@@ -174,12 +176,30 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
 }
 
 async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string): Promise<number> {
-  const { values } = parseArgs({ args, options: { port: { type: "string" }, "network-dir": { type: "string" }, runners: { type: "string", multiple: true } } });
+  const { values } = parseArgs({
+    args,
+    options: { port: { type: "string" }, "network-dir": { type: "string" }, runners: { type: "string", multiple: true }, template: { type: "string" }, "read-only": { type: "boolean" } },
+  });
   const configs: RunnersConfig[] = [];
+  const template = values.template ?? "qwen";
+  if (!Object.hasOwn(TEMPLATES, template)) {
+    out(`error: --template is ${Object.keys(TEMPLATES).join(" or ")}`);
+    return 2;
+  }
   try {
+    let files = values.runners ?? [];
+    // plain `ui` inside a project: the project's own config, copied from the template the first time
+    if (!files.length && !values["read-only"] && !values["network-dir"] && !env.NETWORK_DIR) {
+      const root = await gitRoot(cwd);
+      if (root) {
+        const own = await projectRunnersConfig(root, template as TemplateName);
+        out(own.created ? `config: ${own.path} (new, from the ${template} template: edit models and build commands there)` : `config: ${own.path}${values.template ? ` (exists; --template ${template} not applied)` : ""}`);
+        files = [own.path];
+      }
+    }
     // one config: the project is the git repository ui is started in, unless the config names it ("project")
-    const here = (values.runners ?? []).length === 1 ? await gitRoot(cwd) : null;
-    for (const file of values.runners ?? []) configs.push(await loadRunnersConfig(file, here ? { projectDir: here } : {}));
+    const here = files.length === 1 ? await gitRoot(cwd) : null;
+    for (const file of files) configs.push(await loadRunnersConfig(file, here ? { projectDir: here } : {}));
     // agents that work in their own worktree get it now, before their runners start
     for (const config of configs) for (const line of await ensureWorktrees(config.agents)) out(`worktree created: ${line}`);
   } catch (e) {

@@ -1,4 +1,4 @@
-import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureWorktrees, type AgentWorktree } from "../worktrees.js";
@@ -112,6 +112,35 @@ export interface RunnersConfig {
   project?: string;
   /** Cost limit (USD) of tasks created on the page or by a schedule when they set none; absent = no limit. */
   maxTaskCostUsd?: number;
+}
+
+/** The shipped runners configs a project's own config is copied from (`ui --template`). */
+export const TEMPLATES = { qwen: "runners.qwen.example.json", claude: "runners.claude.example.json" } as const;
+export type TemplateName = keyof typeof TEMPLATES;
+
+/**
+ * A project's own runners config: <project>/.agent-network/runners.json (out of git with the network). Missing, it is
+ * copied from a shipped template; file references relative to the template ("instructions/backend.md") are pointed at
+ * the package ({agentNetworkMcp}/examples/runner/...), so the copy works where it lies. The page writes its changes
+ * (models, instructions, schedules on/off, supervisor settings) into this copy, never into the shipped example.
+ */
+export async function projectRunnersConfig(project: string, template: TemplateName = "qwen"): Promise<{ path: string; created: boolean }> {
+  const path = join(project, ".agent-network", "runners.json");
+  if (await stat(path).then(() => true, () => false)) return { path, created: false };
+  const examples = join(PACKAGE_DIR, "examples", "runner");
+  const raw = JSON.parse(await readFile(join(examples, TEMPLATES[template]), "utf8")) as Record<string, unknown>;
+  const point = (v: unknown, key: string): unknown => {
+    if (Array.isArray(v)) return v.map((x) => point(x, ""));
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, point(x, k)]));
+    if (typeof v === "string" && /File$/.test(key) && !isAbsolute(v) && !v.startsWith("{agentNetworkMcp}")) return `{agentNetworkMcp}/examples/runner/${v}`;
+    return v;
+  };
+  const copy = point(raw, "") as Record<string, unknown>;
+  const note = `This project's own config, copied from examples/runner/${TEMPLATES[template]} on ${new Date().toISOString().slice(0, 10)}: edit models, build commands, limits and schedules here (the page writes its changes here too). Delete it to start over from the template.`;
+  copy._comment = [note, ...(Array.isArray(copy._comment) ? copy._comment : [])];
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(copy, null, 2) + "\n", { flag: "wx" });
+  return { path, created: true };
 }
 
 type RawAgent = Partial<RunnerAgentConfig>;

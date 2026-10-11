@@ -50,24 +50,21 @@ npm run build          # dist/: его запускают и runner'ы, и MCP-�
 npm link
 ```
 
-**2. Запустите страницу из папки проекта** (git-репозиторий хотя бы с одним коммитом) с готовым примером — пути
-прописывать не нужно:
+**2. Запустите в папке проекта** (git-репозиторий хотя бы с одним коммитом) — одна команда:
 
 ```bash
 cd ~/myprojects/test
-agent-network-mcp ui --runners /abs/path/agent-network-mcp/examples/runner/runners.claude.example.json   # или runners.qwen.example.json
+agent-network-mcp ui                      # Qwen Code; для Claude Code: agent-network-mcp ui --template claude
 ```
 
-(без `npm link` — `node /abs/path/agent-network-mcp/dist/index.js ui --runners …`). Проект — папка запуска, сеть —
-`<проект>/.agent-network`, worktree агентов `../test-backend` и т.д. создаются сами, путь к agent-network-mcp
-подставляется вместо `{agentNetworkMcp}`. Подробности и несколько проектов —
-[Запуск в своём проекте одной командой](#запуск-в-своём-проекте-одной-командой).
+(без `npm link` — `node /abs/path/agent-network-mcp/dist/index.js ui`). В первый раз в проекте появляется **свой
+конфиг** `<проект>/.agent-network/runners.json`, скопированный из шаблона (`--template qwen` по умолчанию или
+`claude`). Папка `.agent-network` исключена из git. Дальше `ui` берёт этот файл, а `--template` уже не действует: чтобы
+начать заново с шаблона, удалите файл. Worktree агентов (`../test-backend` и т.д.) создаются сами, сеть —
+`<проект>/.agent-network`. Подробности — [Запуск в своём проекте одной командой](#запуск-в-своём-проекте-одной-командой).
 
-**3. Своё — моделями и прочим — правьте в копии.** Пути в ней не нужны, копию можно положить куда угодно:
-
-```bash
-cp /abs/path/agent-network-mcp/examples/runner/runners.claude.example.json ~/myprojects/runners.json
-```
+**3. Модели и прочее правьте в этом конфиге** (`.agent-network/runners.json` проекта, пути в нём не нужны). Страница
+тоже записывает туда свои изменения (модель агента, инструкции, расписания, надзор), а не в пример в репозитории.
 
 - `model` и `models` — какая модель у агентов и из каких выбирать на странице: [Модели](#модели-где-взять-имена-и-куда-их-писать);
 - для Qwen с LM Studio — адрес сервера в `--openai-base-url` (в двух командах: агентов и надзора), например
@@ -77,7 +74,8 @@ cp /abs/path/agent-network-mcp/examples/runner/runners.claude.example.json ~/myp
   [Цена токенов](#цена-токенов-если-cli-не-сообщает-стоимость);
 - `maxTaskCostUsd` — лимит стоимости задачи по умолчанию.
 
-Запуск тот же, из папки проекта: `agent-network-mcp ui --runners ~/myprojects/runners.json`.
+После правки файла перезапустите `ui`. Свой конфиг в другом месте — `ui --runners путь/runners.json`; страница только
+для просмотра — `ui --read-only`.
 
 **4. Без git или по-своему.** Агенту можно задать `"cwd"` (папка, где он работает), всем — `"project"` и
 `"networkDir"`; `"worktree": false` в `defaults` — без авто-worktree. Для пробы хватит одной папки: `"cwd"` в `defaults`
@@ -980,10 +978,14 @@ node dist/index.js ui --runners runners.json [--port 4777]
 
 ```bash
 cd ~/myprojects/test
-agent-network-mcp ui --runners ~/Downloads/files/agent-network-mcp/examples/runner/runners.claude.example.json
-# или Qwen Code с LM Studio:
-agent-network-mcp ui --runners ~/Downloads/files/agent-network-mcp/examples/runner/runners.qwen.example.json
+agent-network-mcp ui                      # свой конфиг проекта из шаблона Qwen (в первый раз), дальше — он
+agent-network-mcp ui --template claude    # то же с шаблоном Claude Code
+agent-network-mcp ui --runners ~/Downloads/files/agent-network-mcp/examples/runner/runners.claude.example.json   # пример как есть
 ```
+
+Без `--runners` конфиг проекта — `.agent-network/runners.json`: копия шаблона, где ссылки на промпты и инструкции
+указывают в пакет (`{agentNetworkMcp}/examples/runner/…`). Правки страницы идут в неё. С `--runners` на пример из
+репозитория страница пишет свои правки в сам пример.
 
 Без `npm link` (см. [Быстрый старт](#быстрый-старт)) — `node ~/Downloads/files/agent-network-mcp/dist/index.js ui --runners …`.
 
