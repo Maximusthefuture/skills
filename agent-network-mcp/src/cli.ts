@@ -21,7 +21,8 @@ import { ensureWorktrees, gitRoot } from "./worktrees.js";
 
 const USAGE = `Usage:
   agent-network-mcp task create --title <t> --agents <a,b[,c]> [--description <d>] [--verify <build/test command>]
-                                [--max-fix-rounds 3] [--follow-ups 0] [--max-cost <usd>] [--openspec <change>] [--network-dir <abs path>]
+                                [--max-fix-rounds 3] [--follow-ups 0] [--max-cost <usd>] [--openspec <change> | --propose <new-change>] [--network-dir <abs path>]
+                                --propose: the agents WRITE that OpenSpec change (the lead writes, the others review), no code
   agent-network-mcp task list [--network-dir <abs path>]
   agent-network-mcp task stats [--id <task-001>] [--runners runners.json] [--network-dir <abs path>]
                                 time per phase, sessions, tokens, cost (--runners: price sessions without a CLI cost with its "prices")
@@ -81,6 +82,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       "no-commits": { type: "boolean" }, // obsolete: commits are never required; accepted so old scripts keep working
       "follow-ups": { type: "string" },
       openspec: { type: "string" },
+      propose: { type: "string" },
       runners: { type: "string" },
       rounds: { type: "string" },
       usd: { type: "string" },
@@ -153,14 +155,15 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       );
       return 0;
     }
-    if ((!values.title && !values.openspec) || !values.agents) {
-      out("error: --agents and --title (or --openspec) are required");
+    if ((!values.title && !values.openspec && !values.propose) || !values.agents) {
+      out("error: --agents and --title (or --openspec / --propose) are required");
       return 2;
     }
     const task = await service.createTaskAsOperator({
       title: values.title ?? "",
-      description: values.description ?? (values.openspec ? "" : values.title!),
+      description: values.description ?? (values.openspec || values.propose ? "" : values.title!),
       ...(values.openspec ? { openspec: values.openspec } : {}),
+      ...(values.propose ? { proposes: values.propose } : {}),
       agents: values.agents.split(",").map((a) => a.trim()).filter(Boolean),
       ...(values["max-fix-rounds"] !== undefined ? { maxFixRounds: Number(values["max-fix-rounds"]) } : {}),
       ...(values.verify ? { verifyCommand: values.verify } : {}),

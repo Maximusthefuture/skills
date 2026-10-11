@@ -70,6 +70,10 @@ You cannot create a task while you have an active one.
 `wait()` returns with status MESSAGES, ACTION_REQUIRED, UPDATED, DONE or TIMEOUT, with the fresh context (TIMEOUT: a short answer).
 On TIMEOUT just call `wait()` again. Messages addressed to you are in `pendingMessages`.
 
+Questions to the operator with options to choose from: `send_message({to: "operator", message, options: [{label, description}], recommended: "<label>"})`
+(2-6 options, `multiSelect: true` when several may be picked). The operator picks on the page; the answer comes as
+`Chosen: "<label>"` plus a comment. No answer in time: go ahead with `recommended`.
+
 Builds and tests: call `build({command?})` instead of running them in the shell. It answers with the outcome, the test totals
 and what failed; the full log is saved in your folder (path in the answer: grep it or read a part). No command = the task's
 `verifyCommand`. One plain build-tool command (`./mvnw`, `gradle`, `npm`, …), no `&&`, pipes or redirects.

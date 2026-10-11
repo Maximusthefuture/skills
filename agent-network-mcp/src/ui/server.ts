@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
@@ -20,7 +21,7 @@ import type { Supervisor } from "../supervisor/supervisor.js";
 import type { Scheduler } from "../schedule/scheduler.js";
 import { buildUiState } from "./state.js";
 import { nextRun, parseCron } from "../schedule/cron.js";
-import { branchDiff, fileDiff, removeWorktrees, type MergeResult } from "../worktrees.js";
+import { branchDiff, fileDiff, mergeProjectInto, removeWorktrees, type MergeResult } from "../worktrees.js";
 
 export interface UiServer {
   server: Server;
@@ -138,12 +139,19 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
   const host = opts.host ?? "127.0.0.1";
 
   /** Agents in their own worktree see only committed work: the change must be in each runner's folder already. */
-  async function checkAgentFolders(p: Project, change: string, agents: string[]): Promise<void> {
-    const missing: string[] = [];
+  /** The agents (of `agents`) whose folder lacks the change; an auto worktree not created yet will get it from HEAD. */
+  async function foldersWithoutChange(p: Project, change: string, agents: string[]): Promise<{ id: string; cwd: string }[]> {
+    const missing: { id: string; cwd: string }[] = [];
     for (const r of p.pool?.list() ?? []) {
       if (!agents.includes(r.id) || !r.cwd || resolve(r.cwd) === p.projectDir) continue;
-      if (!(await hasChange(r.cwd, change))) missing.push(`${r.id} (${r.cwd})`);
+      if (!existsSync(r.cwd) && p.pool?.agentFolder(r.id)?.worktree) continue;
+      if (!(await hasChange(r.cwd, change))) missing.push({ id: r.id, cwd: r.cwd });
     }
+    return missing;
+  }
+
+  async function checkAgentFolders(p: Project, change: string, agents: string[]): Promise<void> {
+    const missing = (await foldersWithoutChange(p, change, agents)).map((m) => `${m.id} (${m.cwd})`);
     if (missing.length) {
       throw new AppError(
         "OPENSPEC_NOT_FOUND",
@@ -275,6 +283,12 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     if (method === "GET") {
       if (path === "/") return { status: 200, type: "text/html; charset=utf-8", body: PAGE_HTML };
       if (path === "/api/projects") return json(200, { projects: await Promise.all(projects.map(summary)) });
+      if (path === "/api/openspec/folders") {
+        // before a task implements a change: which of its agents do not have it in their folder yet
+        const change = assertChangeName(url.searchParams.get("change") ?? "");
+        const agents = (url.searchParams.get("agents") ?? "").split(",").filter(Boolean);
+        return json(200, { change, inProject: await hasChange(p.projectDir, change), missing: await foldersWithoutChange(p, change, agents) });
+      }
       if (path === "/api/openspec/changes") return json(200, { projectDir: p.projectDir, changes: await listChanges(p.projectDir) });
       if (path === "/api/state") {
         // the page is open: a BLOCKED task whose deadline passed goes to its lead even with no runner around
@@ -358,7 +372,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const body = await readJson(req);
 
     if (path === "/api/tasks") {
-      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown };
+      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown };
       // the page sends "" for "no limit"; a field it leaves out gets the config's maxTaskCostUsd
       const maxCostUsd = b.maxCostUsd === undefined ? p.maxTaskCostUsd : b.maxCostUsd === "" || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd);
       const agents = Array.isArray(b.agents) ? b.agents.map(String) : [];
@@ -369,6 +383,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         description: String(b.description ?? ""),
         agents,
         ...(openspec ? { openspec } : {}),
+        ...(typeof b.proposes === "string" && b.proposes.trim() ? { proposes: b.proposes.trim() } : {}),
         ...(typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? { verifyCommand: b.verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
@@ -430,6 +445,25 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const open = (await operator.tasks.list()).filter((t) => (t.status === "ACTIVE" || t.status === "BLOCKED") && t.agents.some((a) => ids.includes(a)));
       if (open.length) throw new AppError("INVALID_INPUT", `Open tasks still need the worktrees: ${open.map((t) => `${t.id} (${t.status})`).join(", ")}`);
       return json(200, { result: await removeWorktrees(ids.map((id) => ({ id, ...pool.agentFolder(id)! }))) });
+    }
+    if (path === "/api/openspec/sync") {
+      // bring the project's branch (with the merged change) into the agents' branches that lack it
+      const b = body as { change?: unknown; agents?: unknown };
+      const change = assertChangeName(String(b.change ?? ""));
+      if (!(await hasChange(p.projectDir, change))) throw new AppError("OPENSPEC_NOT_FOUND", `${changePath(change)} is not in the project folder yet: merge the branch that has it first`);
+      const missing = await foldersWithoutChange(p, change, Array.isArray(b.agents) ? b.agents.map(String) : pool.ids());
+      const busy = pool.list().filter((r) => r.session && missing.some((m) => m.id === r.id)).map((r) => r.id);
+      if (busy.length) throw new AppError("INVALID_INPUT", `${busy.join(", ")} ${busy.length > 1 ? "are" : "is"} in a session now: try again when the session ends`);
+      const result: { id: string; ok: boolean; text: string }[] = [];
+      for (const m of missing) {
+        try {
+          const r = await mergeProjectInto(p.projectDir, m.cwd);
+          result.push({ id: m.id, ok: true, text: `${r.from} → ${r.into}: ${r.result}` });
+        } catch (e) {
+          result.push({ id: m.id, ok: false, text: (e as Error).message });
+        }
+      }
+      return json(200, { result, missing: await foldersWithoutChange(p, change, missing.map((m) => m.id)) });
     }
     if (path === "/api/openspec/archive") {
       return json(200, await operator.archiveOpenspec({ taskId: String((body as { taskId?: unknown }).taskId ?? "") }, opts.openspecExec));

@@ -172,3 +172,22 @@ export async function fileDiff(project: string, base: string, head: string, mode
   if (!out.ok) throw new AppError("INVALID_INPUT", `Cannot read the diff of ${path}: ${out.err.trim().slice(0, 300)}`);
   return { path, patch: out.text.slice(0, MAX_FILE_DIFF), truncated: out.text.length > MAX_FILE_DIFF };
 }
+
+/**
+ * Brings the project's current branch into an agent's own branch (git merge in its folder): the way a change merged into
+ * the project reaches the agents that will implement it. Refused, with nothing changed, when the folder has uncommitted
+ * changes or the merge conflicts (it is aborted).
+ */
+export async function mergeProjectInto(project: string, cwd: string): Promise<{ into: string; from: string; result: string }> {
+  const from = (await git(project, ["symbolic-ref", "--short", "-q", "HEAD"])).out.trim();
+  if (!from) throw new AppError("INVALID_INPUT", `${project} is on no branch (detached HEAD)`);
+  const into = (await git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"])).out.trim() || "HEAD";
+  const dirty = (await git(cwd, ["status", "--porcelain", "--untracked-files=no"])).out.trim();
+  if (dirty) throw new AppError("INVALID_INPUT", `${cwd} has uncommitted changes; commit or stash them first`);
+  const r = await git(cwd, ["merge", "--no-edit", from]);
+  if (!r.ok) {
+    await git(cwd, ["merge", "--abort"]);
+    throw new AppError("MERGE_CONFLICT", `Merging ${from} into ${into} in ${cwd} conflicts; nothing was changed: ${(r.out || r.err).trim().split("\n").slice(-3).join(" ")}`);
+  }
+  return { into, from, result: /Already up to date/.test(r.out) ? "up to date" : /Fast-forward/.test(r.out) ? "fast-forward" : "merged" };
+}

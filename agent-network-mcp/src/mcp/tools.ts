@@ -52,6 +52,12 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
       requestFiles: z.array(z.string()).optional().describe("Only to CHANGE files OWNED by the recipient (never for reading: reading needs no permission). Explain why in message. The owner replies with grantFiles or a refusal"),
       grantFiles: z.array(z.string()).optional().describe("Owner only: let the recipient change these files of yours (answer to their request); message = conditions. To refuse, send a normal message with the reason"),
       fyi: z.boolean().optional().describe("To 'operator' only. true: for information, no answer expected (a reply to the operator's message, a status it asked for); it does not hold you. Default: a question the operator answers"),
+      options: z
+        .array(z.object({ label: z.string().describe("1-5 words, e.g. 'Service layer'"), description: z.string().optional().describe("What choosing it means, its trade-off") }))
+        .optional()
+        .describe("A question to 'operator' with 2-6 choices: the operator picks one on the page (buttons) or writes its own answer. Give them whenever there are options to choose from; the message still explains the question"),
+      recommended: z.string().optional().describe("With options: the label you would take; you go ahead with it if nobody answers in time"),
+      multiSelect: z.boolean().optional().describe("With options: true when several may be picked"),
     },
     async (a) => swarm.sendMessage(a),
   );

@@ -2,7 +2,7 @@ import { buildTools, DEFAULT_BUILD_TIMEOUT_MIN, parseBuildCommand, runBuild } fr
 import { AppError, isAppError } from "../errors.js";
 import { containsCommit, readGitContext } from "../git.js";
 import { phaseEpoch } from "../handoff.js";
-import { changePath, readChange, type ChangeInfo } from "../openspec.js";
+import { changePath, readChange, validateChange, type ChangeInfo, type Exec } from "../openspec.js";
 import { normalizePath, ownersOf } from "../ownership.js";
 import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, OPERATOR_TIMEOUT_MS, isReviewOnly, type NetworkService } from "../service.js";
 import type { Agent, Agreement, FollowUpRequest, GitContext, Implementation, IntegrationReport, Message, Phase, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
@@ -56,6 +56,8 @@ interface Snapshot {
   dependencyCommits?: Record<string, string[]>;
   /** IMPLEMENT: this session tried to complete before its dependencies reported; it waits for them instead of trying again. */
   dependencyParked?: boolean;
+  /** A change-writing task: every answer of the operator to a question of this task (they belong in design.md). */
+  operatorAnswers?: { question: string; askedBy: string; answer: string }[];
 }
 
 /** "2/5 done, s3 in progress" */
@@ -110,6 +112,8 @@ export interface SwarmOptions {
   operatorTimeoutMs?: number;
   /** The commands build() may start (default: BUILD_TOOLS plus AGENT_NETWORK_BUILD_TOOLS). */
   buildTools?: string[];
+  /** Runs `openspec validate` for a change-writing task (tests replace it). */
+  openspecExec?: Exec;
 }
 
 /** While an agent waits for the operator, wait() looks at the clock this often, so it learns in time that the question timed out. */
@@ -137,6 +141,7 @@ export class Swarm {
   readonly defaultWaitMs: number;
   private readonly operatorTimeoutMs: number;
   private readonly buildTools: string[];
+  private readonly openspecExec?: Exec;
 
   constructor(
     private readonly service: NetworkService,
@@ -149,6 +154,7 @@ export class Swarm {
     this.underRunner = opts.underRunner ?? false;
     this.operatorTimeoutMs = opts.operatorTimeoutMs ?? OPERATOR_TIMEOUT_MS;
     this.buildTools = opts.buildTools ?? buildTools();
+    this.openspecExec = opts.openspecExec;
   }
 
   private get me(): string {
@@ -239,13 +245,14 @@ export class Swarm {
     };
   }
 
-  async sendMessage(input: { to?: string; message?: string; requestFiles?: string[]; grantFiles?: string[]; fyi?: boolean }): Promise<SwarmContext> {
+  async sendMessage(input: { to?: string; message?: string; requestFiles?: string[]; grantFiles?: string[]; fyi?: boolean; options?: { label: string; description?: string }[]; recommended?: string; multiSelect?: boolean }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
     const others = task.agents.filter((a) => a !== this.me);
     const recipients = [...others, OPERATOR];
     if (!input.to?.trim()) throw invalid("'to' is required", { validRecipients: recipients });
     if (!input.message?.trim()) throw invalid("'message' must not be empty");
+    if (input.options?.length && (input.to !== OPERATOR || input.fyi)) throw invalid("options go with a question to the operator (to: \"operator\", without fyi); to an agent write the options in the message");
     if (input.to === OPERATOR) {
       if (input.requestFiles?.length || input.grantFiles?.length) throw invalid("The operator owns no files: requestFiles/grantFiles go to agents. Ask the operator a plain question.");
       if (input.fyi) {
@@ -253,10 +260,11 @@ export class Swarm {
         const told = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "INFORMATION", content: input.message });
         return { ...this.reply(await this.contextNow()), ok: true, action: "INFO_SENT", messageId: told.id, note: "The operator sees it on the page; no answer comes. Go on with your work." } as SwarmContext;
       }
-      const asked = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "QUESTION", content: input.message });
+      const choices = input.options?.length ? { options: input.options, ...(input.recommended ? { recommended: input.recommended } : {}), ...(input.multiSelect ? { multiSelect: true as const } : {}) } : undefined;
+      const asked = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "QUESTION", content: input.message, ...(choices ? { choices } : {}) });
       return {
         ...this.reply(await this.contextNow()), ok: true, action: "QUESTION_SENT", messageId: asked.id,
-        note: `The operator (a human) answers on the network page; the answer arrives in pendingMessages. If you cannot go on without it, call wait(); otherwise continue with the work that does not depend on it. No answer in ${Math.round(this.operatorTimeoutMs / 60_000)} min: go ahead with the option you proposed and say so.`,
+        note: `The operator (a human) answers on the network page; the answer arrives in pendingMessages. If you cannot go on without it, call wait(); otherwise continue with the work that does not depend on it. No answer in ${Math.round(this.operatorTimeoutMs / 60_000)} min: go ahead with ${choices?.recommended ? `"${choices.recommended}"` : "the option you proposed"} and say so.`,
       } as SwarmContext;
     }
     if (!others.includes(input.to)) {
@@ -335,6 +343,7 @@ export class Swarm {
         if (!input.result?.trim()) throw invalid("complete() during IMPLEMENT requires 'result': a short summary of what you implemented");
         const existing = await this.service.implementations.find(task.id, this.me);
         if (!existing) await this.service.startImplementation(task.id);
+        const checked = await this.checkProposal(task);
         const unreported = input.commits?.length ? undefined : await this.unreportedWork(task, existing?.commits ?? []);
         const commits = unreported?.head ? [unreported.head] : input.commits;
         const absent = Object.entries(await this.dependencyCommits(await this.service.agreements.find(task.id), await this.service.implementations.list(task.id)));
@@ -349,7 +358,7 @@ export class Swarm {
           if (isAppError(e) && e.code === "DEPENDENCY_NOT_READY") this.parkedOnDependency.add(`${task.id}:${task.syncRound}`); // wait for them, do not retry
           throw e;
         });
-        warnings = [...(done.warnings ?? []), ...(unreported ? [unreported.note] : [])];
+        warnings = [...(done.warnings ?? []), ...(unreported ? [unreported.note] : []), ...(checked ? [checked] : [])];
         action = "IMPLEMENTATION_COMPLETED";
         break;
       }
@@ -370,6 +379,8 @@ export class Swarm {
           throw invalid("complete() during INTEGRATE requires 'status': \"PASS\" (merged, build and tests green) or \"NEEDS_FIX\" (with 'findings')");
         }
         if (!input.result?.trim()) throw invalid("complete() during INTEGRATE requires 'result': what you merged, where the result is, and the build/test outcome");
+        const checked = input.status === "PASS" ? await this.checkProposal(task) : undefined;
+        if (checked) warnings = [checked];
         const res = await this.service.submitIntegration({ taskId: task.id, status: input.status, result: input.result, commits: input.commits, findings: this.findings(input.findings), followUps: input.followUps });
         action = input.status === "PASS" ? "INTEGRATION_PASS" : "INTEGRATION_NEEDS_FIX";
         if (res.followUps.length) followUpsCreated = res.followUps.map((t) => ({ id: t.id, title: t.title, agents: t.agents }));
@@ -551,6 +562,13 @@ export class Swarm {
         ? { dependencyCommits: await this.dependencyCommits(agreement, impls), dependencyParked: this.parkedOnDependency.has(`${task.id}:${task.syncRound}`) }
         : {}),
       ...(task.openspec && task.phase !== "DONE" ? await this.readOpenspec(task.openspec.change) : {}),
+      ...(task.proposes
+        ? {
+            operatorAnswers: messages
+              .filter((q) => q.to === OPERATOR && q.type === "QUESTION")
+              .flatMap((q) => messages.filter((a) => a.from === OPERATOR && a.replyTo === q.id).map((a) => ({ question: q.content, askedBy: q.from, answer: a.content }))),
+          }
+        : {}),
     };
   }
 
@@ -760,6 +778,7 @@ export class Swarm {
         id: task.id, title: task.title, ...(describe ? { description: task.description } : {}), phase, status: task.status, agents: task.agents, lead: phases.integrator(task),
         ...(task.syncRound > 0 || full ? { syncRound: task.syncRound, maxFixRounds: phases.maxFixRounds(task) } : {}),
         ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+        ...(task.proposes ? { proposes: { change: task.proposes.change, path: `${changePath(task.proposes.change)}/` } } : {}),
         ...(task.blockedReason ? { blockedReason: task.blockedReason } : {}),
         ...(task.parentTaskId ? { parentTaskId: task.parentTaskId } : {}),
         ...(task.baseCommit ? { baseCommit: task.baseCommit } : {}),
@@ -767,6 +786,7 @@ export class Swarm {
       agent,
       ...(myAssignment ? { assignment: { responsibility: myAssignment.responsibility } } : {}),
       ...this.openspecView(snap, full),
+      ...(snap.operatorAnswers?.length && phase !== "DISCUSS" && phase !== "DONE" ? { operatorAnswers: snap.operatorAnswers } : {}),
       otherAgents: task.agents
         .filter((id) => id !== this.me)
         .map((id) => {
@@ -880,7 +900,7 @@ export class Swarm {
       d = {
         ...core,
         hint:
-          `The operator has not answered your question ${timedOut.id} for ${minutes} min: go ahead with the option you proposed in it (none proposed: the safest one) and say so, ` +
+          `The operator has not answered your question ${timedOut.id} for ${minutes} min: go ahead with ${timedOut.choices?.recommended ? `your recommended option "${timedOut.choices.recommended}"` : "the option you proposed in it (none proposed: the safest one)"} and say so, ` +
           `send_message to the other agents ("no answer from the operator on ${timedOut.id} in ${minutes} min, I go ahead with <option>") and in your result. ` +
           `If the answer still comes, it arrives in pendingMessages. ${core.hint}`,
       };
@@ -892,6 +912,10 @@ export class Swarm {
   /** A ready-to-copy call where the arguments have structure (the agreement); simpler calls are spelled out in the hint. */
   private example(task: Task, next: NextAction): Decision["exampleCall"] {
     if (next !== "propose") return undefined;
+    if (task.proposes) {
+      const dir = `${changePath(task.proposes.change)}/**`;
+      return { tool: "propose", args: { summary: `Write the OpenSpec change ${task.proposes.change}`, assignments: task.agents.map((agentId, i) => (i === 0 ? { agentId, responsibility: "writes the change", files: [dir] } : { agentId, responsibility: "reviews the change", files: [] })) } };
+    }
     const tasks = task.openspec ? { tasks: ["<tasks.md numbers this agent implements; [] = review only>"] } : {};
     return { tool: "propose", args: { summary: "<what the team will build>", assignments: task.agents.map((agentId) => ({ agentId, responsibility: "<what this agent does>", files: ["<files or globs it changes; [] = review only>"], ...tasks })) } };
   }
@@ -910,6 +934,49 @@ export class Swarm {
     }
     const phases = this.service.phases;
     const spec = task.openspec ? changePath(task.openspec.change) : null;
+    // a change-writing task: the lead writes openspec/changes/<name>/, the others review it; no code
+    const writes = task.proposes ? changePath(task.proposes.change) : null;
+    const name = task.proposes?.change;
+    const planOnly = "This task writes an OpenSpec change, not code: your role instructions about code, tests and builds do not apply here. ";
+    if (writes) {
+      if (task.phase === "DISCUSS" && !agreement) {
+        return this.me === lead
+          ? done("propose", ["send_message", "propose", "wait"], `${planOnly}propose() right away (see exampleCall): you, the author, get files ["${writes}/**"], every other agent files [] (they review the change).`, [...task.agents])
+          : done("wait", ["send_message", "propose", "wait"], `${planOnly}You review the change ${writes}/ that ${lead} writes (files: []). wait() for the proposal.`, [lead!]);
+      }
+      if (task.phase === "IMPLEMENT" && this.me === lead && mine?.status !== "READY_FOR_SYNC") {
+        const how =
+          `Write ${writes}/: use the openspec-propose skill if you have it (planning only), otherwise run \`openspec new change ${name}\`, then \`openspec instructions <proposal|specs|design|tasks> --change ${name}\` for each artifact and follow it. ` +
+          `proposal.md: why and what changes. specs/<capability>/spec.md: requirements, each with "#### Scenario:" WHEN/THEN steps concrete enough to become a test (inputs, expected result, errors and edge cases too). design.md: how, decisions with their reasons. tasks.md: small numbered tasks "- [ ] 1.1 ...", every scenario covered by a task. ` +
+          `Read the code the change touches, but change no code. A decision only the user can make (business rule, scope, compatibility): ask the operator with send_message({to: "operator", options, recommended}); write the other assumptions into proposal.md or design.md. ` +
+          `Record every answer of the operator ('operatorAnswers') as a decision in design.md (the question, the answer, what it means for the change): the session that implements the change sees only its files, not this conversation. ` +
+          `Run \`openspec validate ${name} --strict\` and fix what it reports; commit the folder; then complete({result: <capabilities, number of scenarios and tasks, open questions>}): complete() runs the validation itself.`;
+        return task.syncRound > 0
+          ? done("fix", ["send_message", "subtasks", "complete", "wait"], `${planOnly}Fix the change as 'fixRequests' (forYou) say; every answer in 'operatorAnswers' must be a decision in design.md. Validate (\`openspec validate ${name} --strict\`), commit, then complete({result}).`, [lead!])
+          : done("implement", ["send_message", "subtasks", "complete", "wait"], `${planOnly}${how}`, [lead!]);
+      }
+      if (task.phase === "SYNC" && this.me !== lead && !reports.some((r) => r.agentId === this.me) && phases.reviewees(task).includes(lead!)) {
+        const pending = phases.reviewers(task).filter((id) => !reports.some((r) => r.agentId === id));
+        const absent = Object.entries(s.missingCommits ?? {});
+        const fresh = absent.length ? `First bring the change into your folder: git merge ${absent.flatMap(([, cs]) => cs).join(" ")}. ` : "";
+        return done(
+          "sync",
+          ["send_message", "complete", "wait"],
+          `${planOnly}${fresh}Review the change ${writes}/ by ${lead}${task.syncRound > 1 ? " ('fixedFindings': check each fix)" : ""}: use the java-spec-review skill if you have it, but change no file and ask the user nothing directly. ` +
+            `Check: each scenario says what the operator asked for in task.description — compare numbers, thresholds and boundaries word by word ("from the fifth order" means the 5th order gets it, not the 6th), and every answer in 'operatorAnswers' is recorded as a decision in design.md and followed by the specs (the implementing session sees only the files); every scenario can become a test (concrete inputs, expected result); every requirement has scenarios, errors and edge cases included; tasks.md covers every scenario; design.md matches the code as it is (read it); no decision is hidden or left open. ` +
+            `Questions only the user can answer: send_message({to: "operator"}). Then complete({status: "PASS"}) (WARNING/INFO allowed) or complete({status: "NEEDS_FIX", findings}) with ERROR findings for ${lead}.`,
+          pending,
+        );
+      }
+      if (task.phase === "INTEGRATE" && this.me === lead) {
+        return done(
+          "integrate",
+          ["send_message", "complete", "wait"],
+          `${planOnly}Nothing to merge: the reviewers change nothing. Check that every answer in 'operatorAnswers' (also ones that came after the review) is a decision in design.md. Run \`openspec validate ${name} --strict\` once more, make sure ${writes}/ is committed, then complete({status: "PASS", result: <what the change covers, open questions>}). The operator reviews it, merges it and starts a task that implements it.`,
+          [lead!],
+        );
+      }
+    }
     switch (task.phase) {
       case "DISCUSS": {
         if (!agreement) {
@@ -935,7 +1002,7 @@ export class Swarm {
           return done("wait", ["send_message", "wait"], `${taken}Your part is ready. Waiting for: ${pending.join(", ")}.`, pending);
         }
         const myAssignment = agreement?.assignments.find((a) => a.agentId === this.me);
-        if (task.syncRound === 0 && isReviewOnly(myAssignment)) {
+        if (task.syncRound === 0 && isReviewOnly(myAssignment, task)) {
           return done("implement", ["send_message", "complete", "wait"], 'Your assignment has no files: review only, you change nothing in this task. Mark your part ready now with complete({result: "review only: nothing to change"}); you review in SYNC.', pending);
         }
         const deps = myAssignment?.dependsOn ?? [];
@@ -1022,6 +1089,20 @@ export class Swarm {
       case "DONE":
         return done("done", [], "The task is done.", []);
     }
+  }
+
+  /**
+   * A change-writing task: the author hands the change over only when it validates (openspec validate --strict in its
+   * folder; without the CLI, its form). Returns a note when only the form could be checked; other agents: nothing.
+   */
+  private async checkProposal(task: Task): Promise<string | undefined> {
+    if (!task.proposes || this.service.phases.integrator(task) !== this.me) return undefined;
+    const name = task.proposes.change;
+    const r = await validateChange(this.workdir, name, this.openspecExec);
+    if (!r.ok) {
+      throw new AppError("OPENSPEC_INVALID", `The change ${changePath(name)}/ is not ready${r.cli ? ` (openspec validate ${name} --strict)` : ""}: ${r.output}. Fix it, commit, then complete() again.`, { output: r.output });
+    }
+    return r.cli ? undefined : `openspec CLI not installed: only the form of ${changePath(name)}/ was checked`;
   }
 
   /** DISCUSS: approve the agreement, but only the version this process has actually shown the agent. */

@@ -17,7 +17,8 @@
     "supervisor.tools: your own commands for it, argv without a shell; {agentCwd} adds an agentId parameter (the agent's folder), {projectDir}/{networkDir} are filled in, own params are checked (type, enum, pattern). \"action\": true for a command that changes something: each run goes into its journal. disabledTools switches any tool off (also on the page).",
     "schedules: tasks the page creates by itself on a cron (local time; @daily, @weekdays = Mon-Fri 9:00, ...), no model involved. A run is skipped while the previous task of the same schedule is still open. {date} and {time} in title/description are filled in. Off here (\"enabled\": false): switch it on on the Tasks tab or here.",
     "Subagents: Agent in --tools lets an agent start subagents for bounded side jobs; --agents defines \"helper\" (read and run only, no swarm tools). Only the agent itself talks to the swarm: the built-in general-purpose subagent would inherit the agent-network tools, so the system prompt tells agents to use helper (or a project agent such as critic). Each subagent is a separate context: tokens. Drop Agent from --tools to switch subagents off.",
-    "maxTaskCostUsd: the cost limit of a task created on the page or by a schedule (all its sessions together); reached, the task is BLOCKED until you raise it (+$ on the page) or cancel it. Remove it for no limit."
+    "maxTaskCostUsd: the cost limit of a task created on the page or by a schedule (all its sessions together); reached, the task is BLOCKED until you raise it (+$ on the page) or cancel it. Remove it for no limit.",
+    "Bash(openspec:*): the author of a change-writing task (task create --propose, or «+ написать новый change…» on the page) creates and validates the change with the openspec CLI (openspec new change, instructions, validate)."
   ],
   "maxTaskCostUsd": 10,
   "defaults": {
@@ -61,7 +62,8 @@
       "Bash(git commit:*)",
       "Bash(git merge:*)",
       "Bash(git rev-parse:*)",
-      "Bash(./mvnw:*)"
+      "Bash(./mvnw:*)",
+      "Bash(openspec:*)"
     ],
     "model": "sonnet",
     "models": [

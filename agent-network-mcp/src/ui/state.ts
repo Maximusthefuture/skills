@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import { isAppError } from "../errors.js";
-import { changePath, readChange } from "../openspec.js";
+import { changePath, hasChange, readChange } from "../openspec.js";
 import { defaultIsProcessAlive } from "../stores/agentStore.js";
 import { queueStates } from "./runs.js";
 import { AgentStore } from "../stores/agentStore.js";
@@ -78,6 +78,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
           .filter((k) => k.startsWith(`${task.id}/`))
           .map((k) => k.slice(task.id.length + 1)),
         openspec: task.openspec ? await openspecView(dirname(fs.root), task, agreement, impls) : null,
+        /** A change-writing task after DONE: the change is in the project folder (merged), ready to be implemented. */
+        proposedReady: task.proposes && task.status === "COMPLETED" ? await hasChange(dirname(fs.root), task.proposes.change) : false,
       };
     }),
   );
@@ -148,6 +150,8 @@ function operatorQuestions(messages: Message[]) {
       messageId: q.id,
       from: q.from,
       question: q.content,
+      /** Choices the agent offered (buttons on the page), with the one it recommends. */
+      choices: q.choices ?? null,
       askedAt: q.createdAt,
       answered: !!q.readAt,
       answers: messages.filter((a) => a.from === "operator" && a.replyTo === q.id).map((a) => ({ answer: a.content, answeredAt: a.createdAt })),
@@ -155,7 +159,7 @@ function operatorQuestions(messages: Message[]) {
 }
 
 function pickTask(t: Task) {
-  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged } = t;
+  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes } = t;
   return {
     id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
@@ -163,6 +167,8 @@ function pickTask(t: Task) {
     maxCostUsd: maxCostUsd ?? null, blockedBy: blockedBy ?? null,
     /** The lead's branch merged into the project after DONE. */
     merged: merged ?? null,
+    /** The task writes this OpenSpec change (instead of implementing one). */
+    proposes: proposes ?? null,
     parentTaskId: parentTaskId ?? null, baseCommit: baseCommit ?? null,
     followUpBudget: maxFollowUps ? { max: maxFollowUps, used: followUpsUsed ?? 0 } : null,
     /** BLOCKED: unless the operator decides by dueAt, the lead takes over the stuck fix. */

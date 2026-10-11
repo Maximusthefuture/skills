@@ -131,3 +131,36 @@ describe("questions to the operator", () => {
     expect((await backend.context()).pendingMessages).toEqual([expect.objectContaining({ from: "operator", content: "PostgreSQL" })]);
   });
 });
+
+describe("questions with choices", () => {
+  const options = [
+    { label: "Service layer", description: "PriceCalculator stays pure" },
+    { label: "In the calculator", description: "it looks the count up itself" },
+  ];
+
+  it("are kept with the question, shown on the page, and checked", async () => {
+    const { dir, backend, reviewer, task } = await setup();
+    const asked = await backend.sendMessage({ to: "operator", message: "Where is the customer identified?", options, recommended: "Service layer" });
+    expect(asked.note).toContain('go ahead with "Service layer"');
+    const pool = new RunnerPool(dir, [{ id: "backend", command: ["x"], autostart: false }]);
+    ui = await startUiServer([{ networkDir: dir, runners: pool }], { port: 0 });
+    const state = (await (await fetch(`${ui.url}/api/state`)).json()) as any;
+    expect(state.openQuestions[0]).toMatchObject({ messageId: asked.messageId, choices: { options, recommended: "Service layer" } });
+
+    const bad = (input: Record<string, unknown>) => failure(backend, backend.sendMessage({ to: "operator", message: "q", ...input } as never));
+    expect(await bad({ options: [options[0]] })).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("2 to 6") });
+    expect(await bad({ options: [options[0], { label: "service layer" }] })).toMatchObject({ message: expect.stringContaining("must differ") });
+    expect(await bad({ options, recommended: "Elsewhere" })).toMatchObject({ message: expect.stringContaining("one of the labels") });
+    expect(await bad({ options, fyi: true })).toMatchObject({ message: expect.stringContaining("question to the operator") });
+    expect(await failure(reviewer, reviewer.sendMessage({ to: "backend", message: "A or B?", options } as never))).toMatchObject({ message: expect.stringContaining("to an agent write the options") });
+    expect(task.id).toBe("task-001");
+  });
+
+  it("with no answer in time the agent goes ahead with the recommended option by name", async () => {
+    const { backend } = await setup({ operatorTimeoutMs: 300 });
+    const asked = await backend.sendMessage({ to: "operator", message: "Which layer?", options, recommended: "Service layer", multiSelect: false });
+    const woke = await backend.wait({ timeoutMs: 5000 });
+    expect(woke.hint).toContain(`The operator has not answered your question ${asked.messageId}`);
+    expect(woke.hint).toContain('go ahead with your recommended option "Service layer"');
+  });
+});

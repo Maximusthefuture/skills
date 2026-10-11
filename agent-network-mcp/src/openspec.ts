@@ -152,3 +152,24 @@ export async function archiveChange(projectDir: string, name: string, exec: Exec
     throw new AppError("OPENSPEC_FAILED", `openspec archive ${name} failed: ${tail(`${err.stdout ?? ""}${err.stderr ?? ""}`.trim() || err.message, 1500)}`);
   }
 }
+
+/**
+ * Is a change ready to hand over? `openspec validate <name> --strict` in `dir` (the author's folder). Without the CLI the
+ * form is checked instead: proposal.md, at least one specs/<capability>/spec.md, tasks.md with numbered tasks.
+ */
+export async function validateChange(dir: string, name: string, exec: Exec = execCli): Promise<{ ok: boolean; output: string; cli: boolean }> {
+  assertChangeName(name);
+  try {
+    const { stdout, stderr } = await exec("openspec", ["--no-color", "validate", name, "--strict"], { cwd: dir, timeout: 60_000 });
+    return { ok: true, output: tail(`${stdout}${stderr}`.trim(), 1500), cli: true };
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+    if (err.code !== "ENOENT") return { ok: false, output: tail(`${err.stdout ?? ""}${err.stderr ?? ""}`.trim() || err.message, 1500), cli: true };
+  }
+  const problems: string[] = [];
+  const path = changePath(name);
+  if (!(await readFile(join(dir, path, "proposal.md"), "utf8").then((t) => t.trim().length > 0, () => false))) problems.push(`${path}/proposal.md is missing or empty`);
+  if (!(await listFiles(join(dir, path, "specs"), `${path}/specs`)).some((f) => f.endsWith("/spec.md"))) problems.push(`no ${path}/specs/<capability>/spec.md`);
+  await readChange(dir, name).catch((e: Error) => problems.push(e.message));
+  return { ok: !problems.length, output: problems.join("; ") || "form checked (the openspec CLI is not installed)", cli: false };
+}

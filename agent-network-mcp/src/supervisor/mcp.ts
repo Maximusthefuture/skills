@@ -94,7 +94,7 @@ export function createSupervisorServer(o: SupervisorServerOptions): McpServer {
         }),
         lastMessages: (t.messages as Json[]).slice(-3).map((m) => ({ from: m.from, to: m.to, content: short(m.content, 200) })),
       })),
-      openQuestions: (s.openQuestions as Json[]).map((q) => ({ taskId: q.taskId, messageId: q.messageId, from: q.from, question: q.question, askedAt: q.askedAt })),
+      openQuestions: (s.openQuestions as Json[]).map((q) => ({ taskId: q.taskId, messageId: q.messageId, from: q.from, question: q.question, ...(q.choices ? { choices: q.choices } : {}), askedAt: q.askedAt })),
       runners: ((s.control?.runners ?? []) as Json[]).map((r) => ({ id: r.id, running: r.running, model: r.model, session: r.session, cwd: r.cwd })),
       journal: ((journal.journal ?? []) as Json[]).slice(-15).map((e) => ({ at: e.at, kind: e.kind, by: e.by, taskId: e.taskId, text: short(e.text, 300) })),
     };
@@ -124,7 +124,7 @@ export function createSupervisorServer(o: SupervisorServerOptions): McpServer {
     };
   });
 
-  tool("answer_question", "Answer a question an agent asked the operator, when it is a process or technical question you can answer. Requirements and scope go to escalate.", { taskId: z.string(), messageId: z.string(), answer: z.string() }, async (a) => (await api("POST", "/api/questions/answer", a)).answer);
+  tool("answer_question", "Answer a question an agent asked the operator, when it is a process or technical question you can answer. Requirements and scope go to escalate. A question with choices: answer 'Chosen: \"<label>\"' and why.", { taskId: z.string(), messageId: z.string(), answer: z.string() }, async (a) => (await api("POST", "/api/questions/answer", a)).answer);
 
   tool("message_lead", "Tell the lead of a task what you found and what to do; the lead acts on it and passes on to the agents it concerns (it gets it as a message from the operator, also while busy). Name the agent it is about in the text.", { taskId: z.string(), text: z.string() }, async ({ taskId, text }) => (await api("POST", `/api/tasks/${encodeURIComponent(taskId)}/message`, { text })).message);
 

@@ -152,6 +152,8 @@ button.warnbtn{background:var(--warn);border-color:var(--warn);color:#fff}
 .acard .find{display:flex;gap:8px;align-items:flex-start;margin-top:5px;font-size:13px}.acard .find .badge{flex:none;margin-top:1px}.acard .find>*:last-child{min-width:0;flex:1}
 .acard .scroll.subs{margin-top:0;max-height:170px}
 .chip.bok{color:var(--ok);border-color:var(--ok)}
+.qopts{display:grid;gap:6px;margin:8px 0}.qopt{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;background:var(--card);color:var(--text);font-size:13px}
+.qopt:has(input:checked){border-color:var(--accent);background:var(--accbg)}.qopt input{width:auto;margin:3px 0 0}.qopt .tag{margin-left:8px;font:11px var(--mono);color:var(--accent)}.qopt .muted{margin-top:2px}
 .diff{margin-top:8px}.diff .dcommits{font-size:12px;color:var(--muted);margin:4px 0 6px}.dfile{border:1px solid var(--line);border-radius:6px;margin:4px 0;background:var(--card)}
 .dfile summary{cursor:pointer;padding:4px 8px;font-size:12.5px}.dpatch{margin:0;padding:6px 8px;font:12px/1.45 var(--mono);overflow-x:auto;max-height:480px;border-top:1px solid var(--line);white-space:pre}
 .dpatch span{display:block}.dpad{padding:4px 8px}button.small{padding:2px 8px;font-size:12px;margin-top:4px}.dadd{color:var(--ok)}.ddel{color:var(--bad)}.dhunk{color:var(--accent)}.dpatch .dadd{background:var(--okbg)}.dpatch .ddel{background:var(--badbg)}
@@ -204,7 +206,9 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     <section data-panel="tasks" hidden>
       <div class="hrow"><div><h1>Задачи</h1><div class="lead" id="tasks-lead">Текущие и завершённые задачи проекта.</div></div><button class="end" id="newbtn" type="button" hidden>+ Новая задача</button></div>
       <form class="card" id="newtask" hidden>
-        <label>OpenSpec change (необязательно): агенты делят его tasks.md по номерам задач<select name="openspec" id="openspec"><option value="">— без OpenSpec —</option></select></label>
+        <label>OpenSpec change (необязательно): агенты делят его tasks.md по номерам задач — или пишут новый<select name="openspec" id="openspec"><option value="">— без OpenSpec —</option><option value="__new__">+ написать новый change…</option></select></label>
+        <div id="specfolders" class="note" hidden></div>
+        <label id="proposes-row" hidden>Имя нового change (латиница, цифры, -): lead пишет его, остальные ревьюят; код не меняется<input name="proposes" placeholder="add-loyalty-discount" maxlength="60"></label>
         <label>Название<input name="title" maxlength="200" placeholder="Отмена заказа: POST /orders/{id}/cancel"></label>
         <label>Описание — конкретно: что сделать, где, ожидаемое поведение, кто что делает (с OpenSpec change — необязательно)<textarea name="description" placeholder="Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты."></textarea></label>
         <div class="row"><label>Lead (интегрирует)<select name="lead" id="lead"></select></label><label>Остальные агенты<div class="checks" id="others"></div></label></div>
@@ -514,6 +518,32 @@ function renderOpenspec(t){
   const st=archiveState.get(key);if(st&&(st.output||st.error))box.append(el("pre","log"+(st.error?" err":""),st.error||st.output));
   return box;
 }
+// a change-writing task: what it writes, and after DONE + merge the way to implement it
+function renderProposes(t){
+  const box=el("div","openspec");box.append(el("b","","Пишет OpenSpec change "),el("span","mono","openspec/changes/"+t.proposes.change+"/"),el("span","muted"," · "+t.agents[0]+" пишет, "+t.agents.slice(1).join(", ")+" ревьюят; код не меняется"));
+  if(t.status==="COMPLETED"&&controlMode){const r=el("div","checks");
+    if(t.proposedReady){const b=el("button","","Реализовать change");b.type="button";b.onclick=()=>implementChange(t.proposes.change);r.append(b,el("span","muted","откроет форму задачи с этим change"))}
+    else r.append(el("span","muted","Посмотрите изменения и влейте ветку lead'а: change появится в проекте, и его можно будет реализовать."));
+    box.append(r)}
+  return box;
+}
+// a task that implements a change needs it in every agent's folder: say who lacks it and bring it there in one click
+let specSeq=0;
+async function checkSpecFolders(){const box=$("specfolders");const f=$("newtask");const change=f.elements.namedItem("openspec").value;
+  if(!change||change==="__new__"||!S||!S.control){box.hidden=true;return}
+  const agents=[f.elements.namedItem("lead").value,...[...$("others").querySelectorAll("input:checked")].map(i=>i.value)];const seq=++specSeq;
+  try{const j=await getJSON(q("/api/openspec/folders?change="+encodeURIComponent(change)+"&agents="+encodeURIComponent(agents.join(","))));if(seq!==specSeq)return;
+    box.replaceChildren();box.hidden=!j.missing.length;box.className="note";if(!j.missing.length)return;
+    box.className="note bad";box.append("Change'а нет в папке: "+j.missing.map(m=>m.id).join(", ")+". ");
+    if(!j.inProject){box.append("Сначала влейте ветку с ним в проект.");return}
+    const b=el("button","ghost small","Подтянуть change");b.type="button";b.title="git merge текущей ветки проекта в ветки этих агентов (без --force; при конфликте ничего не меняется)";
+    b.onclick=async()=>{b.disabled=true;b.textContent="подтягиваю…";
+      try{const r=await post("/api/openspec/sync",{change,agents:j.missing.map(m=>m.id)});const bad=r.result.filter(x=>!x.ok);
+        if(bad.length){box.replaceChildren(...bad.map(x=>el("div","",x.id+": "+x.text)))}else await checkSpecFolders()}catch(e){box.replaceChildren(e.message)}};
+    box.append(b)}catch(e){box.hidden=true}}
+$("others").addEventListener("change",checkSpecFolders);$("lead").addEventListener("change",()=>setTimeout(checkSpecFolders,0));
+async function implementChange(name){const f=$("newtask");f.hidden=false;const lim=S&&S.control&&S.control.maxTaskCostUsd;f.elements.namedItem("maxCostUsd").value=lim?String(lim):"";await loadChanges();const sel=$("openspec");sel.value=name;sel.dispatchEvent(new Event("change"));
+  f.elements.namedItem("title").value="";f.elements.namedItem("description").value="";f.scrollIntoView({behavior:"smooth",block:"start"});f.elements.namedItem("description").focus({preventScroll:true})}
 // after DONE: the lead's branch into the project, then the agents' worktrees away (they come back from HEAD for the next task)
 const branchState=new Map();
 function renderBranch(t){
@@ -548,7 +578,7 @@ const diffState=new Map();
 const DIFF_PAGE=50;
 function renderDiff(x,taskId){
   const key=route.project+"/"+taskId;const dv=diffState.get(key);
-  const ui=dv.ui||(dv.ui={files:DIFF_PAGE,commits:20,open:new Set(),patches:{}});
+  const ui=dv.ui||(dv.ui={files:DIFF_PAGE,commits:20,open:new Set(),patches:{},scroll:{}});
   const box=el("div","diff");
   box.append(el("div","muted",(x.merged?"влитые изменения ":"изменения ветки ")+x.branch+": "+x.commitsTotal+" коммит(ов), "+x.files.length+" файл(ов), +"+x.files.reduce((a,f)=>a+f.added,0)+" −"+x.files.reduce((a,f)=>a+f.deleted,0)));
   const more=(left,step,go)=>{const b=el("button","ghost small","ещё "+Math.min(left,step)+" из "+left);b.type="button";b.onclick=()=>{go();render()};return b};
@@ -567,6 +597,9 @@ function renderDiff(x,taskId){
       if(pt.loading)det.append(el("div","muted dpad","загружаю…"));
       else if(pt.error)det.append(el("pre","log err",pt.error));
       else{const pre=el("pre","dpatch");pt.patch.split("\n").forEach(l=>{if(/^(diff --git|index |--- |\+\+\+ )/.test(l))return;pre.append(el("span",l.startsWith("@@")?"dhunk":l.startsWith("+")?"dadd":l.startsWith("-")?"ddel":"",l||" "))});
+        // the card is rebuilt on every refresh: the file's diff keeps where you scrolled it (down and sideways)
+        const at=ui.scroll[f.path];pre.addEventListener("scroll",()=>{ui.scroll[f.path]={top:pre.scrollTop,left:pre.scrollLeft}},{passive:true});
+        if(at)requestAnimationFrame(()=>{pre.scrollTop=at.top;pre.scrollLeft=at.left});
         det.append(pre);if(pt.truncated)det.append(el("div","note dpad","дифф файла большой и обрезан: полностью — git diff в папке проекта"))}}
     box.append(det)});
   if(x.files.length>ui.files)box.append(more(x.files.length-ui.files,DIFF_PAGE,()=>ui.files+=DIFF_PAGE));
@@ -632,6 +665,7 @@ function renderTask(t){
   const chain=[];if(t.parentTaskId)chain.push("follow-up от "+t.parentTaskId);if(t.followUps&&t.followUps.length)chain.push("follow-up задачи: "+t.followUps.join(", "));if(t.followUpBudget)chain.push("бюджет follow-up: "+t.followUpBudget.used+"/"+t.followUpBudget.max);
   if(chain.length)hd.append(el("div","muted",chain.join(" · ")));
   if(t.openspec)hd.append(renderOpenspec(t));
+  if(t.proposes)hd.append(renderProposes(t));
   if(t.status==="COMPLETED"&&controlMode&&S.control.worktrees&&S.control.worktrees.length)hd.append(renderBranch(t));
   hd.append(renderStats(t));
   if(t.status==="BLOCKED")hd.append(renderBlocked(t));
@@ -783,16 +817,19 @@ function renderOthers(ids){const box=$("others");const checked=new Set([...box.q
   ids.forEach(id=>{const l=el("label","");l.style.display="inline-flex";l.style.gap="4px";const i=document.createElement("input");i.type="checkbox";i.value=id;i.checked=checked.size?checked.has(id):id!==lead;i.disabled=id===lead;if(id===lead)i.checked=false;l.append(i,id);box.append(l)})}
 $("lead").addEventListener("change",()=>renderOthers(knownIds.split(",")));
 async function loadChanges(){try{const j=await getJSON(q("/api/openspec/changes"));const sel=$("openspec");const keep=sel.value;
-  sel.replaceChildren(new Option("— без OpenSpec —",""),...j.changes.map(c=>{const o=new Option(c.name+(c.error?" (не читается: "+c.error+")":" ("+c.done+"/"+c.total+" задач отмечено)"),c.name);o.disabled=!!c.error;return o}));
+  sel.replaceChildren(new Option("— без OpenSpec —",""),new Option("+ написать новый change…","__new__"),...j.changes.map(c=>{const o=new Option(c.name+(c.error?" (не читается: "+c.error+")":" ("+c.done+"/"+c.total+" задач отмечено)"),c.name);o.disabled=!!c.error;return o}));
   if([...sel.options].some(o=>o.value===keep))sel.value=keep;sel.title=j.changes.length?"":"в "+j.projectDir+"/openspec/changes нет change'ей"}catch(e){}}
 $("openspec").addEventListener("focus",loadChanges);
-$("openspec").addEventListener("change",ev=>{const t=$("newtask").elements.namedItem("title");t.placeholder=ev.target.value||"Отмена заказа: POST /orders/{id}/cancel"});
+$("openspec").addEventListener("change",ev=>{const f=$("newtask");const isNew=ev.target.value==="__new__";$("proposes-row").hidden=!isNew;
+  f.elements.namedItem("title").placeholder=isNew?"(необязательно) OpenSpec change <имя>":ev.target.value||"Отмена заказа: POST /orders/{id}/cancel";
+  f.elements.namedItem("description").placeholder=isNew?"Что нужно — вашими словами: зачем, что меняется для пользователя, ограничения. Lead напишет proposal, specs, design и tasks; вопросы о решениях придут вам.":"Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты.";
+  if(isNew)f.elements.namedItem("proposes").focus();checkSpecFolders()});
 $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev.target;const note=$("formnote");const btn=f.querySelector("button");
   const others=[...$("others").querySelectorAll("input:checked")].map(i=>i.value);const v=n=>f.elements.namedItem(n);
   if(!v("openspec").value&&(!v("title").value.trim()||!v("description").value.trim())){note.className="note err";note.textContent="Нужны название и описание (или выберите OpenSpec change).";return}
   btn.disabled=true;note.className="note";note.textContent="создаю…";
-  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,openspec:v("openspec").value});
-    note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("openspec").value="";await tick()}
+  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,...(v("openspec").value==="__new__"?{proposes:v("proposes").value}:{openspec:v("openspec").value})});
+    note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("openspec").value="";v("proposes").value="";$("proposes-row").hidden=true;await tick()}
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
 
 /* ---------- runs ---------- */
@@ -988,12 +1025,20 @@ function renderQuestions(s){
   const open=s.openQuestions||[];$("questions").hidden=!open.length;const box=$("qlist");const keep=new Set();
   for(const qq of open){const key=route.project+"/"+qq.taskId+"/"+qq.messageId;keep.add(key);if(qCards.has(key))continue;
     const c=el("div","card q");const h=el("div","");h.append(el("span","who",qq.from),el("span","muted"," · "+qq.taskId+" «"+qq.taskTitle+"» · "+time(qq.askedAt)));c.append(h,el("div","",qq.question));
-    if(s.control){const f=el("form","");const ta=document.createElement("textarea");ta.placeholder="Ваш ответ агенту "+qq.from;const r2=el("div","row2");const b=el("button","","Ответить");b.type="submit";const note=el("span","note","");
+    if(s.control){const f=el("form","");const ta=document.createElement("textarea");ta.placeholder="Ваш ответ агенту "+qq.from;
+      // the agent's choices: one (radio) or several (checkboxes), its recommendation picked; the text box adds to it or replaces it
+      const ch=qq.choices;let picked=()=>[];
+      if(ch){const opts=el("div","qopts");const name="q-"+key;
+        ch.options.forEach(o=>{const l=el("label","qopt"+(o.label===ch.recommended?" rec":""));const i=document.createElement("input");i.type=ch.multiSelect?"checkbox":"radio";i.name=name;i.value=o.label;i.checked=o.label===ch.recommended;
+          const t=el("div","");t.append(el("b","",o.label));if(o.label===ch.recommended)t.append(el("span","tag","агент рекомендует"));if(o.description)t.append(el("div","muted",o.description));l.append(i,t);opts.append(l)});
+        f.append(opts);picked=()=>[...opts.querySelectorAll("input:checked")].map(i=>i.value);ta.placeholder="Комментарий к выбору или свой ответ вместо вариантов (необязательно)";ta.rows=2}const r2=el("div","row2");const b=el("button","","Ответить");b.type="submit";const note=el("span","note","");
       const x=el("button","ghost","Закрыть без ответа");x.type="button";x.title="агент ничего не получит: например, он уже сделал по своему предложению или вопрос решён иначе";
       x.onclick=async()=>{if(!confirm("Закрыть вопрос "+qq.from+" без ответа? Агент ничего не получит."))return;x.disabled=true;try{await post("/api/questions/dismiss",{taskId:qq.taskId,messageId:qq.messageId});await tick()}catch(e){note.className="note err";note.textContent=e.message;x.disabled=false}};
       r2.append(b,x,note);f.append(ta,r2);
-      f.onsubmit=async ev=>{ev.preventDefault();if(!ta.value.trim())return;b.disabled=true;note.className="note";note.textContent="отправляю…";
-        try{await post("/api/questions/answer",{taskId:qq.taskId,messageId:qq.messageId,answer:ta.value});note.className="note ok";note.textContent="отправлено";await tick()}catch(e){note.className="note err";note.textContent=e.message;b.disabled=false}};
+      f.onsubmit=async ev=>{ev.preventDefault();const sel=picked();const text=ta.value.trim();if(!sel.length&&!text)return;
+        const answer=sel.length?"Chosen: "+sel.map(x=>'"'+x+'"').join(", ")+(text?"\n"+text:""):text;
+        b.disabled=true;note.className="note";note.textContent="отправляю…";
+        try{await post("/api/questions/answer",{taskId:qq.taskId,messageId:qq.messageId,answer});note.className="note ok";note.textContent="отправлено";await tick()}catch(e){note.className="note err";note.textContent=e.message;b.disabled=false}};
       c.append(f)}else c.append(el("div","muted","ответить можно из UI, запущенного с --runners"));
     qCards.set(key,c);box.append(c)}
   for(const [key,c] of qCards)if(!keep.has(key)){c.remove();qCards.delete(key)}
@@ -1178,7 +1223,7 @@ function resetProject(){
   for(const c of qCards.values())c.remove();qCards.clear();for(const c of nCards.values())c.remove();nCards.clear();
   ["tasks","runs","events","agents","kpis","ov-runners","ov-phases","ov-events"].forEach(id=>$(id).replaceChildren());
   ["f-agent","f-task","f-model","f-status","e-task","e-type"].forEach(id=>{$(id).dataset.sig="";$(id).value=""});expandedRuns.clear();
-  $("newtask").hidden=true;$("formnote").textContent="";$("openspec").replaceChildren(new Option("— без OpenSpec —",""));
+  $("newtask").hidden=true;$("formnote").textContent="";$("openspec").replaceChildren(new Option("— без OpenSpec —",""),new Option("+ написать новый change…","__new__"));$("proposes-row").hidden=true;
 }
 showTab();tick();setInterval(tick,2000);
 </script>

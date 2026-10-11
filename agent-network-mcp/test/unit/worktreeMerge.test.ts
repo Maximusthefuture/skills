@@ -6,7 +6,7 @@ import type { RunnerOptions } from "../../src/runner.js";
 import { NetworkService } from "../../src/service.js";
 import { RunnerPool } from "../../src/ui/runners.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
-import { branchDiff, ensureWorktrees, fileDiff, mergeBranch, removeWorktrees } from "../../src/worktrees.js";
+import { branchDiff, ensureWorktrees, fileDiff, mergeBranch, mergeProjectInto, removeWorktrees } from "../../src/worktrees.js";
 import { tmpDir } from "../helpers/tmp.js";
 
 const git = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8" });
@@ -181,5 +181,30 @@ describe("a big diff", () => {
     expect(huge.patch.length).toBe(300_000);
     expect((await fileDiff(project, "HEAD", "swarm-backend", "three-dot", "f7.txt")).patch).toContain("+line 7");
     await expect(fileDiff(project, "HEAD", "swarm-backend", "three-dot", "--output=/tmp/x")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+});
+
+describe("a merged change into the agents' folders", () => {
+  it("the page says who lacks it and brings the project's branch into their branches", async () => {
+    const { project, agents, reviewer } = await stand();
+    mkdirSync(join(project, "openspec", "changes", "add-x"), { recursive: true });
+    commit(project, "openspec/changes/add-x/tasks.md", "- [ ] 1.1 do it\n");
+    const networkDir = join(project, ".agent-network");
+    const pool = new RunnerPool(networkDir, [...agents.map((a) => ({ id: a.id, command: ["x"], cwd: a.cwd, worktree: a.worktree, autostart: false })), { id: "tester", command: ["x"], cwd: `${project}-tester`, worktree: { project, branch: "swarm-tester" }, autostart: false }]);
+    ui = await startUiServer([{ networkDir, runners: pool }], { port: 0 });
+    const folders = async () => (await (await fetch(`${ui!.url}/api/openspec/folders?change=add-x&agents=backend,reviewer,tester`)).json()) as any;
+    // tester's worktree does not exist yet: it will be created from HEAD, with the change
+    expect(await folders()).toEqual({ change: "add-x", inProject: true, missing: [{ id: "backend", cwd: agents[0]!.cwd }, { id: "reviewer", cwd: reviewer }] });
+
+    writeFileSync(join(reviewer, "a.txt"), "dirty");
+    const r = (await (await fetch(`${ui.url}/api/openspec/sync`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ change: "add-x" }) })).json()) as any;
+    expect(r.result).toEqual([
+      { id: "backend", ok: true, text: "main → swarm-backend: fast-forward" },
+      { id: "reviewer", ok: false, text: expect.stringContaining("uncommitted changes") },
+    ]);
+    expect(r.missing).toEqual([{ id: "reviewer", cwd: reviewer }]);
+    git(reviewer, "checkout", "-q", "a.txt");
+    expect(await mergeProjectInto(project, reviewer)).toEqual({ from: "main", into: "swarm-reviewer", result: "fast-forward" });
+    expect((await folders()).missing).toEqual([]);
   });
 });

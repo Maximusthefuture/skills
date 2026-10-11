@@ -1,6 +1,6 @@
 import { AppError } from "../errors.js";
 import type { FileStore } from "../storage/fileStore.js";
-import type { Message, MessageType } from "../types.js";
+import type { Message, MessageType, QuestionChoices } from "../types.js";
 import { assertMessageId, assertTaskId } from "../validation.js";
 
 export interface NewMessage {
@@ -12,6 +12,7 @@ export interface NewMessage {
   content: string;
   replyTo?: string;
   files?: string[];
+  choices?: QuestionChoices;
 }
 
 export interface MessageFilter {
@@ -38,6 +39,7 @@ export class MessageStore {
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(input.files?.length ? { files: input.files } : {}),
       ...(input.urgent ? { urgent: true as const } : {}),
+      ...(input.choices ? { choices: input.choices } : {}),
       createdAt: new Date().toISOString(),
     }));
   }

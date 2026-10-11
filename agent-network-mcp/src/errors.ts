@@ -29,6 +29,8 @@ export type ErrorCode =
   | "OPENSPEC_NOT_READY"
   | "OPENSPEC_FAILED"
   | "MERGE_CONFLICT"
+  | "SPEC_ONLY"
+  | "OPENSPEC_INVALID"
   | "LOCK_TIMEOUT"
   | "INTERNAL_ERROR";
 

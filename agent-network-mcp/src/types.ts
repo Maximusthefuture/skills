@@ -81,6 +81,11 @@ export interface Task {
    * tasks.md by task number, report done numbers, the lead ticks them; the operator archives the change after DONE.
    */
   openspec?: { change: string; archivedAt?: string };
+  /**
+   * The task WRITES this OpenSpec change (openspec/changes/<change>/, which does not exist yet): the lead writes it, the
+   * others review it; no code is changed. After DONE the operator merges it and starts a task that implements it.
+   */
+  proposes?: { change: string };
 }
 
 /** A follow-up task the lead asks for when it integrates with PASS. */
@@ -220,6 +225,16 @@ export interface Message {
   readAt?: string;
   /** The operator sent it urgently: the agent's session was stopped and the next one started with it. */
   urgent?: true;
+  /** A question to the operator with choices (the form of Claude's AskUserQuestion): the page shows them as buttons. */
+  choices?: QuestionChoices;
+}
+
+export interface QuestionChoices {
+  options: { label: string; description?: string }[];
+  /** The label of the option the agent would take; the one it goes ahead with when nobody answers in time. */
+  recommended?: string;
+  /** Several options may be picked (checkboxes) instead of one. */
+  multiSelect?: true;
 }
 
 export const EVENT_TYPES = [

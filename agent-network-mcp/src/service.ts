@@ -1,10 +1,11 @@
-import { dirname } from "node:path";
+import { stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { AppError } from "./errors.js";
 import { EventHub } from "./events/eventHub.js";
 import { readGitContext } from "./git.js";
 import { mergeBranch, type MergeResult } from "./worktrees.js";
 import { writeHandoffMarker } from "./handoff.js";
-import { archiveChange, changePath, readChange, type Exec } from "./openspec.js";
+import { archiveChange, assertChangeName, changePath, hasChange, readChange, type Exec } from "./openspec.js";
 import { anyDeclared, covers, findOverlaps, matches, normalizePath, overlaps, ownersOf } from "./ownership.js";
 import { DEFAULT_MAX_FIX_ROUNDS, isHalt, PhaseManager, type Halt, type Transition } from "./phase/phaseManager.js";
 import { FileStore } from "./storage/fileStore.js";
@@ -30,6 +31,7 @@ import type {
   Message,
   MessageType,
   NetworkEvent,
+  QuestionChoices,
   SubtaskList,
   SyncFinding,
   SyncReport,
@@ -75,6 +77,8 @@ export interface NewTaskInput {
   openspec?: string;
   /** Cost limit in USD over all sessions of the task; absent = none. */
   maxCostUsd?: number;
+  /** The task writes this new OpenSpec change (openspec/changes/<name>/): the lead writes it, the others review it. */
+  proposes?: string;
 }
 
 /** A cost limit: a positive amount in USD (cents are kept). */
@@ -85,7 +89,9 @@ export function checkCostLimit(value: unknown, what = "maxCostUsd"): number {
 }
 
 /** An assignment that declares an empty file list: the agent changes nothing and reviews the others' work. */
-export function isReviewOnly(a: Assignment | undefined): boolean {
+export function isReviewOnly(a: Assignment | undefined, task?: Pick<Task, "proposes">): boolean {
+  // the author of a change-writing task holds only the change folder, and writing it is its work
+  if (task?.proposes && a?.files?.some((f) => f === `${changePath(task.proposes!.change)}/**`)) return false;
   // an OpenSpec lead without tasks of its own only holds the change folder (to tick tasks.md at INTEGRATE): still a reviewer
   return !!a && Array.isArray(a.files) && a.files.every((f) => CHANGE_DIR.test(f)) && !a.tasks?.length;
 }
@@ -118,6 +124,23 @@ function assertDependencies(assignments: Assignment[]): void {
 export function openspecDescription(change: string, operatorText: string): string {
   const head = `Implement the OpenSpec change ${changePath(change)}/: proposal.md (why and what), design.md (how), specs/ (each scenario is a test), tasks.md (the numbered tasks to split between the agents).`;
   return operatorText.trim() ? `${head}\n\n${operatorText.trim()}` : head;
+}
+
+export function proposeDescription(change: string, operatorText: string): string {
+  const head = `Write the OpenSpec change ${changePath(change)}/ (it does not exist yet): proposal.md (why and what), specs/<capability>/spec.md (requirements with WHEN/THEN scenarios, each one testable), design.md (how), tasks.md (numbered implementation tasks). Plan only: no code changes in this task.`;
+  return operatorText.trim() ? `${head}\n\nWhat is wanted (the operator's words):\n${operatorText.trim()}` : head;
+}
+
+/** Options of a question to the operator: 2..6 distinct labels, the recommended one among them. */
+export function checkChoices(c: QuestionChoices, toOperator: boolean): QuestionChoices {
+  if (!toOperator) throw new AppError("INVALID_INPUT", "options go with a question to the operator (to: \"operator\", without fyi)");
+  const options = (c.options ?? []).map((o) => ({ label: String(o?.label ?? "").trim(), ...(o?.description?.trim() ? { description: o.description.trim().slice(0, 500) } : {}) }));
+  if (options.length < 2 || options.length > 6) throw new AppError("INVALID_INPUT", "options: 2 to 6 choices, each {label, description?}");
+  if (options.some((o) => !o.label || o.label.length > 80)) throw new AppError("INVALID_INPUT", "options: every label is 1..80 characters, e.g. 'Service layer'");
+  if (new Set(options.map((o) => o.label.toLowerCase())).size !== options.length) throw new AppError("INVALID_INPUT", "options: the labels must differ");
+  const recommended = c.recommended?.trim();
+  if (recommended && !options.some((o) => o.label === recommended)) throw new AppError("INVALID_INPUT", `recommended must be one of the labels: ${options.map((o) => o.label).join(", ")}`);
+  return { options, ...(recommended ? { recommended } : {}), ...(c.multiSelect ? { multiSelect: true as const } : {}) };
 }
 
 /** NEEDS_FIX means "an ERROR must be fixed"; WARNING / INFO findings travel with PASS as notes. */
@@ -239,7 +262,8 @@ export class NetworkService {
 
   private async createTaskCore(createdBy: string, input: NewTaskInput, asAgent: boolean): Promise<Task> {
     const change = input.openspec?.trim() ? await readChange(this.projectDir, input.openspec.trim()) : null;
-    const title = input.title.trim() || change?.name || "";
+    const proposes = input.proposes?.trim() ? await this.checkNewChange(input.proposes.trim(), !!change) : undefined;
+    const title = input.title.trim() || change?.name || (proposes ? `OpenSpec change ${proposes}` : "");
     if (!title) throw new AppError("INVALID_INPUT", "title must not be empty");
     const agents = [...new Set(input.agents.map((a) => assertAgentId(a)))];
     if (agents.length < 2) throw new AppError("INVALID_INPUT", "A task needs at least two distinct agents");
@@ -257,10 +281,24 @@ export class NetworkService {
     const maxCostUsd = input.maxCostUsd === undefined ? undefined : checkCostLimit(input.maxCostUsd);
 
     const git = await readGitContext(this.projectDir);
-    const description = change ? openspecDescription(change.name, input.description) : input.description;
-    const task = await this.tasks.create({ title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps, ...(maxCostUsd !== undefined ? { maxCostUsd } : {}), ...(change ? { openspec: change.name } : {}) });
+    const description = change ? openspecDescription(change.name, input.description) : proposes ? proposeDescription(proposes, input.description) : input.description;
+    const task = await this.tasks.create({
+      title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps,
+      ...(maxCostUsd !== undefined ? { maxCostUsd } : {}), ...(change ? { openspec: change.name } : {}), ...(proposes ? { proposes } : {}),
+    });
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
+  }
+
+  /** A change-writing task: a free name in a project that uses OpenSpec (openspec/ exists; we never create it). */
+  private async checkNewChange(name: string, implementsOne: boolean): Promise<string> {
+    assertChangeName(name);
+    if (implementsOne) throw new AppError("INVALID_INPUT", "A task either writes an OpenSpec change (proposes) or implements one (openspec), not both");
+    if (!(await stat(join(this.projectDir, "openspec")).then((s) => s.isDirectory(), () => false))) {
+      throw new AppError("OPENSPEC_NOT_FOUND", `${this.projectDir} does not use OpenSpec yet (no openspec/ folder): run \`openspec init --tools claude,qwen\` there and commit it first`);
+    }
+    if (await hasChange(this.projectDir, name)) throw new AppError("INVALID_INPUT", `The change ${changePath(name)} exists already: implement it (openspec) or pick another name`);
+    return name;
   }
 
   /** Operator: retire a task (wrong or empty assignment). Agents move on to their next task. */
@@ -353,7 +391,7 @@ export class NetworkService {
         };
       });
       assertDependencies(normalized);
-      const assignments = task.openspec ? await this.splitOpenspec(task, normalized) : normalized;
+      const assignments = task.openspec ? await this.splitOpenspec(task, normalized) : task.proposes ? this.specOnly(task, normalized) : normalized;
       const overlaps = findOverlaps(assignments);
       if (overlaps.length) {
         const first = overlaps[0]!;
@@ -382,6 +420,24 @@ export class NetworkService {
       await this.emit({ type: "AGREEMENT_UPDATED", taskId: task.id, sourceAgent: this.me, payload: { proposedBy: this.me, version: agreement.version } });
       return { agreement };
     });
+  }
+
+  /**
+   * Change-writing task: the lead (the author) owns the change folder and nothing else, the others review (files: []).
+   * No code changes in such a task: the change is reviewed, merged and implemented by a task of its own.
+   */
+  private specOnly(task: Task, assignments: Assignment[]): Assignment[] {
+    const dir = `${changePath(task.proposes!.change)}/**`;
+    const lead = this.phases.integrator(task);
+    const wrong = assignments.filter((a) => (a.files ?? []).some((f) => (a.agentId === lead ? f !== dir : true)));
+    if (wrong.length) {
+      throw new AppError(
+        "SPEC_ONLY",
+        `This task writes the OpenSpec change ${changePath(task.proposes!.change)}/ and changes no code: the lead ${lead} gets files ["${dir}"], every other agent files [] (it reviews the change). Wrong files for: ${wrong.map((a) => `${a.agentId} (${(a.files ?? []).join(", ")})`).join("; ")}.`,
+        { lead, files: dir },
+      );
+    }
+    return assignments.map((a) => ({ ...a, files: a.agentId === lead ? [dir] : [], ...(a.tasks ? { tasks: [] } : {}) }));
   }
 
   /**
@@ -455,7 +511,7 @@ export class NetworkService {
 
   // ---------------------------------------------------------------- messages
 
-  async sendMessage(input: { taskId: string; to: string; type: MessageType; content: string; replyTo?: string; files?: string[] }): Promise<Message> {
+  async sendMessage(input: { taskId: string; to: string; type: MessageType; content: string; replyTo?: string; files?: string[]; choices?: QuestionChoices }): Promise<Message> {
     await this.requireMe();
     const task = await this.requireMember(input.taskId);
     if (task.status === "COMPLETED") throw new AppError("ALREADY_COMPLETED", "The task is completed");
@@ -464,11 +520,12 @@ export class NetworkService {
     if (to !== OPERATOR && !task.agents.includes(to)) throw new AppError("NOT_ASSIGNED", `Agent '${to}' is not part of ${task.id}`);
     if (to === OPERATOR && input.files?.length) throw new AppError("INVALID_INPUT", "The operator owns no files: ask it questions, not for files");
     if (!input.content.trim()) throw new AppError("INVALID_INPUT", "content must not be empty");
+    const choices = input.choices ? checkChoices(input.choices, to === OPERATOR && input.type === "QUESTION") : undefined;
     if (input.replyTo) {
       assertMessageId(input.replyTo);
       await this.messages.get(task.id, input.replyTo);
     }
-    const message = await this.messages.create({ taskId: task.id, from: this.me, to, type: input.type, content: input.content, replyTo: input.replyTo, files: input.files });
+    const message = await this.messages.create({ taskId: task.id, from: this.me, to, type: input.type, content: input.content, replyTo: input.replyTo, files: input.files, ...(choices ? { choices } : {}) });
     await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: to, sourceAgent: this.me, payload: { messageId: message.id, from: this.me, type: message.type, ...(message.files ? { files: message.files } : {}) } });
     return message;
   }
@@ -553,7 +610,7 @@ export class NetworkService {
       assignments,
       yours: mine?.files ?? [],
       /** The agreement gives this agent no files: it changes nothing and reviews the others' work. */
-      reviewOnly: isReviewOnly(mine),
+      reviewOnly: isReviewOnly(mine, await this.tasks.find(taskId).then((t) => t ?? undefined)),
       grantedToYou: grants.filter((g) => g.to === agentId).flatMap((g) => g.files.map((f) => ({ file: f, from: g.from }))),
       grantedByYou: grants.filter((g) => g.from === agentId).map((g) => ({ to: g.to, files: g.files })),
     };
