@@ -187,6 +187,64 @@ describe("several projects on one page", () => {
     expect(((await (await post(t.id, "cancel")).json()) as any).task.status).toBe("CANCELLED");
   });
 
+  it("serves the agents' activity: tool calls and results with agent and task, only what is new after ?after=", async () => {
+    const shop = await project("shop");
+    const t = await shop.operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    let emit!: RunnerOptions["onActivity"];
+    const pool = new RunnerPool(shop.networkDir, [{ id: "backend", command: ["x"] }, { id: "reviewer", command: ["x"] }], {
+      run: (o) => {
+        o.onSession?.({ taskId: t.id, attempt: 1, startedAt: new Date().toISOString() });
+        emit = o.onActivity;
+        o.log?.(`${t.id}: starting session 1`);
+        return new Promise((r) => o.signal!.addEventListener("abort", () => r(0)));
+      },
+    });
+    ui = await startUiServer([{ networkDir: shop.networkDir, runners: pool }], { port: 0 });
+    pool.start("backend");
+    emit!({ kind: "tool_use", tool: "Bash", summary: "kill -9 1", detail: '{"command":"kill -9 1"}' });
+    emit!({ kind: "tool_result", tool: "Bash", isError: true, durationMs: 40, summary: "denied" });
+    pool.recordActivity("supervisor", { kind: "text", summary: "the test holds a lock" }, { taskId: t.id });
+    const get = async (q: string) => (await (await fetch(`${ui!.url}/api/activity${q}`)).json()) as any;
+    const all = await get("");
+    expect(all.events.map((e: any) => [e.agentId, e.kind, e.summary, e.taskId ?? null])).toEqual([
+      ["backend", "runner", "runner started", null],
+      ["backend", "runner", `${t.id}: starting session 1`, t.id],
+      ["backend", "tool_use", "kill -9 1", t.id],
+      ["backend", "tool_result", "denied", t.id],
+      ["supervisor", "text", "the test holds a lock", t.id],
+    ]);
+    expect(all.events[3]).toMatchObject({ isError: true, durationMs: 40, attempt: 1 });
+    expect((await get(`?after=${all.events[2].seq}`)).events.map((e: any) => e.kind)).toEqual(["tool_result", "text"]);
+    expect((await get(`?after=${all.lastSeq}`)).events).toEqual([]);
+    await pool.stopAll();
+  });
+
+  it("the operator writes to an agent from the page; supervisor routes say when there is none, read-only pages refuse both", async () => {
+    const shop = await project("shop");
+    const blog = await project("blog");
+    const t = await shop.operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    const b = await blog.operator.createTaskAsOperator({ title: "p", description: "d", agents: ["writer", "editor"] });
+    const pool = new RunnerPool(shop.networkDir, [{ id: "backend", command: ["x"] }]);
+    ui = await startUiServer([{ networkDir: shop.networkDir, runners: pool }, { networkDir: blog.networkDir }], { port: 0 });
+    const post = (path: string, body: unknown) => fetch(`${ui!.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    const sent = await post(`/api/tasks/${t.id}/message?project=shop`, { to: "reviewer", text: "Look at the DTO first." });
+    expect(sent.status).toBe(201);
+    expect(((await sent.json()) as any).message).toMatchObject({ from: "operator", to: "reviewer", type: "INFORMATION", content: "Look at the DTO first." });
+    expect((await post(`/api/tasks/${t.id}/message?project=shop`, { to: "stranger", text: "hi" })).status).toBe(400);
+    expect((await post(`/api/tasks/${t.id}/message?project=shop`, { to: "reviewer", text: "  " })).status).toBe(400);
+
+    const sup = (await (await fetch(`${ui.url}/api/supervisor?project=shop`)).json()) as any;
+    expect(sup).toEqual({ status: null, journal: [], journalTotal: 0 });
+    expect((await (await fetch(`${ui.url}/api/state?project=shop`)).json() as any).supervisor).toMatchObject({ available: false, needsYou: [] });
+    expect((await post("/api/supervisor/start?project=shop", {})).status).toBe(404);
+    expect((await post("/api/supervisor/note?project=shop", { text: "checked by hand" })).status).toBe(201); // your own note in the journal
+
+    expect((await post(`/api/tasks/${b.id}/message?project=blog`, { to: "writer", text: "hi" })).status).toBe(405);
+    expect((await post("/api/supervisor/start?project=blog", {})).status).toBe(405);
+    expect((await (await fetch(`${ui.url}/api/state?project=blog`)).json() as any).supervisor).toBeNull();
+  });
+
   it("refuses two projects with the same network", async () => {
     const shop = await project("shop");
     await expect(startUiServer([{ networkDir: shop.networkDir }, { networkDir: shop.networkDir }], { port: 0 })).rejects.toMatchObject({ code: "INVALID_CONFIG" });

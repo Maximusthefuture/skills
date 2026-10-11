@@ -447,6 +447,22 @@ export class NetworkService {
     return answer;
   }
 
+  /**
+   * The operator (or the supervisor acting for it) writes to an agent of a task without being asked: an ordinary
+   * message, so a waiting agent wakes up with it and a busy one gets it through its hooks.
+   */
+  async messageAgent(input: { taskId: string; to: string; content: string }): Promise<Message> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator writes to agents this way");
+    const task = await this.tasks.get(assertTaskId(input.taskId));
+    if (task.status === "COMPLETED" || task.status === "CANCELLED") throw new AppError("ALREADY_COMPLETED", `Task ${task.id} is ${task.status}`);
+    const to = assertAgentId(input.to, "to");
+    if (!task.agents.includes(to)) throw new AppError("NOT_ASSIGNED", `Agent '${to}' is not part of ${task.id}`);
+    if (!input.content.trim()) throw new AppError("INVALID_INPUT", "The message must not be empty");
+    const message = await this.messages.create({ taskId: task.id, from: OPERATOR, to, type: "INFORMATION", content: input.content.trim() });
+    await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: to, sourceAgent: OPERATOR, payload: { messageId: message.id, from: OPERATOR, type: message.type } });
+    return message;
+  }
+
   async listMessages(input: { taskId: string; direction?: "inbox" | "sent" | "all"; unreadOnly?: boolean }): Promise<Message[]> {
     await this.requireMe();
     const task = await this.requireMember(input.taskId);

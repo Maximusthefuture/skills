@@ -2,14 +2,13 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isHandedOver } from "./handoff.js";
+import { progressMark } from "./progress.js";
 import { NetworkService } from "./service.js";
-import { SessionOutput, type SessionResult } from "./sessionOutput.js";
+import { SessionOutput, type ActivityItem, type SessionResult } from "./sessionOutput.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore, defaultIsProcessAlive } from "./stores/agentStore.js";
 import { MessageStore } from "./stores/messageStore.js";
-import { EventStore } from "./stores/eventStore.js";
 import { SessionStore } from "./stores/sessionStore.js";
-import { SubtaskStore } from "./stores/subtaskStore.js";
 import { TaskStore } from "./stores/taskStore.js";
 import type { Phase, Task } from "./types.js";
 
@@ -27,7 +26,8 @@ export const DEFAULT_PROMPT =
   "and read nextAction in every response; when it is wait, call wait(). End your turn only when nextAction is done. " +
   "Nobody reads your replies in this session: if something only a human can decide is unclear (scope, requirements), ask with " +
   'send_message({to: "operator", message: <question and the option you would take>}) and call wait() for the answer; ' +
-  "with no answer in 10 minutes go ahead with that option and tell the other agents. Never invent the scope.{resume}";
+  "with no answer in 10 minutes go ahead with that option and tell the other agents. Never invent the scope. " +
+  "Stuck on the environment (a refused command, a hung process, an unreachable service) after two attempts: stop retrying and ask the operator the same way.{resume}";
 
 const RESUME =
   " This is session {attempt} for this task: the previous one ended before the task was done. " +
@@ -163,6 +163,8 @@ export interface RunnerOptions {
   isProcessAlive?: (pid: number) => boolean;
   /** Told when a session starts and (with null) when it ends: the UI shows what each runner is doing right now. */
   onSession?: (session: RunningSession | null) => void;
+  /** The sessions' activity as it comes (tool calls, results, text): the activity feed on the page. */
+  onActivity?: (e: ActivityItem) => void;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -178,32 +180,38 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-interface SessionRun {
+export interface SessionRun {
   code: number;
   result?: SessionResult;
+  /** The CLI's id of the session, when its output named one. */
+  sessionId?: string;
 }
 
 /**
  * Runs the agent session; on abort sends SIGTERM, then SIGKILL after 10 s. Its stdout goes through SessionOutput
  * (JSON events become a readable log and the final usage is kept); `sink` receives what to show (null = nothing).
  */
-function runSession(argv: string[], env: NodeJS.ProcessEnv, cwd: string | undefined, sink: ((text: string) => void) | null, signal?: AbortSignal): Promise<SessionRun> {
+export function runSession(argv: string[], env: NodeJS.ProcessEnv, cwd: string | undefined, sink: ((text: string) => void) | null, signal?: AbortSignal, onEvent?: (e: ActivityItem) => void): Promise<SessionRun> {
   return new Promise((done) => {
     const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
-    const parsed = new SessionOutput();
+    const parsed = new SessionOutput(onEvent);
     const show = (text: string): void => {
       if (text && sink) sink(text);
     };
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (text: string) => show(parsed.feed(text)));
-    child.stderr.on("data", (text: string) => show(text));
+    child.stderr.on("data", (text: string) => {
+      show(text);
+      for (const line of text.split("\n")) if (line.trim()) onEvent?.({ kind: "stderr", summary: line.trim().slice(0, 300) });
+    });
     let killTimer: NodeJS.Timeout | undefined;
     const stop = (): void => {
       child.kill("SIGTERM");
       killTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
     };
-    signal?.addEventListener("abort", stop, { once: true });
+    if (signal?.aborted) stop(); // stopped while the session was being prepared
+    else signal?.addEventListener("abort", stop, { once: true });
     let settled = false;
     const finish = (code: number): void => {
       if (settled) return;
@@ -212,7 +220,8 @@ function runSession(argv: string[], env: NodeJS.ProcessEnv, cwd: string | undefi
       signal?.removeEventListener("abort", stop);
       show(parsed.end());
       const result = parsed.result();
-      done({ code, ...(result ? { result } : {}) });
+      const sessionId = parsed.sessionId();
+      done({ code, ...(result ? { result } : {}), ...(sessionId ? { sessionId } : {}) });
     };
     child.on("error", (e: NodeJS.ErrnoException) => {
       show(`cannot start ${argv[0]}: ${e.code ?? e.message}\n`);
@@ -246,8 +255,6 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
   const agents = new AgentStore(fs);
   const messages = new MessageStore(fs);
   const sessions = new SessionStore(fs);
-  const subtasks = new SubtaskStore(fs);
-  const events = new EventStore(fs);
   const turnLimit = turnLimitOf(opts.command);
 
   const attempts = new Map<string, number>();
@@ -265,11 +272,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     if (line !== note) log(line);
     note = line;
   };
-  /** What the agent has done on the task: its checklist and the events it caused (messages, proposals, reports). */
-  const progressMark = async (taskId: string): Promise<string> => {
-    const [list, evs] = await Promise.all([subtasks.get(taskId, agent), events.list(taskId)]);
-    return JSON.stringify([list.items.map((i) => `${i.id}:${i.status}`), evs.filter((e) => e.event.sourceAgent === agent).length]);
-  };
+  /** What the agent has done on the task (see progress.ts): compared before and after a session. */
+  const progress = (taskId: string): Promise<string> => progressMark(fs, taskId, agent, opts.cwd);
   /** Phase/status changes and new messages for the agent: a reason to try a given-up task again. */
   const signature = async (t: Task): Promise<string> => {
     const mine = await messages.list(t.id, { to: agent });
@@ -343,7 +347,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       ...(freshPhases.length ? { AGENT_NETWORK_FRESH_PHASES: freshPhases.join(",") } : {}),
     };
     say(`${task.id}: starting session ${attempt} (phase ${task.phase}${handoff ? ", fresh after a handoff" : afterTurnLimit ? ", going on after the turn limit" : ""}${model ? `, model ${model}` : ""})`);
-    const progressBefore = await progressMark(task.id).catch(() => "");
+    const progressBefore = await progress(task.id).catch(() => "");
     const finishedBefore = new Set((await tasks.listForAgent(agent)).filter(isFinished).map((t) => t.id));
     const sink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
     const startedAt = new Date();
@@ -351,12 +355,12 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const wantsSystem = opts.command.some((a) => a.includes("{systemPrompt}"));
     const systemText = wantsSystem ? (opts.systemPromptFile ? await readText(opts.systemPromptFile, "system prompt file", log) : undefined) : undefined;
     const system = wantsSystem ? renderPrompt(systemText?.trim() || FALLBACK_SYSTEM_PROMPT, vars) : undefined;
-    const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal);
+    const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal, opts.onActivity);
     const endedAt = new Date();
     opts.onSession?.(null);
     // a session stopped by its turn limit after doing something is a planned end (short sessions keep the context small)
     const hitTurnLimit = result?.stopReason === "max_turns" || (turnLimit !== undefined && (result?.numTurns ?? 0) >= turnLimit);
-    const plannedTurnLimit = hitTurnLimit && (await progressMark(task.id).catch(() => progressBefore)) !== progressBefore;
+    const plannedTurnLimit = hitTurnLimit && (await progress(task.id).catch(() => progressBefore)) !== progressBefore;
     // a session may go on to the next task by itself (e.g. a follow-up): its time and tokens are counted for this task
     const alsoTasks = (await tasks.listForAgent(agent)).filter((t) => isFinished(t) && t.id !== task.id && !finishedBefore.has(t.id));
     await sessions

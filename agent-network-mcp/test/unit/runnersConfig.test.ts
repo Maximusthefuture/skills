@@ -31,6 +31,38 @@ describe("runners config", () => {
     expect(qwen.agents.map((a) => a.model)).toEqual(["qwen/qwen3.5-9b", "qwen/qwen3.5-9b", "qwen/qwen3.5-9b"]); // {model} in the command
     expect(qwen.prices).toEqual({ "qwen/qwen3.5-9b": { input: 0, output: 0 }, "qwen/qwen3-coder-30b": { input: 0, output: 0 } });
     expect(claude.agents.map((a) => a.model)).toEqual(["sonnet", "sonnet", "haiku"]);
+
+    // the supervisor: Claude on sonnet, Qwen on a model from LM Studio; read-only file tools, its own MCP server, example tools
+    expect(claude.supervisor).toMatchObject({ model: "sonnet", models: ["haiku", "sonnet", "opus"], promptFile: join(EXAMPLES, "supervisor-prompt.md"), systemPromptFile: join(EXAMPLES, "supervisor-system-prompt.md"), maxSessionsPerHour: 6, budgetUsd: 5, autostart: true, disabledTools: [] });
+    expect(claude.supervisor!.command).toEqual(expect.arrayContaining(["--tools", "Read,Grep,Glob", "--allowedTools", "mcp__supervisor", "/abs/path/agent-network-mcp/examples/runner/supervisor-mcp.json"]));
+    expect(claude.supervisor!.tools.map((t) => t.name)).toEqual(["surefire_failures", "agent_git_log", "testcontainers"]);
+    expect(qwen.supervisor).toMatchObject({ model: "qwen/qwen3-coder-30b", rules: { questionAfterSec: 60, stallMin: 15, repeatCount: 3, testMin: 10 } });
+    expect(qwen.supervisor!.command.slice(0, 2)).toEqual(["qwen", "{prompt}"]);
+    expect(qwen.supervisor!.command).toEqual(expect.arrayContaining(["run_shell_command", "write_file", "edit", "--allowed-tools", "mcp__supervisor"]));
+    expect(qwen.prices!["qwen/qwen3-coder-30b"]).toEqual({ input: 0, output: 0 }); // its budget is counted with these
+  });
+
+  it("the supervisor section is checked at start: command, model, rules, tools and the tools switched off", async () => {
+    const dir = await tmpDir();
+    await writeFile(join(dir, "sup.md"), "supervise");
+    const load = async (supervisor: unknown) => {
+      const p = join(dir, `c${Math.random()}.json`);
+      await writeFile(p, JSON.stringify({ defaults: { command: ["x", "{prompt}"] }, agents: [{ id: "a" }], supervisor }));
+      return loadRunnersConfig(p);
+    };
+    const ok = { command: ["claude", "-p", "{prompt}", "--model", "{model}"], model: "sonnet", promptFile: "sup.md" };
+    expect((await load(ok)).supervisor).toMatchObject({ promptFile: join(dir, "sup.md"), rules: { questionAfterSec: 60 }, maxSessionsPerHour: 6, autostart: true, tools: [], disabledTools: [] });
+    const refused = async (supervisor: unknown, text: string) => expect(load(supervisor)).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.stringContaining(text) });
+    await refused({ ...ok, command: [] }, 'needs "command"');
+    await refused({ ...ok, model: undefined }, 'command has {model}: set "model"');
+    await refused({ ...ok, promptFile: "missing.md" }, "promptFile");
+    await refused({ ...ok, rules: { stallMins: 5 } }, 'unknown rule "stallMins"');
+    await refused({ ...ok, rules: { stallMin: 0 } }, "rules.stallMin must be a number > 0");
+    await refused({ ...ok, maxSessionsPerHour: 0 }, "maxSessionsPerHour");
+    await refused({ ...ok, disabledTools: ["nope"] }, 'disabledTools: no tool "nope"');
+    await refused({ ...ok, tools: [{ name: "overview", description: "x", command: ["ls"] }] }, "is a built-in tool");
+    await refused({ ...ok, tools: [{ name: "logs", description: "x", command: ["cat", "{file}"] }] }, "{file} is neither a param");
+    await refused({ ...ok, tools: [{ name: "logs", description: "x", command: ["ls"] }, { name: "logs", description: "y", command: ["ls"] }] }, '"logs" is listed twice');
   });
 
   it("refuses a config without agents, without a command or with a repeated id", async () => {

@@ -91,6 +91,9 @@ Rules:
   in the question: with no answer in 10 minutes the server tells you to go ahead with it; do so and tell the other agents
   (`send_message`) and your `result`. A later answer still arrives in `pendingMessages`.
 - Anything only a human can decide (requirements, scope, an irreversible action) goes to the user the same way.
+- When the environment stops you (a command is refused, a process hangs, a service or port cannot be reached) and two
+  attempts did not help, stop retrying and never work around a refusal: ask the operator with `send_message` (what is
+  stuck, what you tried, what you need, the option you will take otherwise) and go on with what does not depend on it.
 - Never assume the phase; use `swarm_context`.
 - Only perform actions from `allowedActions`.
 - Do not make up facts about other agents; ask them with `send_message`.

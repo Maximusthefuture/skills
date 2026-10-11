@@ -44,8 +44,8 @@ export interface TaskStats {
   startedAt: string;
   finishedAt: string | null;
   elapsedMs: number;
-  /** Time per phase, summed when a phase repeats (fix rounds); DONE is not counted. */
-  phases: { phase: Phase; ms: number }[];
+  /** Time per phase, summed when a phase repeats (fix rounds); visits = each stay in it, in order. DONE is not counted. */
+  phases: { phase: Phase; ms: number; visits: number[] }[];
   sessions: number;
   sessionsWithoutUsage: number;
   usage: TokenUsage | null;
@@ -80,8 +80,10 @@ export function taskStats(task: Task, sessions: SessionRecord[], countedIn: stri
     const until = i + 1 < history.length ? new Date(history[i + 1]!.at).getTime() : end;
     const ms = Math.max(0, until - new Date(h.at).getTime());
     const row = phases.find((p) => p.phase === h.phase);
-    if (row) row.ms += ms;
-    else phases.push({ phase: h.phase, ms });
+    if (row) {
+      row.ms += ms;
+      row.visits.push(ms);
+    } else phases.push({ phase: h.phase, ms, visits: [ms] });
   });
 
   let usage: TokenUsage | null = null;

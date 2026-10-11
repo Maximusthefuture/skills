@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -121,9 +122,9 @@ describe("agent runner", () => {
 
   it("a session stopped by its turn limit after progress is a planned end: a fresh one goes on at once; without progress it is a failure", async () => {
     const s = await setup();
-    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "turns:3", "--max-turns", "3", "{prompt}"], { maxRestarts: 0, restartDelayMs: 60_000 });
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "turns:3", "--max-turns", "3", "{prompt}"], { maxRestarts: 0, restartDelayMs: 60_000, cwd: await tmpDir() });
     const t = await s.newTask("Long work in short sessions");
-    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "task done");
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "task done", 15_000); // git checks per session: slow under load
     expect(await r.stop()).toBe(0);
     const runs = s.launches();
     expect(runs.map((l) => l.attempt)).toEqual([1, 2, 3]);
@@ -134,8 +135,19 @@ describe("agent runner", () => {
     const sessions = await new SessionStore(await FileStore.open(s.networkDir)).list(t.id);
     expect(sessions.map((x) => [x.exitCode, x.turnLimit ?? false])).toEqual([[1, true], [1, true], [0, false]]);
 
+    // changed files in its git folder are progress too, even with nothing ticked
+    const repo = await tmpDir();
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    const disk = await setup();
+    const d = start(disk.networkDir, [process.execPath, FAKE, disk.log, "turns-files:2", "--max-turns", "3"], { maxRestarts: 0, cwd: repo });
+    const dt = await disk.newTask("Edits only");
+    await until(async () => (await disk.tasks.get(dt.id)).status === "COMPLETED", "task done", 15_000);
+    expect(disk.launches().map((l) => l.attempt)).toEqual([1, 2]);
+    await d.stop();
+
     const idle = await setup();
-    const p = start(idle.networkDir, [process.execPath, FAKE, idle.log, "turns-idle:0", "--max-turns=3", "{prompt}"], { maxRestarts: 0 });
+    // its own empty folder: the runner compares the folder's git state, and the repository around the tests changes under load
+    const p = start(idle.networkDir, [process.execPath, FAKE, idle.log, "turns-idle:0", "--max-turns=3", "{prompt}"], { maxRestarts: 0, cwd: await tmpDir() });
     await idle.newTask("Waits out its turns");
     await until(() => p.lines.some((l) => l.includes("giving up until the task changes")), "give up");
     expect(idle.launches().map((l) => l.attempt)).toEqual([1]);

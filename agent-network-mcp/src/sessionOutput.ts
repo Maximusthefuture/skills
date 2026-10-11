@@ -23,6 +23,8 @@ export interface SessionResult {
   model?: string;
   /** The CLI stopped the session at its turn limit (Claude Code: result subtype error_max_turns). */
   stopReason?: "max_turns";
+  /** The session's final text (the result event), shortened. */
+  text?: string;
 }
 
 /**
@@ -43,12 +45,87 @@ export function normalizeUsage(raw: unknown): TokenUsage | undefined {
 }
 
 const MAX_RAW = 4 * 1024 * 1024;
+const MAX_DETAIL = 20_000;
+
+/**
+ * One thing an agent session did, for the activity feed on the page: what it thought and said, which tool it called
+ * with which arguments, what came back (and whether it was an error), how the session ended.
+ */
+export type ActivityKind = "session" | "thinking" | "text" | "tool_use" | "tool_result" | "result" | "runner" | "stderr";
+
+export interface ActivityItem {
+  kind: ActivityKind;
+  /** tool_use / tool_result: the tool's name. */
+  tool?: string;
+  /** tool_result: the tool reported an error (a refused command, a failing call). */
+  isError?: boolean;
+  /** tool_result: time since its tool_use. */
+  durationMs?: number;
+  /** One line for the feed. */
+  summary: string;
+  /** The whole thing (arguments as JSON, the full result text), shortened. */
+  detail?: string;
+}
+
+const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const firstLine = (s: string) => s.trim().split("\n").find((l) => l.trim())?.trim() ?? "";
+/** A JSON result (MCP tools) on one line instead of its first line, which would be just "{". */
+const resultSummary = (s: string): string => {
+  const t = s.trim();
+  if (t.startsWith("{") || t.startsWith("[")) {
+    try {
+      return JSON.stringify(JSON.parse(t));
+    } catch {
+      // not JSON after all
+    }
+  }
+  return firstLine(t);
+};
+
+/** A long absolute path shown by its last segments. */
+function shortPath(p: unknown): string {
+  const s = String(p ?? "");
+  const parts = s.split("/");
+  return s.length > 70 && parts.length > 4 ? `…/${parts.slice(-3).join("/")}` : s;
+}
+
+/** The one line that says what a tool call does: the command, the file, the pattern; MCP tools by their arguments. */
+export function toolSummary(name: string, input: unknown): string {
+  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const n = name.toLowerCase();
+  if (n === "bash" || n === "run_shell_command") return cut(String(i.command ?? ""), 300);
+  if (["read", "write", "edit", "multiedit", "read_file", "write_file", "replace", "edit_file", "notebookedit"].includes(n)) return shortPath(i.file_path ?? i.absolute_path ?? i.path ?? i.notebook_path);
+  if (n === "glob") return String(i.pattern ?? "");
+  if (n === "grep" || n === "search_file_content") return `${String(i.pattern ?? "")}${i.path ? ` in ${shortPath(i.path)}` : ""}`;
+  const json = JSON.stringify(i);
+  return cut(json === "{}" ? "" : json, 300);
+}
+
+function resultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((c) => (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "")).join("\n");
+  return content === undefined ? "" : JSON.stringify(content);
+}
 
 export class SessionOutput {
   private partial = "";
   private raw = "";
   private found: SessionResult | undefined;
   private model: string | undefined;
+  private session: string | undefined;
+  /** tool_use id -> its tool and when it was called, to name and time the result. */
+  private calls = new Map<string, { tool: string; at: number }>();
+
+  /** onEvent receives the session's activity (see ActivityItem) as it comes. */
+  constructor(private readonly onEvent?: (e: ActivityItem) => void, private readonly now: () => number = Date.now) {}
+
+  private emit(e: ActivityItem): void {
+    try {
+      this.onEvent?.(e);
+    } catch {
+      // a broken listener must not break the session's log
+    }
+  }
 
   /** Feed a stdout chunk; returns the readable text to show for it (possibly empty). */
   feed(chunk: string): string {
@@ -72,6 +149,11 @@ export class SessionOutput {
     return rest;
   }
 
+  /** The CLI's own id of the session (stream-json init): Claude Code keeps its transcript under that name. */
+  sessionId(): string | undefined {
+    return this.session;
+  }
+
   result(): SessionResult | undefined {
     return this.found ? { ...this.found, ...(this.model && !this.found.model ? { model: this.model } : {}) } : undefined;
   }
@@ -88,6 +170,40 @@ export class SessionOutput {
     return `${line}\n`;
   }
 
+  private assistantActivity(message: unknown): void {
+    const content = (message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      const b = block as { type?: string; text?: string; thinking?: string; name?: string; id?: string; input?: unknown };
+      if (b.type === "text" && b.text?.trim()) this.emit({ kind: "text", summary: cut(firstLine(b.text), 300), ...(b.text.trim().length > 300 || b.text.includes("\n") ? { detail: cut(b.text.trim(), MAX_DETAIL) } : {}) });
+      else if (b.type === "thinking" && b.thinking?.trim()) this.emit({ kind: "thinking", summary: cut(firstLine(b.thinking), 300), detail: cut(b.thinking.trim(), MAX_DETAIL) });
+      else if (b.type === "tool_use" && b.name) {
+        if (b.id) this.calls.set(b.id, { tool: b.name, at: this.now() });
+        this.emit({ kind: "tool_use", tool: b.name, summary: toolSummary(b.name, b.input), detail: cut(JSON.stringify(b.input ?? {}, null, 2), MAX_DETAIL) });
+      }
+    }
+  }
+
+  /** What came back from the tools: a "user" event with tool_result blocks. */
+  private toolResults(message: unknown): void {
+    const content = (message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      const b = block as { type?: string; tool_use_id?: string; is_error?: boolean; content?: unknown };
+      if (b.type !== "tool_result") continue;
+      const call = b.tool_use_id ? this.calls.get(b.tool_use_id) : undefined;
+      if (b.tool_use_id) this.calls.delete(b.tool_use_id);
+      const text = resultText(b.content);
+      this.emit({
+        kind: "tool_result",
+        ...(call ? { tool: call.tool, durationMs: this.now() - call.at } : {}),
+        ...(b.is_error ? { isError: true } : {}),
+        summary: cut(resultSummary(text) || (b.is_error ? "error" : "(empty)"), 300),
+        ...(text.trim() ? { detail: cut(text, MAX_DETAIL) } : {}),
+      });
+    }
+  }
+
   /** Returns the text to show, or null to hide the event. */
   private event(e: unknown): string | null {
     if (Array.isArray(e)) {
@@ -100,11 +216,18 @@ export class SessionOutput {
       case "system":
         if (ev.subtype === "init" && typeof ev.model === "string") {
           this.model = ev.model;
+          if (typeof ev.session_id === "string") this.session = ev.session_id;
+          const tools = Array.isArray(ev.tools) ? ev.tools.length : undefined;
+          this.emit({ kind: "session", summary: `model ${ev.model}${tools !== undefined ? ` · ${tools} tools` : ""}`, detail: cut(JSON.stringify(ev, null, 2), MAX_DETAIL) });
           return `[session] model ${ev.model}\n`;
         }
         return null;
       case "assistant":
+        this.assistantActivity(ev.message);
         return assistantText(ev.message);
+      case "user":
+        this.toolResults(ev.message);
+        return null;
       case "result": {
         const usage = normalizeUsage(ev.usage);
         const models = ev.modelUsage && typeof ev.modelUsage === "object" ? Object.keys(ev.modelUsage) : [];
@@ -116,9 +239,17 @@ export class SessionOutput {
           ...(typeof ev.is_error === "boolean" ? { isError: ev.is_error } : {}),
           ...(models.length ? { model: models.join(", ") } : {}),
           ...(ev.subtype === "error_max_turns" ? { stopReason: "max_turns" as const } : {}),
+          ...(typeof ev.result === "string" && ev.result.trim() ? { text: ev.result.trim().slice(0, 2000) } : {}),
         };
         const text = typeof ev.result === "string" ? ev.result.trim() : "";
         const tokens = usage ? ` · tokens ${usage.total} (in ${usage.input}, out ${usage.output})` : "";
+        const parts = [
+          typeof ev.num_turns === "number" ? `${ev.num_turns} turns` : "",
+          usage ? `${usage.total} tokens` : "",
+          typeof ev.total_cost_usd === "number" ? `$${ev.total_cost_usd.toFixed(2)}` : "",
+          ev.subtype === "error_max_turns" ? "turn limit" : ev.is_error === true ? "error" : "",
+        ].filter(Boolean);
+        this.emit({ kind: "result", ...(ev.is_error === true ? { isError: true } : {}), summary: `${parts.join(" · ")}${text ? ` — ${cut(firstLine(text), 200)}` : ""}`, ...(text ? { detail: cut(text, MAX_DETAIL) } : {}) });
         return `[result] ${text.length > 600 ? `${text.slice(0, 600)}…` : text}${tokens}\n`;
       }
       default:

@@ -1,10 +1,13 @@
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { AppError } from "../errors.js";
 import { parseFreshPhases } from "../handoff.js";
 import { isValidModel, runRunner, usesModel, type RunnerOptions, type RunningSession } from "../runner.js";
+import type { ActivityItem } from "../sessionOutput.js";
 import type { Phase } from "../types.js";
 import type { ModelPrice, Prices } from "../stats.js";
+import { DEFAULT_RULES, type DetectRules } from "../supervisor/detect.js";
+import { BUILTIN_TOOLS, parseCustomTool, type CustomTool } from "../supervisor/tools.js";
 import { assertAgentId } from "../validation.js";
 
 /**
@@ -40,9 +43,36 @@ export interface RunnerAgentConfig {
   autostart?: boolean;
 }
 
+/**
+ * "supervisor": the agent that looks after the others when something goes wrong (see src/supervisor). Its command is a
+ * CLI like the agents' (Claude Code or Qwen Code) with "{prompt}" and, for a choice of model, "{model}".
+ */
+export interface SupervisorConfig {
+  command: string[];
+  model?: string;
+  /** The choice offered on the page. */
+  models?: string[];
+  /** Its instructions; read before every session. */
+  promptFile: string;
+  systemPromptFile?: string;
+  /** When the detector wakes it (see DetectRules). */
+  rules: DetectRules;
+  /** At most this many supervisor sessions an hour. Default 6. */
+  maxSessionsPerHour: number;
+  /** At most this much USD of supervisor sessions in 24 h (CLI cost, or "prices"); no limit when absent. */
+  budgetUsd?: number;
+  /** Start watching together with the UI. Default true. */
+  autostart: boolean;
+  /** The operator's own commands for the supervisor (see supervisor/tools.ts). */
+  tools: CustomTool[];
+  /** Tools switched off, built-in or own. */
+  disabledTools: string[];
+}
+
 export interface RunnersConfig {
   networkDir?: string;
   agents: RunnerAgentConfig[];
+  supervisor?: SupervisorConfig;
   /** Where the config came from: the UI writes the instructions file it sets back there. */
   path?: string;
   /** USD per 1M tokens per model, for sessions whose CLI reports no cost. */
@@ -53,7 +83,7 @@ type RawAgent = Partial<RunnerAgentConfig>;
 
 export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; defaults?: RawAgent; agents?: RawAgent[]; prices?: unknown };
+  let raw: { networkDir?: unknown; defaults?: RawAgent; agents?: RawAgent[]; prices?: unknown; supervisor?: unknown };
   try {
     raw = JSON.parse(await readFile(file, "utf8"));
   } catch (e) {
@@ -99,7 +129,78 @@ export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
     });
   }
   const prices = parsePrices(raw.prices, file);
-  return { ...(typeof raw.networkDir === "string" ? { networkDir: abs(raw.networkDir) } : {}), agents, path: file, ...(prices ? { prices } : {}) };
+  const supervisor = raw.supervisor === undefined ? undefined : await parseSupervisor(raw.supervisor, file, abs);
+  return { ...(typeof raw.networkDir === "string" ? { networkDir: abs(raw.networkDir) } : {}), agents, path: file, ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}) };
+}
+
+async function parseSupervisor(raw: unknown, file: string, abs: (p: string) => string): Promise<SupervisorConfig> {
+  const bad = (what: string): never => {
+    throw new AppError("INVALID_CONFIG", `${file}: "supervisor" ${what}`);
+  };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) bad("must be an object");
+  const s = raw as Record<string, unknown>;
+  if (!Array.isArray(s.command) || !s.command.length || !s.command.every((c) => typeof c === "string")) bad('needs "command": the CLI as an array, e.g. ["claude", "-p", "{prompt}", "--model", "{model}", ...]');
+  const command = s.command as string[];
+  if (s.model !== undefined && !isValidModel(s.model)) bad(`model ${JSON.stringify(s.model)}: a model name without spaces, not starting with "-"`);
+  if (s.models !== undefined && (!Array.isArray(s.models) || !s.models.every(isValidModel))) bad('"models" must be a list of model names');
+  if (usesModel(command) && !s.model) bad('command has {model}: set "model"');
+  if (typeof s.promptFile !== "string" || !s.promptFile) bad('needs "promptFile": its instructions (examples/runner/supervisor-prompt.md)');
+  const promptFile = abs(s.promptFile as string);
+  const systemPromptFile = typeof s.systemPromptFile === "string" && s.systemPromptFile ? abs(s.systemPromptFile) : undefined;
+  for (const [what, f] of [["promptFile", promptFile], ["systemPromptFile", systemPromptFile]] as const) {
+    if (f) await readFile(f, "utf8").catch((e: Error) => bad(`${what} ${f}: ${e.message}`));
+  }
+  const rules = { ...DEFAULT_RULES };
+  if (s.rules !== undefined) {
+    if (!s.rules || typeof s.rules !== "object" || Array.isArray(s.rules)) bad('"rules" must be an object');
+    for (const [k, v] of Object.entries(s.rules as Record<string, unknown>)) {
+      if (k.startsWith("_")) continue;
+      if (!(k in DEFAULT_RULES)) bad(`rules: unknown rule "${k}" (${Object.keys(DEFAULT_RULES).join(", ")})`);
+      if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) bad(`rules.${k} must be a number > 0`);
+      rules[k as keyof DetectRules] = v as number;
+    }
+  }
+  const perHour = s.maxSessionsPerHour === undefined ? 6 : s.maxSessionsPerHour;
+  if (typeof perHour !== "number" || !Number.isInteger(perHour) || perHour < 1 || perHour > 100) bad("maxSessionsPerHour must be an integer 1..100");
+  if (s.budgetUsd !== undefined && (typeof s.budgetUsd !== "number" || !Number.isFinite(s.budgetUsd) || s.budgetUsd < 0)) bad("budgetUsd must be a number >= 0");
+  if (s.tools !== undefined && !Array.isArray(s.tools)) bad('"tools" must be a list of {name, description, command, params?}');
+  const tools = ((s.tools as unknown[] | undefined) ?? []).map((t, i) => parseCustomTool(t, `${file}: "supervisor".tools[${i}]`));
+  const names = [...BUILTIN_TOOLS, ...tools.map((t) => t.name)];
+  const twice = tools.map((t) => t.name).find((n, i, all) => all.indexOf(n) !== i);
+  if (twice) bad(`tools: "${twice}" is listed twice`);
+  if (s.disabledTools !== undefined && (!Array.isArray(s.disabledTools) || !s.disabledTools.every((n) => typeof n === "string"))) bad('"disabledTools" must be a list of tool names');
+  const disabledTools = [...new Set((s.disabledTools as string[] | undefined) ?? [])];
+  const unknown = disabledTools.filter((n) => !(names as string[]).includes(n));
+  if (unknown.length) bad(`disabledTools: no tool ${unknown.map((n) => `"${n}"`).join(", ")} (tools: ${names.join(", ")})`);
+  return {
+    command,
+    ...(s.model ? { model: s.model as string } : {}),
+    ...(Array.isArray(s.models) && s.models.length ? { models: [...new Set(s.models as string[])] } : {}),
+    promptFile,
+    ...(systemPromptFile ? { systemPromptFile } : {}),
+    rules,
+    maxSessionsPerHour: perHour as number,
+    ...(s.budgetUsd !== undefined ? { budgetUsd: s.budgetUsd as number } : {}),
+    autostart: s.autostart !== false,
+    tools,
+    disabledTools,
+  };
+}
+
+/** The config file is read again while the page runs (supervisor, prices): replace it whole, never half-written. */
+async function writeConfig(configPath: string, raw: unknown): Promise<void> {
+  const tmp = `${configPath}.${process.pid}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(raw, null, 2)}\n`);
+  await rename(tmp, configPath);
+}
+
+/** Update one field of the "supervisor" section in the JSON config, keeping everything else. */
+export async function saveSupervisorField(configPath: string, field: string, value: unknown): Promise<void> {
+  const raw = JSON.parse(await readFile(configPath, "utf8")) as { supervisor?: Record<string, unknown> };
+  if (!raw.supervisor) return;
+  if (value === null) delete raw.supervisor[field];
+  else raw.supervisor[field] = value;
+  await writeConfig(configPath, raw);
 }
 
 /**
@@ -168,6 +269,17 @@ export interface RunnerDetails extends RunnerView {
   instructions: { preview: string } | { error: string } | null;
 }
 
+/** One entry of the activity feed: what an agent's session (or its runner) did, numbered across the project. */
+export interface ActivityEvent extends ActivityItem {
+  seq: number;
+  at: string;
+  agentId: string;
+  taskId?: string;
+  attempt?: number;
+}
+
+const MAX_EVENTS = 1500;
+
 interface Managed {
   config: RunnersConfig["agents"][number];
   controller?: AbortController;
@@ -177,18 +289,22 @@ interface Managed {
   lines: string[];
   partial: string;
   session: RunningSession | null;
+  events: ActivityEvent[];
 }
 
 /** The runners the UI process owns: start/stop per agent, a log tail of the runner and its sessions. */
 export class RunnerPool {
   private readonly managed = new Map<string, Managed>();
+  /** Activity of sources that are no runner (the supervisor). */
+  private readonly other = new Map<string, ActivityEvent[]>();
+  private seq = 0;
 
   constructor(
     private readonly networkDir: string,
     agents: RunnersConfig["agents"],
     private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string } = {},
   ) {
-    for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null });
+    for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [] });
   }
 
   ids(): string[] {
@@ -244,7 +360,7 @@ export class RunnerPool {
     if (path) m.config.instructionsFile = path;
     else delete m.config.instructionsFile;
     if (this.opts.configPath) await saveAgentField(this.opts.configPath, id, "instructionsFile", given);
-    this.push(m, `[ui] instructions file: ${path ?? "none"} (applies from the next session)\n`);
+    this.say(m, `[ui] instructions file: ${path ?? "none"} (applies from the next session)`);
     return this.view(id);
   }
 
@@ -259,8 +375,36 @@ export class RunnerPool {
     if (!isValidModel(model)) throw new AppError("INVALID_INPUT", `Not a model name: ${JSON.stringify(raw)} (no spaces, not starting with "-")`);
     m.config.model = model;
     if (this.opts.configPath) await saveAgentField(this.opts.configPath, id, "model", model);
-    this.push(m, `[ui] model: ${model}${m.controller ? " (applies from the next session)" : ""}\n`);
+    this.say(m, `[ui] model: ${model}${m.controller ? " (applies from the next session)" : ""}`);
     return this.view(id);
+  }
+
+  /** The activity feed of the project: every agent's and the supervisor's events (or one agent's) after `after`, oldest first, the newest `limit`. */
+  activity(after = 0, limit = 1000, agentId?: string): ActivityEvent[] {
+    const all = [...[...this.managed.values()].flatMap((m) => m.events), ...[...this.other.values()].flat()].filter((e) => e.seq > after && (!agentId || e.agentId === agentId));
+    return all.sort((a, b) => a.seq - b.seq).slice(-limit);
+  }
+
+  /** An event of a source that is no runner of this pool (the supervisor's sessions). */
+  recordActivity(source: string, item: ActivityItem, context: { taskId?: string; attempt?: number } = {}): void {
+    const list = this.other.get(source) ?? [];
+    this.other.set(source, list);
+    this.append(list, { ...item, seq: ++this.seq, at: new Date().toISOString(), agentId: source, ...context });
+  }
+
+  private record(m: Managed, item: ActivityItem): void {
+    this.append(m.events, { ...item, seq: ++this.seq, at: new Date().toISOString(), agentId: m.config.id, ...(m.session ? { taskId: m.session.taskId, attempt: m.session.attempt } : {}) });
+  }
+
+  private append(list: ActivityEvent[], e: ActivityEvent): void {
+    list.push(e);
+    if (list.length > MAX_EVENTS) list.splice(0, list.length - MAX_EVENTS);
+  }
+
+  /** A line of the runner or the page about this agent: in its log and in the feed. */
+  private say(m: Managed, line: string): void {
+    this.push(m, `${line}\n`);
+    this.record(m, { kind: "runner", summary: line.replace(/^\[(runner|ui)\] /, "") });
   }
 
   log(id: string): string[] {
@@ -275,7 +419,7 @@ export class RunnerPool {
     m.controller = controller;
     m.startedAt = new Date().toISOString();
     m.stoppedAt = null;
-    this.push(m, `[ui] runner started\n`);
+    this.say(m, "[ui] runner started");
     const run = this.opts.run ?? runRunner;
     m.done = run({
       agent: m.config.id,
@@ -289,14 +433,15 @@ export class RunnerPool {
       onSession: (session) => {
         m.session = session;
       },
+      onActivity: (e) => this.record(m, e),
       ...(m.config.maxRestarts !== undefined ? { maxRestarts: m.config.maxRestarts } : {}),
       ...(m.config.freshPhases ? { freshPhases: m.config.freshPhases } : {}),
       signal: controller.signal,
-      log: (line) => this.push(m, `[runner] ${line}\n`),
+      log: (line) => this.say(m, `[runner] ${line}`),
       output: (text) => this.push(m, text),
     }).then(
-      (code) => this.push(m, `[ui] runner stopped (${code})\n`),
-      (e: unknown) => this.push(m, `[ui] runner failed: ${(e as Error).message}\n`),
+      (code) => this.say(m, `[ui] runner stopped (${code})`),
+      (e: unknown) => this.say(m, `[ui] runner failed: ${(e as Error).message}`),
     ).finally(() => {
       m.controller = undefined;
       m.session = null;
@@ -343,5 +488,5 @@ async function saveAgentField(configPath: string, id: string, field: string, val
   if (!agent) return;
   if (value === null) delete agent[field];
   else agent[field] = value;
-  await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);
+  await writeConfig(configPath, raw);
 }

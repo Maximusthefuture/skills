@@ -38,6 +38,11 @@ if (finishArg.startsWith("block:") && attempt === 1) {
   writeFileSync(path, JSON.stringify({ ...task, status: "BLOCKED", blockedReason: "fix-round limit", updatedAt: new Date().toISOString() }));
   process.exit(0);
 }
+if (finishArg.startsWith("turns-files:") && attempt < Number(finishArg.split(":")[1])) {
+  writeFileSync(join(process.cwd(), `work-${attempt}.txt`), "edited, nothing ticked"); // work on disk only
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 3 }) + "\n");
+  process.exit(1);
+}
 if (/^turns(-idle)?:/.test(finishArg) && attempt < Number(finishArg.split(":")[1]) || finishArg === "turns-idle:0") {
   if (!finishArg.startsWith("turns-idle")) {
     const dir = join(NETWORK_DIR, "tasks", taskId, "subtasks");
@@ -48,7 +53,7 @@ if (/^turns(-idle)?:/.test(finishArg) && attempt < Number(finishArg.split(":")[1
   process.stdout.write(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 3, usage: { input_tokens: 10, output_tokens: 1 } }) + "\n");
   process.exit(1);
 }
-const finishOn = Number(finishArg.replace(/^(handoff|block|turns|turns-idle):/, ""));
+const finishOn = Number(finishArg.replace(/^(handoff|block|turns|turns-idle|turns-files):/, ""));
 if (finishOn > 0 && attempt >= finishOn) {
   finish(taskId);
   process.exit(0);

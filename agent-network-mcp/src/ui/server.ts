@@ -14,11 +14,16 @@ import type { GitContext } from "../types.js";
 import { PAGE_HTML } from "./page.js";
 import { listRuns, queueStates, taskState, type RunView } from "./runs.js";
 import type { RunnerPool } from "./runners.js";
+import { Journal } from "../supervisor/journal.js";
+import { formatSessionLog, readSessionLog } from "../supervisor/sessionLog.js";
+import type { Supervisor } from "../supervisor/supervisor.js";
 import { buildUiState } from "./state.js";
 
 export interface UiServer {
   server: Server;
   url: string;
+  /** Each project's id on the page (?project=<id>). */
+  projects: { id: string; networkDir: string }[];
   close(): Promise<void>;
 }
 
@@ -29,6 +34,8 @@ export interface UiProject {
   runners?: RunnerPool;
   /** The project's token prices (runners.json "prices"), read on every refresh: sessions without a CLI cost are priced with them. */
   prices?: () => Promise<{ prices?: Prices; error?: string }>;
+  /** The agent that looks after the others when something goes wrong (runners.json "supervisor"). */
+  supervisor?: Supervisor;
 }
 
 export interface UiOptions {
@@ -48,7 +55,9 @@ interface Project {
   networkDir: string;
   projectDir: string;
   fs: FileStore;
+  journal: Journal;
   pool?: RunnerPool;
+  supervisor?: Supervisor;
   operator?: NetworkService;
   prices?: UiProject["prices"];
   git?: { at: number; value: Promise<GitContext | null> };
@@ -73,7 +82,8 @@ const slug = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g,
 /**
  * GET / (page), GET /api/projects, and per project (?project=<id>, default: the first one): GET /api/state, /api/runs,
  * /api/openspec/changes, /api/runners/<id>/log; with runners also POST /api/tasks, /api/runners/<id>/start|stop|instructions|model,
- * /api/questions/answer, /api/openspec/archive, /api/tasks/<id>/unblock|handover|cancel. Bound to loopback; foreign Host headers are refused, and state-changing
+ * /api/questions/answer, /api/openspec/archive, /api/tasks/<id>/unblock|handover|cancel|message, /api/supervisor/start|stop|model|tools|note|resolve
+ * (GET /api/supervisor, /api/activity). Bound to loopback; foreign Host headers are refused, and state-changing
  * requests must be same-origin JSON (a page on another site cannot create tasks for the agents).
  */
 export async function startUiServer(target: string | UiProject[], opts: UiOptions = {}): Promise<UiServer> {
@@ -94,8 +104,10 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       networkDir,
       projectDir,
       fs: await FileStore.open(networkDir),
+      journal: new Journal(await FileStore.open(networkDir)),
       ...(spec.runners ? { pool: spec.runners, operator: await NetworkService.create(networkDir, { id: "operator", type: "ui" }) } : {}),
       ...(spec.prices ? { prices: spec.prices } : {}),
+      ...(spec.runners && spec.supervisor ? { supervisor: spec.supervisor } : {}),
     });
   }
   const host = opts.host ?? "127.0.0.1";
@@ -187,6 +199,23 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     };
   }
 
+  /** For every refresh of the page: is the supervisor on, busy, held; the decisions waiting for you; its latest entries (pop-ups). */
+  async function supervisorBrief(p: Project) {
+    if (!p.supervisor && !p.pool) return null;
+    const journal = await p.journal.list(60);
+    const st = p.supervisor ? await p.supervisor.status() : null;
+    return {
+      available: !!st,
+      enabled: st?.enabled ?? false,
+      working: !!st?.session,
+      held: st?.held ?? null,
+      queued: st?.queued ?? 0,
+      model: st?.model ?? null,
+      needsYou: journal.filter((e) => e.kind === "needs-you" && !e.resolvedAt),
+      recent: journal.slice(-20),
+    };
+  }
+
   const server = createServer((req, res) => {
     void handle(req).then(
       ({ status, type, body }) => {
@@ -223,11 +252,30 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
           ...(await buildUiState(p.fs, undefined, pricing)),
           project: { id: p.id, name: p.name, projectDir: tilde(p.projectDir), networkDir: tilde(p.networkDir), count: projects.length },
           control: p.pool ? { runners: await p.pool.details() } : null,
+          supervisor: await supervisorBrief(p),
         });
       }
       if (path === "/api/runs") {
         const pricing = (await p.prices?.()) ?? {};
         return json(200, { runs: await runsOf(p, pricing), pricesError: pricing.error ?? null });
+      }
+      if (path === "/api/activity") {
+        // the agents' tool calls, results and text as they come; ?after=<seq> returns only what is new
+        const after = Number(url.searchParams.get("after") ?? 0) || 0;
+        const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 1000) || 1000, 1), 3000);
+        const agent = url.searchParams.get("agent");
+        const events = p.pool?.activity(after, limit, agent ?? undefined) ?? [];
+        return json(200, { events, lastSeq: events.at(-1)?.seq ?? after });
+      }
+      if (path === "/api/supervisor") {
+        // ?all=1: the whole journal, for looking back; by default the latest 100
+        const all = url.searchParams.get("all") === "1";
+        return json(200, { status: p.supervisor ? await p.supervisor.status() : null, journal: await p.journal.list(all ? Number.MAX_SAFE_INTEGER : 100), journalTotal: await p.journal.count() });
+      }
+      const supSession = /^\/api\/supervisor\/sessions\/(session-\d+|\d+|latest)$/.exec(path);
+      if (supSession) {
+        const log = await readSessionLog(p.networkDir, supSession[1]!);
+        return json(200, { id: log.id, file: tilde(log.file), text: formatSessionLog(log.lines), lines: log.lines });
       }
       const log = /^\/api\/runners\/([^/]+)\/log$/.exec(path);
       if (log && p.pool) return json(200, { id: log[1], lines: p.pool.log(decodeURIComponent(log[1]!)) });
@@ -260,23 +308,61 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       });
       return json(201, { task });
     }
-    const blocked = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel)$/.exec(path);
-    if (blocked) {
-      const id = decodeURIComponent(blocked[1]!);
-      if (blocked[2] === "handover") return json(200, { task: await operator.handOverToLead(id) });
-      if (blocked[2] === "cancel") {
+    // the supervisor acts through the same routes as the page; what it does goes into its journal
+    const bySupervisor = req.headers["x-agent-network-actor"] === "supervisor";
+    const acted = async (taskId: string, text: string) => {
+      if (bySupervisor) await p.journal.add({ kind: "action", by: "supervisor", taskId, text });
+    };
+    const taskAction = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel|message)$/.exec(path);
+    if (taskAction) {
+      const id = decodeURIComponent(taskAction[1]!);
+      if (taskAction[2] === "message") {
+        const b = body as { to?: unknown; text?: unknown };
+        const message = await operator.messageAgent({ taskId: id, to: String(b.to ?? ""), content: String(b.text ?? "") });
+        await acted(id, `message to ${message.to}: ${message.content}`);
+        return json(201, { message });
+      }
+      if (taskAction[2] === "handover") {
+        const task = await operator.handOverToLead(id);
+        await acted(id, `handed the stuck fix to the lead`);
+        return json(200, { task });
+      }
+      if (taskAction[2] === "cancel") {
         const reason = (body as { reason?: unknown }).reason;
-        return json(200, { task: await operator.cancelTask(id, typeof reason === "string" && reason.trim() ? reason : "cancelled on the page") });
+        const task = await operator.cancelTask(id, typeof reason === "string" && reason.trim() ? reason : "cancelled on the page");
+        await acted(id, `cancelled the task`);
+        return json(200, { task });
       }
       const rounds = (body as { rounds?: unknown }).rounds;
-      return json(200, { task: await operator.unblockTask(id, rounds === undefined ? 1 : Number(rounds)) });
+      const task = await operator.unblockTask(id, rounds === undefined ? 1 : Number(rounds));
+      await acted(id, `unblocked with ${task.maxFixRounds} fix rounds in all`);
+      return json(200, { task });
     }
     if (path === "/api/openspec/archive") {
       return json(200, await operator.archiveOpenspec({ taskId: String((body as { taskId?: unknown }).taskId ?? "") }, opts.openspecExec));
     }
     if (path === "/api/questions/answer") {
       const b = body as { taskId?: unknown; messageId?: unknown; answer?: unknown };
-      return json(201, { answer: await operator.answerQuestion({ taskId: String(b.taskId ?? ""), messageId: String(b.messageId ?? ""), answer: String(b.answer ?? "") }) });
+      const answer = await operator.answerQuestion({ taskId: String(b.taskId ?? ""), messageId: String(b.messageId ?? ""), answer: String(b.answer ?? "") });
+      await acted(answer.taskId, `answered ${answer.to}'s question ${answer.replyTo}: ${answer.content}`);
+      return json(201, { answer });
+    }
+    const sup = /^\/api\/supervisor\/(start|stop|model|note|tools|resolve)$/.exec(path);
+    if (sup) {
+      if (sup[1] === "resolve") return json(200, { entry: await p.journal.resolve(String((body as { id?: unknown }).id ?? "")) });
+      if (sup[1] === "note") {
+        const b = body as { kind?: unknown; text?: unknown; taskId?: unknown };
+        const kind = b.kind === "action" || b.kind === "needs-you" ? b.kind : "note";
+        if (typeof b.text !== "string" || !b.text.trim()) throw new AppError("INVALID_INPUT", "text must not be empty");
+        const entry = await p.journal.add({ kind, by: bySupervisor ? "supervisor" : "operator", ...(typeof b.taskId === "string" && b.taskId ? { taskId: b.taskId } : {}), text: b.text.trim().slice(0, 4000) });
+        return json(201, { entry });
+      }
+      if (!p.supervisor) return text(404, 'no supervisor: add a "supervisor" section to runners.json');
+      if (sup[1] === "start") return json(200, p.supervisor.start());
+      if (sup[1] === "stop") return json(200, await p.supervisor.stop());
+      if (sup[1] === "model") return json(200, await p.supervisor.setModel(String((body as { model?: unknown }).model ?? "")));
+      const b = body as { name?: unknown; enabled?: unknown };
+      return json(200, await p.supervisor.setToolEnabled(String(b.name ?? ""), b.enabled !== false));
     }
     const inst = /^\/api\/runners\/([^/]+)\/instructions$/.exec(path);
     if (inst) {
@@ -301,6 +387,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
   return {
     server,
     url: `http://${host === "::1" ? "[::1]" : host}:${port}`,
+    projects: projects.map((p) => ({ id: p.id, networkDir: p.networkDir })),
     close: () =>
       new Promise((resolve) => {
         for (const p of projects) p.operator?.close();

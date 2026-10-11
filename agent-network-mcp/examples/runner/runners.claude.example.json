@@ -12,7 +12,9 @@
     "Lean context: a short system prompt ({systemPrompt} <- systemPromptFile) and only the tools the agent needs; every turn re-reads them, so this cuts tokens per turn several times. Skill is in --tools so the agents can load skills (java-dev-flow); drop it when they need none: every turn re-reads the skill list.",
     "git: only the commands the protocol needs (status, diff, log, show, add, commit, merge, rev-parse); push, reset, checkout, branch -D are refused in -p. Add a command only when an agent really needs it.",
     "Model: the command has {model}; \"model\" is the default (the tester runs on haiku), \"models\" is the choice in the runner card on the page (applies from the next session).",
-    "autostart: false = start that agent with the button on the page."
+    "autostart: false = start that agent with the button on the page.",
+    "supervisor: the agent that looks after the others (page tab «Надзор»). A detector without a model checks the swarm every 10 s; on an incident (a question to you unanswered for questionAfterSec, a BLOCKED task, no progress for stallMin, the same command repeatCount times, a test JVM older than testMin, a runner that gave up) it starts one supervisor session with the tools of supervisor-mcp.json. Read-only file tools, no shell: it acts through the page (answers, messages, +rounds, handover) and frees hung tests and database locks; decisions only you can take come to the page as «нужно ваше решение». maxSessionsPerHour and budgetUsd (USD per 24 h) cap its cost; a quiet run costs nothing, one incident about $0.2–0.6 on sonnet. Switch it on/off, pick the model and its tools on the page.",
+    "supervisor.tools: your own commands for it, argv without a shell; {agentCwd} adds an agentId parameter (the agent's folder), {projectDir}/{networkDir} are filled in, own params are checked (type, enum, pattern). \"action\": true for a command that changes something: each run goes into its journal. disabledTools switches any tool off (also on the page)."
   ],
   "networkDir": "/abs/path/project/.agent-network",
   "defaults": {
@@ -82,5 +84,90 @@
       "model": "haiku",
       "instructionsFile": "instructions/tester.md"
     }
-  ]
+  ],
+  "supervisor": {
+    "command": [
+      "claude",
+      "-p",
+      "{prompt}",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--system-prompt",
+      "{systemPrompt}",
+      "--model",
+      "{model}",
+      "--max-turns",
+      "30",
+      "--tools",
+      "Read,Grep,Glob",
+      "--mcp-config",
+      "/abs/path/agent-network-mcp/examples/runner/supervisor-mcp.json",
+      "--strict-mcp-config",
+      "--allowedTools",
+      "mcp__supervisor",
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "model": "sonnet",
+    "models": [
+      "haiku",
+      "sonnet",
+      "opus"
+    ],
+    "promptFile": "supervisor-prompt.md",
+    "systemPromptFile": "supervisor-system-prompt.md",
+    "rules": {
+      "questionAfterSec": 60,
+      "stallMin": 15,
+      "repeatCount": 3,
+      "testMin": 10
+    },
+    "maxSessionsPerHour": 6,
+    "budgetUsd": 5,
+    "autostart": true,
+    "tools": [
+      {
+        "name": "surefire_failures",
+        "description": "Test report files with a failure or an error in an agent's folder (target/surefire-reports, failsafe-reports): read them with Read",
+        "command": [
+          "grep",
+          "-rlE",
+          "<(failure|error)[ >]",
+          "target/surefire-reports",
+          "target/failsafe-reports"
+        ],
+        "cwd": "{agentCwd}",
+        "timeoutSec": 20
+      },
+      {
+        "name": "agent_git_log",
+        "description": "The latest 15 commits of an agent's worktree branch",
+        "command": [
+          "git",
+          "log",
+          "--oneline",
+          "--decorate",
+          "-15"
+        ],
+        "cwd": "{agentCwd}",
+        "timeoutSec": 20
+      },
+      {
+        "name": "testcontainers",
+        "description": "Docker containers started by Testcontainers: id, image, how long they run, name",
+        "command": [
+          "docker",
+          "ps",
+          "--filter",
+          "label=org.testcontainers=true",
+          "--format",
+          "{{.ID}} {{.Image}} {{.Status}} {{.Names}}"
+        ],
+        "timeoutSec": 20
+      }
+    ],
+    "disabledTools": []
+  }
 }

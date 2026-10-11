@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "supervisor": {
+      "command": "node",
+      "args": ["/abs/path/agent-network-mcp/dist/index.js", "supervisor-mcp"],
+      "env": {
+        "AGENT_NETWORK_UI_URL": "${AGENT_NETWORK_UI_URL}",
+        "AGENT_NETWORK_PROJECT": "${AGENT_NETWORK_PROJECT}",
+        "NETWORK_DIR": "${NETWORK_DIR}",
+        "AGENT_NETWORK_SUPERVISOR_FOLDERS": "${AGENT_NETWORK_SUPERVISOR_FOLDERS}",
+        "AGENT_NETWORK_SUPERVISOR_TOOLS": "${AGENT_NETWORK_SUPERVISOR_TOOLS}"
+      }
+    }
+  }
+}

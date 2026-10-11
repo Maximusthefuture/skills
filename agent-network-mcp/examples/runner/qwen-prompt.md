@@ -9,4 +9,5 @@ If your part has several steps, list them with subtasks({add: [...]}) and mark e
 Nobody reads your replies in this session: if something only a human can decide is unclear, ask with
 send_message({to: "operator", message: <question and the option you would take>}) and call wait() for the answer;
 with no answer in 10 minutes go ahead with that option and tell the other agents. Never invent the scope.
+Stuck on the environment (a refused command, a hung process, an unreachable service) after two attempts: stop retrying, ask the operator the same way.
 End your turn only when nextAction is done.{resume}

@@ -6,8 +6,8 @@ export const PAGE_HTML = String.raw`<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Network</title>
 <style>
-:root{--bg:#f6f7f9;--side:#eef0f3;--card:#fff;--card2:#f2f4f7;--text:#1c2128;--muted:#667085;--line:#e3e6eb;--accent:#2f6fed;--ok:#16a34a;--warn:#b45309;--bad:#dc2626;--idle:#98a2b3;--qbg:#fff8e6;--qline:#f0cf86;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-@media (prefers-color-scheme:dark){:root{--bg:#0d1014;--side:#11151a;--card:#151a20;--card2:#1a2027;--text:#e6e9ee;--muted:#8b95a3;--line:#262d36;--accent:#6b9bff;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--idle:#5d6673;--qbg:#1d1a10;--qline:#5a4614}}
+:root{--bg:#f6f7f9;--side:#eef0f3;--card:#fff;--card2:#f2f4f7;--text:#1c2128;--muted:#667085;--line:#e3e6eb;--accent:#2f6fed;--ok:#16a34a;--warn:#b45309;--bad:#dc2626;--idle:#98a2b3;--violet:#7c3aed;--qbg:#fff8e6;--qline:#f0cf86;--okbg:#e9f7ef;--accbg:#e9f0fe;--badbg:#fdeded;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1014;--side:#11151a;--card:#151a20;--card2:#1a2027;--text:#e6e9ee;--muted:#8b95a3;--line:#262d36;--accent:#6b9bff;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--idle:#5d6673;--violet:#a78bfa;--qbg:#1d1a10;--qline:#5a4614;--okbg:#122419;--accbg:#151f36;--badbg:#2a1616}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 .app{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100vh}
 aside{background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
@@ -20,7 +20,7 @@ nav a .n{font:11px var(--mono);color:var(--idle);width:16px}nav a .c{margin-left
 nav a.on{color:var(--text);background:var(--card);border-left-color:var(--accent)}nav a:hover{color:var(--text)}
 .foot{margin-top:auto;padding:12px 16px;border-top:1px solid var(--line);color:var(--muted);font:11px var(--mono);word-break:break-all}
 .top{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;padding:10px 24px;border-bottom:1px solid var(--line);font:11px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:var(--bg);position:sticky;top:0;z-index:2}
-.top b{color:var(--text);font-weight:500;margin-left:4px}.top .r{margin-left:auto;text-transform:none}.top .warnq b{color:var(--warn)}
+.top b{color:var(--text);font-weight:500;margin-left:4px}.top .link{cursor:pointer}.top .link:hover b{text-decoration:underline}.top .r{margin-left:auto;text-transform:none}.top .warnq b{color:var(--warn)}
 main{padding:20px 24px 40px;max-width:1180px}
 h1{font-size:22px;font-weight:600;margin:0}.lead{color:var(--muted);margin:2px 0 16px}
 h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:22px 0 8px}
@@ -59,6 +59,12 @@ button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:
 .note{font-size:13px}.note.err{color:var(--bad)}.note.ok{color:var(--ok)}
 .banner{padding:10px 14px;margin-bottom:14px;border:1px solid var(--line);border-left:3px solid var(--bad);background:var(--card)}
 .openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}
+.toasts{position:fixed;top:12px;right:12px;z-index:50;display:flex;flex-direction:column;gap:8px;width:min(340px,calc(100vw - 24px));pointer-events:none}
+.toast{pointer-events:auto;cursor:pointer;position:relative;background:var(--card);color:var(--text);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:9px 30px 9px 12px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:13px;animation:tin .18s ease-out}
+.toast.ok{border-left-color:var(--ok)}.toast.warn{border-left-color:var(--warn)}.toast.bad{border-left-color:var(--bad)}
+.toast b{display:block;margin-bottom:2px}.toast .x{position:absolute;top:4px;right:8px;border:0;background:none;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:2px}
+@keyframes tin{from{opacity:0;transform:translateY(-6px)}}
+@media (prefers-reduced-motion:reduce){.toast{animation:none}}
 .blocked{margin-top:6px;padding:6px 10px;border-left:3px solid var(--bad);background:var(--bg)}.blocked .checks{margin:6px 0 4px}
 pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px;margin:6px 0 0;font:11px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word}pre.log.err{color:var(--bad)}
 .stats{display:flex;flex-wrap:wrap;gap:4px 12px;margin:6px 0;font-size:12px;color:var(--muted)}.stats b{color:var(--text);font-weight:600}
@@ -69,6 +75,58 @@ pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var
 .total{margin-top:10px;font-size:12px;color:var(--muted)}
 .scroll.subs{max-height:150px;min-width:170px;margin-top:4px;padding:2px 6px}.scroll{max-height:300px;overflow-y:auto;margin-top:6px;padding:0 8px;border:1px solid var(--line);border-radius:7px;background:var(--bg)}
 .feed{max-height:calc(100vh - 230px);min-height:200px;overflow-y:auto}
+.act{max-height:calc(100vh - 250px);min-height:240px;overflow-y:auto}.act.mini{max-height:320px;min-height:0;margin-top:8px;border:1px solid var(--line);border-radius:7px}
+.arow{display:grid;grid-template-columns:52px 62px 84px 96px minmax(0,1fr);gap:10px;align-items:baseline;padding:5px 12px;border-bottom:1px solid var(--line);font-size:12.5px;cursor:pointer}
+.act.mini .arow{grid-template-columns:62px 96px minmax(0,1fr)}.act.mini .arow .seq,.act.mini .arow .who{display:none}
+.arow:hover{background:var(--card2)}.arow.open{background:var(--card2)}
+.arow .seq,.arow .tm{color:var(--muted);font:11px var(--mono);white-space:nowrap}
+.arow .who{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arow .sum{font:12px/1.45 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arow.text .sum{font-family:inherit;font-size:13px}.arow.thinking .sum{font-style:italic;color:var(--muted);font-family:inherit}
+.arow .tool{display:inline-block;padding:0 6px;margin-right:6px;border:1px solid var(--line);border-radius:5px;font:11px var(--mono);color:var(--text);background:var(--card)}
+.kind{font:11px var(--mono);white-space:nowrap}
+.kind.tool_use{color:var(--accent)}.kind.tool_result{color:var(--ok)}.kind.err{color:var(--bad)}.kind.thinking{color:var(--violet)}.kind.result{color:var(--accent);font-weight:600}.kind.runner,.kind.session{color:var(--idle)}.kind.stderr{color:var(--warn)}.kind.text{color:var(--text)}
+.arow.err .sum{color:var(--bad)}
+.adetail{padding:6px 12px 12px;border-bottom:1px solid var(--line);background:var(--bg);font-size:12px}.adetail pre.log{max-height:380px}
+.akinds{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:6px;overflow:hidden}.akinds button{background:none;border:0;border-radius:0;color:var(--muted);font:11px var(--mono);padding:5px 10px}.akinds button.on{background:var(--card2);color:var(--text)}
+.akinds button .k{opacity:.7;margin-left:4px}
+.follow{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}.filters .follow input{width:auto;min-width:0}
+.newpill{display:block;width:100%;border:0;border-bottom:1px solid var(--line);background:var(--card2);color:var(--accent);font-size:12px;padding:6px;cursor:pointer}
+@media (max-width:700px){.arow{grid-template-columns:84px 74px minmax(0,1fr)}.arow .seq,.arow .tm{display:none}}
+.sfeed{max-height:calc(100vh - 330px);min-height:240px;overflow-y:auto}
+.jrow{display:grid;grid-template-columns:58px 74px 76px 74px minmax(0,1fr);gap:10px;align-items:baseline;padding:6px 12px;border-bottom:1px solid var(--line);font-size:12.5px;cursor:pointer}.jrow:hover{background:var(--card2)}
+.jrow .tm,.jrow .by{color:var(--muted);font:11px var(--mono);white-space:nowrap}.jrow .tk{font:11px var(--mono);color:var(--accent);white-space:nowrap}
+.jrow .txt{white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.jrow.open .txt{display:block}
+.jk{font:11px var(--mono);white-space:nowrap}.jk.incident{color:var(--warn)}.jk.action{color:var(--accent)}.jk.needs-you{color:var(--bad);font-weight:600}.jk.session{color:var(--violet)}.jk.note{color:var(--text)}
+.jrow.resolved .txt{color:var(--muted)}
+.jsess{grid-column:1/-1;display:flex;gap:10px;align-items:center;font:11px var(--mono);color:var(--muted);min-width:0}.jsess span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.jsess button{padding:2px 10px;font-size:12px;flex:none}
+pre.jlog{grid-column:1/-1;max-height:420px;cursor:text;margin:0}
+.ph .end a{color:var(--accent);text-decoration:none}.jrow.resolved .jk.needs-you{color:var(--muted);font-weight:400}
+.ph .sk{margin-left:12px;font-weight:400}.ph .sk button{padding:3px 8px}
+.need{border-left:3px solid var(--bad);margin-bottom:10px}.need .hd{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.need .rec{margin-top:6px;padding:6px 10px;background:var(--bg);border-radius:6px}.need .row2{display:flex;gap:8px;margin-top:8px}.need .row2 button{padding:4px 12px}
+.scol{display:grid;gap:12px;align-content:start}.scol h3{margin:0 0 6px;font-size:13px}
+.tl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 10px;padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer}.tl:last-child{border:0}.tl input{width:auto;margin:3px 0 0}.tl .nm{font:12px var(--mono)}.tl .ds{grid-column:2;font-size:12px;color:var(--muted)}.tl.off .nm{color:var(--muted);text-decoration:line-through}
+.rules{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;font-size:12px;margin-top:8px}.rules b{font:12px var(--mono);font-weight:500;text-align:right}
+.mail{border:0;background:none;color:var(--accent);padding:0 0 0 6px;font-size:12px;cursor:pointer}
+@media (max-width:700px){.jrow{grid-template-columns:56px 74px minmax(0,1fr)}.jrow .by{display:none}.jrow .txt{grid-column:1/-1}}
+.ptl{display:flex;gap:3px;height:26px;margin:10px 0}
+.ptl .seg{min-width:84px;display:block;line-height:24px;text-align:center;padding:0 8px;font:11px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--bg);color:var(--muted);border:1px solid var(--line);border-radius:5px}
+.ptl .seg.past,.ptl .seg.now,.ptl .seg.bad{min-width:140px}
+.ptl .seg .rd{display:inline-flex;gap:2px;margin-left:6px;vertical-align:1px}.ptl .seg .rd i{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.45}.ptl .seg .rd i.last{opacity:1}
+.ptl .seg.past{background:var(--okbg);color:var(--ok);border-color:transparent}.ptl .seg.now{background:var(--accbg);color:var(--accent);border-color:var(--accent);font-weight:600}.ptl .seg.bad{background:var(--badbg);color:var(--bad);border-color:var(--bad);font-weight:600}
+.pbar{height:8px;border-radius:4px;background:var(--card2);border:1px solid var(--line);overflow:hidden;display:flex}.pbar>span{height:100%}.pbar .g{background:var(--ok)}.pbar .b{background:var(--accent)}.pbar .r{background:var(--bad)}
+.pbar.wait{background:repeating-linear-gradient(45deg,var(--card2) 0 6px,var(--line) 6px 8px)}
+.pkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:4px 0 10px}
+.pk{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px 12px}.pk .l{font-size:12px;color:var(--muted)}.pk .v{font:500 18px var(--mono);margin:2px 0 6px}.pk .v small{font-size:12px;color:var(--muted);margin-left:6px;font-weight:400}.pk .h{font-size:12px;color:var(--muted);margin-top:5px}
+.pagents{margin:2px 0 10px}.prow{display:grid;grid-template-columns:130px minmax(0,1fr) 56px;gap:12px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}
+.prow .nm b{display:block;font-size:13px}.prow .nm span{font:11px var(--mono);color:var(--muted)}
+.prow .st{font-size:12px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.prow .st.ok{color:var(--ok)}.prow .st.warn{color:var(--warn)}.prow .st.now{color:var(--text)}.prow .st.bad{color:var(--bad)}
+.prow .cnt{font:12px var(--mono);text-align:right;color:var(--muted)}.prow .cnt b{color:var(--text);font-weight:500}
+.plegend{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:6px}.plegend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.ovp{display:grid;grid-template-columns:minmax(0,1.5fr) 104px minmax(0,2fr) 70px;gap:12px;align-items:center;padding:8px 14px;border-top:1px solid var(--line);cursor:pointer;font-size:13px}.ovp:hover{background:var(--card2)}
+.ovp .tt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ovp .tt span{color:var(--muted);font:11px var(--mono);margin-right:6px}.ovp .badge{text-align:center}.ovp .pct{font:12px var(--mono);text-align:right}
+@media (max-width:700px){.ptl .seg,.ptl .seg.past,.ptl .seg.now,.ptl .seg.bad{min-width:0;padding:0 4px;font-size:10px}.ovp{grid-template-columns:minmax(0,1fr) auto}.ovp .pbar{grid-column:1/-1}.ovp .pct{grid-row:1;grid-column:2}.ovp .badge{display:none}.prow{grid-template-columns:90px minmax(0,1fr) 44px}}
+.tscroll{overflow-x:auto}
 tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;padding:4px 0 6px 18px}
 [hidden]{display:none!important}.nw{white-space:nowrap}.path{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .app>div{min-width:0}
@@ -76,6 +134,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 </style>
 </head>
 <body>
+<div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="app">
 <aside>
   <div class="brand">◆ agent network</div>
@@ -85,10 +144,12 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     <a href="#/overview" data-tab="overview"><span class="n">01</span>Обзор</a>
     <a href="#/tasks" data-tab="tasks"><span class="n">02</span>Задачи<span class="c" id="c-tasks"></span></a>
     <a href="#/runs" data-tab="runs"><span class="n">03</span>Запуски<span class="c" id="c-runs"></span></a>
+    <a href="#/activity" data-tab="activity"><span class="n">04</span>Активность<span class="c" id="c-activity"></span></a>
     <div class="grp">Инфраструктура</div>
-    <a href="#/runners" data-tab="runners"><span class="n">04</span>Runner'ы<span class="c" id="c-runners"></span></a>
-    <a href="#/projects" data-tab="projects"><span class="n">05</span>Проекты<span class="c" id="c-projects"></span></a>
-    <a href="#/events" data-tab="events"><span class="n">06</span>События</a>
+    <a href="#/supervisor" data-tab="supervisor"><span class="n">05</span>Надзор<span class="c" id="c-supervisor"></span></a>
+    <a href="#/runners" data-tab="runners"><span class="n">06</span>Runner'ы<span class="c" id="c-runners"></span></a>
+    <a href="#/projects" data-tab="projects"><span class="n">07</span>Проекты<span class="c" id="c-projects"></span></a>
+    <a href="#/events" data-tab="events"><span class="n">08</span>События</a>
   </nav>
   <div class="foot">сеть<br><span id="dir"></span></div>
 </aside>
@@ -101,6 +162,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     <section data-panel="overview">
       <div class="hrow"><div><h1>Обзор</h1><div class="lead">Что делают агенты сейчас и сколько это стоит.</div></div><div class="end win" id="win"><button data-w="24h">24ч</button><button data-w="7d">7д</button><button data-w="30d">30д</button></div></div>
       <div class="kpis" id="kpis"></div>
+      <div class="panel" id="ov-progress" style="margin-bottom:16px" hidden></div>
       <div class="cols"><div class="panel" id="ov-runners"></div><div class="panel" id="ov-phases"></div></div>
       <div class="panel" id="ov-events"></div>
     </section>
@@ -129,6 +191,27 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
       <div class="total" id="runtotal"></div>
     </section>
 
+    <section data-panel="activity" hidden>
+      <h1>Активность</h1><div class="lead">Что делают агенты: вызовы инструментов, результаты, их текст и мысли. Новые сверху; нажмите на строку, чтобы раскрыть.</div>
+      <div class="filters"><div class="akinds" id="a-kinds"></div><select id="a-agent"></select><select id="a-task"></select><input id="a-q" placeholder="поиск: команда, файл, текст"><label class="follow"><input type="checkbox" id="a-follow" checked>следить</label></div>
+      <div class="panel act" id="activity"></div>
+      <div class="total" id="a-total"></div>
+    </section>
+
+    <section data-panel="supervisor" hidden>
+      <div class="hrow"><div><h1>Надзор</h1><div class="lead">Помощник оператора. Детектор без модели раз в 10 с смотрит на рой; когда находит инцидент, запускает сессию надзора: она разбирается, чинит, что может, и отдаёт вам то, что решаете только вы.</div></div><button class="end" id="s-toggle" type="button" hidden></button></div>
+      <div class="card" id="s-none" hidden></div>
+      <div id="s-body" hidden>
+        <div class="kpis" id="s-kpis"></div>
+        <div id="s-needs"></div>
+        <div class="cols">
+          <div class="panel"><div class="ph">Журнал<span class="akinds sk" id="s-kinds"></span><span class="end" id="s-jcount"></span></div><div class="sfeed" id="s-journal"></div></div>
+          <div class="scol"><div class="card" id="s-settings"></div><div class="card" id="s-tools"></div></div>
+        </div>
+        <details id="s-logd"><summary>Лог надзора</summary><pre class="log" id="s-log"></pre></details>
+      </div>
+    </section>
+
     <section data-panel="runners" hidden>
       <h1>Runner'ы</h1><div class="lead" id="runners-lead">Агенты проекта: запуск, модель, инструкции, лог.</div>
       <div class="grid" id="runners"></div>
@@ -151,7 +234,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 </div>
 <script>
 const PHASES=["DISCUSS","IMPLEMENT","SYNC","INTEGRATE","DONE"];
-const TABS=["overview","tasks","runs","runners","projects","events"];
+const TABS=["overview","tasks","runs","activity","supervisor","runners","projects","events"];
 const WIN={"24h":864e5,"7d":7*864e5,"30d":30*864e5};
 const $=id=>document.getElementById(id);
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
@@ -187,16 +270,18 @@ function inWin(iso,w){return !!iso&&Date.now()-Date.parse(iso)<=WIN[w||win]}
 let S=null,RUNS=[],PROJ=[],controlMode=false,n=0;
 async function tick(){
   try{
-    const s=await getJSON(q("/api/state"));S=s;controlMode=!!s.control;
+    const s=await getJSON(q("/api/state"));S=s;controlMode=!!s.control;watchTransitions(s);watchSupervisor(s);
     if(!route.project)route.project=s.project.id;
     if(["overview","runs","runners"].includes(route.tab)||!n)RUNS=(await getJSON(q("/api/runs"))).runs;
     if(route.tab==="projects"||n%3===0)PROJ=(await getJSON("/api/projects")).projects;
+    if(["activity","runners","tasks","overview"].includes(route.tab))await fetchActivity();
+    if(route.tab==="supervisor")SUP=await getJSON(q("/api/supervisor"+(supAll?"?all=1":"")));
     n++;render();
   }catch(e){$("topbar").textContent="нет связи с сервером"}
 }
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
-  if(route.tab==="runners"){renderControl(S);renderAgents(S)}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();
+  if(route.tab==="runners"){renderControl(S);renderAgents(S)}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();
   if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y)} // a refresh never moves the page
 
 function current(){return PROJ.find(p=>p.id===route.project)}
@@ -212,6 +297,10 @@ function renderChrome(){
   $("c-runners").textContent=rs.length?rs.filter(r=>r.running).length+"/"+rs.length:"";$("c-projects").textContent=PROJ.length?String(PROJ.length):"";
   const bar=$("topbar");bar.replaceChildren();const item=(label,value,cls)=>{const sp=el("span",cls||"");sp.append(label,el("b","",value));bar.append(sp)};
   if(rs.length){const sp=el("span","");sp.append(dot(rs.some(r=>r.session)?"ok":rs.some(r=>r.running)?"warn":""),"runner'ы",el("b","",rs.filter(r=>r.running).length+"/"+rs.length));bar.append(sp)}
+  const sv=s.supervisor;
+  if(sv&&sv.available){const st=sv.working?["ok","работает"]:!sv.enabled?["","выкл"]:sv.held?["warn","ждёт"]:["acc","следит"];const sp=el("span","link"+(sv.needsYou.length?" warnq":""));sp.title="вкладка «Надзор»";sp.onclick=()=>go("supervisor",route.project);
+    sp.append(dot(st[0]),"надзор",el("b","",st[1]+(sv.needsYou.length?" · решить: "+sv.needsYou.length:"")));bar.append(sp)}
+  $("c-supervisor").textContent=sv&&sv.needsYou.length?"!"+sv.needsYou.length:sv&&sv.available?(sv.enabled?"вкл":"выкл"):"";$("c-supervisor").style.color=sv&&sv.needsYou.length?"var(--bad)":"";
   item("идёт",String(tasks.filter(t=>t.queue==="running").length));item("очередь",String(tasks.filter(t=>t.queue==="queued").length));
   const oq=(s.openQuestions||[]).length;item("вопросы",oq+(otherQ?" (+"+otherQ+" в других)":""),oq||otherQ?"warnq":"");
   const day=RUNS.filter(r=>r.costUsd!==null&&inWin(r.endedAt,"24h"));item("расход 24ч",day.length?fmtUsd(day.reduce((a,r)=>a+r.costUsd,0),day.some(r=>r.costEstimated)):"—");
@@ -248,6 +337,7 @@ function renderOverview(){
     rp.append(t);if(!rs.length)rp.append(el("div","empty","В runners.json нет агентов."))}
   else{rp.append(el("div","ph","Агенты"));const t=el("table");t.append(head(["Агент","Статус","Задачи"]));s.agents.forEach(a=>{const c1=el("td","nw");c1.append(dot(a.effectiveStatus==="WORKING"||a.effectiveStatus==="ONLINE"?"ok":a.effectiveStatus==="WAITING"?"warn":a.effectiveStatus==="DEAD"?"bad":""),a.id);t.append(row([c1,td(a.effectiveStatus,"mono"),td(a.tasks.join(", ")||"—","muted")]))});rp.append(t);if(!s.agents.length)rp.append(el("div","empty","Агентов пока нет."))}
 
+  renderOvProgress();
   const pp=$("ov-phases");pp.replaceChildren();const ph2=el("div","ph","Задачи по фазам");ph2.append(el("span","end","все задачи проекта"));pp.append(ph2);
   const t2=el("table");t2.append(head(["Фаза","Сколько","Самая старая"]));
   const act=s.tasks.filter(x=>x.status==="ACTIVE");
@@ -258,6 +348,115 @@ function renderOverview(){
 
   const ep=$("ov-events");ep.replaceChildren();const ph3=el("div","ph","Последние события");const all=el("a","end","все события →");all.href="#/events";all.onclick=ev=>{ev.preventDefault();go("events",route.project)};ph3.append(all);ep.append(ph3);
   const evs=events(s).slice(0,8);evs.forEach(e=>ep.append(evRow(e)));if(!evs.length)ep.append(el("div","empty","Событий пока нет."));
+}
+
+/* ---------- pop-ups: a task changed its phase or status ---------- */
+const seenTasks=new Map();let seenProject=null;
+const phaseName=t=>t.phase+(t.phase==="SYNC"&&t.syncRound?" #"+t.syncRound:"");
+function watchTransitions(s){
+  // the first look at a project only remembers: pop-ups are for changes while the page is open
+  if(seenProject!==s.project.id){seenProject=s.project.id;seenTasks.clear();s.tasks.forEach(t=>seenTasks.set(t.id,t));return}
+  for(const t of s.tasks){const p=seenTasks.get(t.id);seenTasks.set(t.id,t);
+    if(!p){toast("",t.id+": новая задача",t.title,t.id);continue}
+    if(t.status!==p.status){
+      if(t.status==="BLOCKED")toast("bad",t.id+": BLOCKED",(t.handover?"Ждём вас до "+time(t.handover.dueAt)+", потом исправление возьмёт lead "+t.handover.lead+". ":"")+(t.blockedReason||""),t.id);
+      else if(t.status==="COMPLETED")toast("ok",t.id+": DONE",t.title,t.id);
+      else if(t.status==="CANCELLED")toast("",t.id+": отменена",t.title,t.id);
+      else if(p.status==="BLOCKED")toast("warn",t.id+": снова в работе",t.takeover&&!p.takeover?"Lead взял исправление "+t.takeover.from.join(", ")+" ("+(t.takeover.by==="timeout"?"вы не ответили вовремя":"передали вы")+")":phaseName(t),t.id);
+      continue}
+    if(t.phase!==p.phase||t.syncRound!==p.syncRound){
+      const back=t.phase==="IMPLEMENT"&&(p.phase==="SYNC"||p.phase==="INTEGRATE");
+      toast(back?"warn":"",t.id+": "+phaseName(p)+" → "+phaseName(t),back?"Нашли ошибки: раунд исправлений "+t.syncRound+" из "+t.maxFixRounds:t.title,t.id)}
+  }
+}
+function toast(kind,title,text,taskId,tab){
+  const box=$("toasts");const d=el("div","toast "+kind);d.setAttribute("role","status");d.title="открыть задачу";
+  d.append(el("b","",title),el("div","muted",text.length>220?text.slice(0,220)+"…":text));
+  const x=el("button","x","×");x.type="button";x.title="закрыть";x.onclick=e=>{e.stopPropagation();d.remove()};d.append(x);
+  d.onclick=()=>{d.remove();if(tab){go(tab,route.project);return}go("tasks",route.project);if(taskId)setTimeout(()=>{const c=document.querySelector('#tasks [data-id="'+taskId+'"]');if(c)c.scrollIntoView({block:"start",behavior:"smooth"})},300)};
+  box.prepend(d);
+  // at most four: the oldest ordinary one goes first, a BLOCKED one only when nothing else is left
+  while(box.children.length>4){const all=[...box.children];(all.reverse().find(x=>!x.classList.contains("bad"))||all[0]).remove()}
+  if(kind!=="bad")setTimeout(()=>d.remove(),8000); // BLOCKED and the supervisor's "needs you" stay until closed
+  return d;
+}
+
+/* ---------- progress ---------- */
+function mins(ms){return ms<60000?"<1 мин":ms<3600000?Math.round(ms/60000)+" мин":(ms/3600000).toFixed(1).replace(".0","")+" ч"}
+function pbar(parts,cls){const b=el("div","pbar"+(cls?" "+cls:""));parts.forEach(([v,c])=>{if(v>0){const x=el("span",c);x.style.width=Math.min(100,v*100).toFixed(1)+"%";b.append(x)}});return b}
+/** How far a task is: the OpenSpec tasks its agents reported done, and their subtasks. */
+function progressOf(t){
+  const subs=Object.values(t.subtasks||{}).flat().filter(x=>x.status!=="DROPPED");const done=subs.filter(x=>x.status==="DONE");
+  const res={subs:{done:done.length,doing:subs.filter(x=>x.status==="DOING").length,total:subs.length,last:done.map(x=>x.updatedAt).sort().pop()||null},os:null};
+  const o=t.openspec;if(o&&o.assigned&&o.assigned.length){const nums=new Set(o.assigned.flatMap(a=>a.tasks));const rep=new Set(o.assigned.flatMap(a=>a.done).filter(n=>nums.has(n)));
+    res.os={total:nums.size,reported:rep.size,folder:o.progress}}
+  // one number for lists: the change's tasks if there are any, else the subtasks
+  res.share=res.os&&res.os.total?res.os.reported/res.os.total:res.subs.total?res.subs.done/res.subs.total:null;
+  res.doingShare=res.os&&res.os.total?0:res.subs.total?res.subs.doing/res.subs.total:0;
+  return res}
+/** The phases as one bar: how long each took (fix rounds summed), the current one highlighted. */
+function phaseBar(t){
+  const st=t.stats,idx=PHASES.indexOf(t.phase),over=t.status==="COMPLETED",stopped=t.status==="CANCELLED";
+  const ms=p=>{const r=st.phases.find(x=>x.phase===p);return r?r.ms:0};const total=PHASES.slice(0,4).reduce((a,p)=>a+ms(p),0)||60000;
+  const bar=el("div","ptl");
+  PHASES.forEach((p,i)=>{const m=ms(p),past=over||(!stopped&&i<idx),now=!over&&!stopped&&i===idx;
+    const seg=el("div","seg"+(past?" past":now?(t.status==="BLOCKED"?" bad":" now"):""));
+    seg.style.flex=String(p==="DONE"?total*0.07:Math.max(m,total*0.09)); // time-proportional, every phase still readable
+    // a phase entered again (fix rounds: IMPLEMENT → SYNC → IMPLEMENT …) is one segment: its total time, ×N and a dot per stay
+    const row=st.phases.find(x=>x.phase===p),visits=row&&row.visits?row.visits:[];
+    seg.append((visits.length>1?p+" ×"+visits.length:p)+((past||now)&&p!=="DONE"&&m?" · "+mins(m):"")+(now?(t.status==="BLOCKED"?" ■":" ▸"):""));
+    if(visits.length>1&&visits.length<=8){const rd=el("span","rd");visits.forEach((v,j)=>rd.append(el("i",j===visits.length-1?"last":"")));seg.append(rd)}
+    seg.title=p+(m?": "+fmtMs(m):"")+(visits.length>1?"\n"+visits.map((v,j)=>(p==="SYNC"?"раунд ":"заход ")+(j+1)+": "+fmtMs(v)).join("\n"):"")+(now?"\n— сейчас":"");bar.append(seg)});
+  return bar}
+function lastCall(agent,taskId){for(let i=ACT.length-1;i>=0;i--){const e=ACT[i];if(e.agentId===agent&&e.kind==="tool_use"&&(!e.taskId||e.taskId===taskId))return e}return null}
+/** What each agent of an open task is doing: its subtasks as a bar, its current step or why it waits, its last call. */
+function progressBlock(t){
+  const box=el("div");const pr=progressOf(t);const k=el("div","pkpis");
+  if(pr.os){const o=pr.os;const d=el("div","pk");const v=el("div","v",o.reported+" / "+o.total);v.append(el("small","",o.total?Math.round(o.reported/o.total*100)+"%":""));
+    d.append(el("div","l","Задачи OpenSpec — сданы агентами"),v,pbar([[o.total?o.reported/o.total:0,"g"]]),el("div","h",o.folder?"в папке проекта отмечено "+o.folder.done+"/"+o.folder.total+" (отмечает lead после слияния)":"номера из tasks.md, о которых агенты отчитались в complete"));k.append(d)}
+  if(pr.subs.total){const sb=pr.subs;const d=el("div","pk");const v=el("div","v",sb.done+" / "+sb.total);v.append(el("small","",Math.round(sb.done/sb.total*100)+"%"+(sb.doing?" · в работе "+sb.doing:"")));
+    d.append(el("div","l","Подзадачи агентов"),v,pbar([[sb.done/sb.total,"g"],[sb.doing/sb.total,"b"]]),el("div","h",sb.last?"последняя галочка "+ago(sb.last):"галочек пока нет"));k.append(d)}
+  if(k.childElementCount)box.append(k);
+  const list=el("div","pagents");const rs=S.control?S.control.runners:[];const lead=t.agents[0];
+  for(const id of t.agents){
+    const subs=((t.subtasks&&t.subtasks[id])||[]).filter(x=>x.status!=="DROPPED");const d=subs.filter(x=>x.status==="DONE").length;const doing=subs.find(x=>x.status==="DOING");
+    const as=t.agreement&&t.agreement.assignments.find(a=>a.agentId===id);const im=t.implementations.find(i=>i.agentId===id);
+    const r=rs.find(x=>x.id===id);const busy=!!(r&&r.session&&r.session.taskId===t.id);
+    const deps=((as&&as.dependsOn)||[]).filter(dep=>{const di=t.implementations.find(i=>i.agentId===dep);return !di||di.status!=="READY_FOR_SYNC"});
+    const rep=t.syncReports.filter(x=>x.agentId===id&&x.round===t.syncRound).pop();const waits=t.waitingOn.includes(id);
+    let st="",cls="",wait=false;
+    if(t.status==="BLOCKED"){st=t.takeover&&t.takeover.from.includes(id)?"исправление у lead'а":"задача BLOCKED";cls="bad"}
+    else if(t.phase==="DISCUSS"){const ok=t.agreement&&t.agreement.approvedBy.includes(id);st=!t.agreement?(id===lead?"готовит предложение":"ждёт предложения lead'а"):ok?"✓ одобрил agreement":"смотрит agreement";cls=ok?"ok":waits?"now":""}
+    else if(t.phase==="IMPLEMENT"){
+      if(im&&im.status==="READY_FOR_SYNC"){st="✓ сдал работу · ждёт остальных";cls="ok"}
+      else if(deps.length&&!doing){st="ждёт "+deps.join(", ")+" (dependsOn)"+(subs.length-d?" · "+(subs.length-d)+" "+plural(subs.length-d,"подзадача","подзадачи","подзадач")+" наготове":"");cls="warn";wait=true}
+      else if(doing){st="▶ "+doing.id+" "+doing.title;cls="now"}
+      else{st=busy?"работает":subs.length?"между подзадачами":"ещё не начал";cls=busy?"now":""}}
+    else if(t.phase==="SYNC"){st=rep?"✓ ревью раунда "+t.syncRound+": "+rep.status:waits?"ревьюит":"ждёт ревью";cls=rep?(rep.status==="PASS"?"ok":"warn"):waits?"now":""}
+    else if(t.phase==="INTEGRATE"){st=id===lead?"собирает и проверяет результат":"ждёт lead'а";cls=id===lead?"now":""}
+    const last=busy?lastCall(id,t.id):null;
+    const row=el("div","prow");const nm=el("div","nm");const model=r&&r.model||(t.stats&&(t.stats.agents.find(a=>a.agentId===id)||{models:[]}).models[0])||"";
+    nm.append(el("b","",id),el("span","",[id===lead?"lead":"",model].filter(Boolean).join(" · ")));
+    const mid=el("div");mid.append(wait&&!d?pbar([],"wait"):pbar(subs.length?[[d/subs.length,"g"],[doing?1/subs.length:0,"b"]]:[]));
+    const line=el("div","st "+cls,st+(last?" · "+(last.tool||"")+" "+last.summary+" · "+ago(last.at):""));line.title=line.textContent;mid.append(line);
+    const cnt=el("div","cnt");if(subs.length){cnt.append(el("b","",String(d)),"/"+subs.length)}else cnt.append("—");
+    row.append(nm,mid,cnt);list.append(row)}
+  box.append(list);
+  const lg=el("div","plegend");[["var(--ok)","готово"],["var(--accent)","в работе"],["var(--line)","ждёт"]].forEach(([c,l])=>{const sp=el("span");const i=el("i");i.style.background=c;sp.append(i,l);lg.append(sp)});box.append(lg);
+  return box}
+/** Overview: every open task on one line with how far it is. */
+function renderOvProgress(){
+  const box=$("ov-progress");const open=S.tasks.filter(t=>t.queue==="running"||t.queue==="blocked"||t.queue==="queued").sort((a,b)=>["running","blocked","queued"].indexOf(a.queue)-["running","blocked","queued"].indexOf(b.queue)||a.id.localeCompare(b.id));
+  box.hidden=!open.length;box.replaceChildren();if(!open.length)return;
+  const ph=el("div","ph","Прогресс задач");ph.append(el("span","end","OpenSpec-задачи, иначе подзадачи агентов"));box.append(ph);
+  for(const t of open){const pr=progressOf(t);const row=el("div","ovp");row.title="открыть задачу";
+    row.onclick=()=>{go("tasks",route.project);setTimeout(()=>{const c=document.querySelector('#tasks [data-id="'+t.id+'"]');if(c)c.scrollIntoView({block:"start",behavior:"smooth"})},300)};
+    const tt=el("div","tt");tt.append(el("span","",t.id),t.title);
+    const blocked=t.status==="BLOCKED",queued=t.queue==="queued";
+    const pill=badge(blocked?"BLOCKED":queued?"queued":"running",blocked?"BLOCKED":queued?"в очереди":phaseName(t));
+    const bar=blocked?pbar([[pr.share||0,"r"]]):queued?pbar([]):pbar([[pr.share||0,"g"],[pr.doingShare,"b"]]);
+    const pct=el("div","pct",blocked?"р. "+t.syncRound+"/"+t.maxFixRounds:queued||pr.share===null?"—":Math.round(pr.share*100)+"%");
+    row.append(tt,pill,bar,pct);box.append(row)}
 }
 
 /* ---------- tasks ---------- */
@@ -327,15 +526,19 @@ function renderTask(t){
   if(t.status==="BLOCKED")hd.append(renderBlocked(t));
   if(t.takeover&&t.status!=="BLOCKED")hd.append(el("div","muted","Lead взял исправление "+t.takeover.from.join(", ")+" в раунде "+t.takeover.round+" ("+(t.takeover.by==="timeout"?"оператор не ответил вовремя":"передал оператор")+")."));
   c.append(hd);
-  const steps=el("div","steps");const idx=PHASES.indexOf(t.phase);
-  PHASES.forEach((p,i)=>steps.append(el("div","step"+(i<idx?" past":i===idx?" now":""),p+(p==="SYNC"&&t.syncRound&&idx>=2?" #"+t.syncRound:""))));
-  c.append(steps);
+  if(t.stats)c.append(phaseBar(t));
+  else{const steps=el("div","steps");const idx=PHASES.indexOf(t.phase);
+    PHASES.forEach((p,i)=>steps.append(el("div","step"+(i<idx?" past":i===idx?" now":""),p+(p==="SYNC"&&t.syncRound&&idx>=2?" #"+t.syncRound:""))));
+    c.append(steps)}
+  if(t.status==="ACTIVE"||t.status==="BLOCKED")c.append(progressBlock(t));
   if(t.waitingOn.length){const w=el("div","chips");w.append(el("span","muted","ждём:"));t.waitingOn.forEach(x=>w.append(el("span","chip",x)));c.append(w)}
   const tbl=el("table");tbl.append(head(["Агент","Задача в agreement","Подзадачи","Implementation","Sync (раунд "+t.syncRound+")"]));
   for(const id of t.agents){
-    const r=el("tr");r.append(td(id));
+    const r=el("tr");const c0=td(id);
+    if(S.control&&(t.status==="ACTIVE"||t.status==="BLOCKED")){const m=el("button","mail","✉");m.type="button";m.title="написать агенту "+id;m.onclick=()=>messageAgent(t.id,id);c0.append(m)}
+    r.append(c0);
     const as=t.agreement&&t.agreement.assignments.find(a=>a.agentId===id);const ap=t.agreement&&t.agreement.approvedBy.includes(id);
-    const c1=el("td");c1.append(el("span","",as?as.responsibility:"—"));if(as&&as.files&&as.files.length)c1.append(el("div","muted mono","файлы: "+as.files.join(", ")));if(as&&as.dependsOn&&as.dependsOn.length)c1.append(el("div","muted","сдаёт после: "+as.dependsOn.join(", ")+" (dependsOn)"));if(t.agreement&&as)c1.append(" ",el("span","badge "+(ap?"PASS":"WAITING"),ap?"одобрил":"не одобрил"));r.append(c1);
+    const c1=el("td");c1.append(el("span","",as?as.responsibility:"—"));if(as&&as.files&&as.files.length){const fd=el("details","files");fd.dataset.key="files-"+id;fd.append(el("summary","muted","файлы ("+as.files.length+")"),el("div","muted mono",as.files.join(", ")));c1.append(fd)}if(as&&as.dependsOn&&as.dependsOn.length)c1.append(el("div","muted","сдаёт после: "+as.dependsOn.join(", ")+" (dependsOn)"));if(t.agreement&&as)c1.append(" ",el("span","badge "+(ap?"PASS":"WAITING"),ap?"одобрил":"не одобрил"));r.append(c1);
     const subs=(t.subtasks&&t.subtasks[id])||[];const live=subs.filter(x=>x.status!=="DROPPED");
     const c2=el("td","sub");if(!subs.length)c2.append(el("span","muted","—"));else{const doing=subs.find(x=>x.status==="DOING");
       c2.append(el("div","",live.filter(x=>x.status==="DONE").length+"/"+live.length+(doing?" · ▶ "+doing.id:"")));
@@ -350,7 +553,7 @@ function renderTask(t){
     if(rep)rep.findings.forEach(f=>{const d=el("div","muted");d.append(el("span","badge "+f.severity,f.severity)," "+f.description+(f.relatedAgent?" → "+f.relatedAgent:""));c4.append(d)});
     r.append(c4);tbl.append(r);
   }
-  c.append(tbl);
+  const tw=el("div","tscroll");tw.append(tbl);c.append(tw); // a wide table scrolls inside the card, not the page
   t.integrations.filter(x=>x.round===t.syncRound).slice(-1).forEach(x=>{const d=el("div","");d.append(el("b","","Интеграция ("+x.agentId+"): "),badge(x.status)," "+x.result);if(x.commits.length)d.append(el("div","muted mono","commits: "+x.commits.join(", ")));
     x.findings.forEach(f=>{const r=el("div","muted");r.append(el("span","badge "+f.severity,f.severity)," "+f.description+(f.relatedAgent?" → "+f.relatedAgent:""));d.append(r)});c.append(d)});
   if(t.agreement){const d=el("details");d.append(el("summary","","Agreement v"+t.agreement.version+" — "+t.agreement.summary));
@@ -375,12 +578,12 @@ function renderTasks(){
   updateForm(s);
   const box=$("tasks");
   // the cards are rebuilt on every refresh: keep which details are open and where their lists are scrolled
-  if(box.querySelector("[data-id]")){openDetails.clear();box.querySelectorAll("details[open]").forEach(d=>{const card=d.closest("[data-id]");if(card)openDetails.add(card.dataset.id+"|"+d.firstChild.textContent.split(" ")[0])})}
+  if(box.querySelector("[data-id]")){openDetails.clear();box.querySelectorAll("details[open]").forEach(d=>{const card=d.closest("[data-id]");if(card)openDetails.add(card.dataset.id+"|"+(d.dataset.key||d.firstChild.textContent.split(" ")[0]))})}
   const scrolls=new Map();box.querySelectorAll("[data-scroll]").forEach(b=>{if(b.closest("details:not([open])"))return;const card=b.closest("[data-id]");if(card)scrolls.set(card.dataset.id+"|"+b.dataset.scroll,{top:b.scrollTop,atEnd:b.scrollTop+b.clientHeight>=b.scrollHeight-8})});
   // build every card first and swap them in at once: measuring a half-built list would shrink the page and reset its scroll
   const cards=s.tasks.map(t=>{const c=renderTask(t);c.dataset.id=t.id;
     c.querySelectorAll("[data-scroll]").forEach(b=>{const sv=scrolls.get(t.id+"|"+b.dataset.scroll);if(sv&&!(b.dataset.scroll==="msgs"&&sv.atEnd))b.dataset.top=String(sv.top)}); // at the bottom of messages: stay at the newest
-    c.querySelectorAll("details").forEach(d=>{if(openDetails.has(t.id+"|"+d.firstChild.textContent.split(" ")[0]))d.open=true});return c});
+    c.querySelectorAll("details").forEach(d=>{if(openDetails.has(t.id+"|"+(d.dataset.key||d.firstChild.textContent.split(" ")[0])))d.open=true});return c});
   box.replaceChildren(...(cards.length?cards:[el("div","empty",s.control?"Задач нет. Нажмите «+ Новая задача».":"Задач нет. Создайте: agent-network-mcp task create --title … --agents a,b")]));
   cards.forEach(c=>c.querySelectorAll("[data-scroll]").forEach(b=>{if(b.closest("details"))return;const sv=scrolls.get(c.dataset.id+"|"+b.dataset.scroll);
     if(sv)b.scrollTop=sv.top;else{const cur=b.querySelector(".DOING");if(cur)b.scrollTop+=cur.getBoundingClientRect().top-b.getBoundingClientRect().top-b.clientHeight/3}}));
@@ -468,6 +671,7 @@ function renderControl(s){
     c.info.textContent=(r.session?"сейчас: "+r.session.taskId+" · сессия #"+r.session.attempt+" · "+since(r.session.startedAt):r.running&&r.startedAt?"ждёт задачу · запущен "+ago(r.startedAt):r.stoppedAt?"остановлен "+ago(r.stoppedAt):"не запускался")+(mine.length?" · за 24ч "+fmtUsd(mine.reduce((a,x)=>a+x.costUsd,0),mine.some(x=>x.costEstimated)):"");
     c.cwd.textContent=r.cwd?"папка: "+r.cwd:"папка: текущая";c.cwd.title=r.cwd||"";
     c.cmd.textContent=r.command;c.cmd.title=r.command;
+    c.feed.replaceChildren(miniFeed(r.id));
     c.modelHint.textContent=r.model&&r.models.length<2?"Список моделей для выбора — поле \"models\" в runners.json (в defaults или у агента).":"";c.modelHint.hidden=!c.modelHint.textContent;
     c.modelState.textContent=r.model?"модель: "+r.model:"модель: задана в command (поставьте {model} в command и \"model\" в runners.json, чтобы выбирать здесь)";c.modelForm.hidden=!r.model;
     const msig=r.models.join("|")+"#"+(r.model||"");
@@ -495,10 +699,13 @@ function makeRunnerCard(id){
   const instBtn=el("button","ghost","Сохранить");instBtn.type="submit";inst.append(instInput,instBtn);
   inst.onsubmit=async ev=>{ev.preventDefault();instBtn.disabled=true;
     try{await post("/api/runners/"+encodeURIComponent(id)+"/instructions",{file:instInput.value});instInput.dataset.server="";instInput.blur();await tick()}catch(e){alert(e.message)}finally{instBtn.disabled=false}};
-  const details=el("details");details.append(el("summary","","Лог"));const pre=el("pre","log","");details.append(pre);
+  const details=el("details");details.append(el("summary","","Сырой лог"));const pre=el("pre","log","");details.append(pre);
   details.addEventListener("toggle",()=>{if(details.open)loadLog(id,c)});
-  root.append(top,info,cwd,cmd,modelState,modelForm,modelHint,instState,inst,instDetails,details);
-  const c={root,dot:dt,badge:badgeEl,btn,info,cwd,cmd,details,pre,modelState,modelForm,modelSel,modelHint,instState,instInput,instPre,instDetails};return c}
+  const feedHead=el("div","row2");const feedTitle=el("b","","Активность");const feedLink=el("a","","вся лента агента →");feedLink.href="#";
+  feedLink.onclick=ev=>{ev.preventDefault();$("a-agent").dataset.sig="";go("activity",route.project);setTimeout(()=>{$("a-agent").value=id;render()},0)};
+  feedHead.append(feedTitle,feedLink);const feed=el("div");
+  root.append(top,info,cwd,cmd,modelState,modelForm,modelHint,instState,inst,instDetails,feedHead,feed,details);
+  const c={root,dot:dt,badge:badgeEl,btn,info,cwd,cmd,details,pre,modelState,modelForm,modelSel,modelHint,instState,instInput,instPre,instDetails,feed};return c}
 async function loadLog(id,c){try{const j=await getJSON(q("/api/runners/"+encodeURIComponent(id)+"/log"));
   const atEnd=c.pre.scrollTop+c.pre.clientHeight>=c.pre.scrollHeight-8;c.pre.textContent=j.lines.length?j.lines.join("\n"):"(пусто)";if(atEnd)c.pre.scrollTop=c.pre.scrollHeight}catch(e){}}
 function renderAgents(s){
@@ -534,6 +741,47 @@ function renderEvents(){
   const box=$("events");const top=box.scrollTop;box.replaceChildren();list.slice(0,300).forEach(e=>box.append(evRow(e)));if(!list.length)box.append(el("div","empty","Событий нет."));box.scrollTop=top;
 }
 
+/* ---------- activity: what the agents call, what comes back ---------- */
+let ACT=[],actSeq=0,actProject=null,actShown=0,actKind="all";const actOpen=new Set();
+const KINDS=[["all","all"],["tool_use","tool_use"],["tool_result","tool_result"],["err","errors"],["text","text"],["thinking","thinking"],["runner","runner"]];
+async function fetchActivity(){
+  if(actProject!==route.project){actProject=route.project;ACT=[];actSeq=0;actShown=0;actOpen.clear()}
+  try{const j=await getJSON(q("/api/activity?after="+actSeq));if(j.events.length){ACT.push(...j.events);if(ACT.length>3000)ACT.splice(0,ACT.length-3000)}actSeq=j.lastSeq||actSeq}catch(e){}
+}
+const isErr=e=>!!e.isError||e.kind==="stderr";
+function matchKind(e,k){return k==="all"||(k==="err"?isErr(e):k==="runner"?e.kind==="runner"||e.kind==="session"||e.kind==="stderr":e.kind===k||(k==="text"&&e.kind==="result"))}
+function secs(ms){return ms<1000?ms+" мс":ms<60000?(ms/1000).toFixed(1)+" с":Math.round(ms/60000)+" мин"}
+function actRow(e,mini){
+  const r=el("div","arow "+e.kind+(isErr(e)?" err":"")+(actOpen.has(e.seq)?" open":""));
+  const kind=el("span","kind "+(e.kind==="tool_result"&&e.isError?"err":e.kind),e.kind);
+  const sum=el("span","sum");
+  if(e.tool){const t=el("span","tool",(e.kind==="tool_result"?(e.isError?"✗ ":"✓ "):"")+e.tool.replace(/^mcp__agent-network__/,"swarm·").replace(/^mcp__supervisor__/,"supervisor·"));sum.append(t)}
+  sum.append((e.durationMs!==undefined?secs(e.durationMs)+" · ":"")+(e.summary||""));sum.title=e.summary||"";
+  r.append(el("span","seq","#"+e.seq),el("span","tm",time(e.at)),el("span","who",e.agentId),kind,sum);
+  const wrap=el("div");wrap.append(r);
+  if(actOpen.has(e.seq)){const d=el("div","adetail");d.append(el("div","muted",[e.agentId,e.taskId?e.taskId+(e.attempt?" · сессия #"+e.attempt:""):null,new Date(e.at).toLocaleString([],{hour12:false}),"#"+e.seq].filter(Boolean).join(" · ")));
+    if(e.detail)d.append(el("pre","log",e.detail));else d.append(el("div","muted","подробностей нет"));wrap.append(d)}
+  r.onclick=()=>{if(actOpen.has(e.seq))actOpen.delete(e.seq);else actOpen.add(e.seq);render()};
+  return wrap}
+function renderActivity(){
+  const agents=[...new Set(ACT.map(e=>e.agentId))].sort();fillSelect("a-agent","Все агенты",agents);fillSelect("a-task","Все задачи",[...new Set(ACT.map(e=>e.taskId).filter(Boolean))].sort());
+  const fa=$("a-agent").value,ft=$("a-task").value,fq=$("a-q").value.trim().toLowerCase(),follow=$("a-follow").checked;
+  const base=ACT.filter(e=>(!fa||e.agentId===fa)&&(!ft||e.taskId===ft)&&(!fq||((e.summary||"")+" "+(e.tool||"")+" "+(e.detail||"")).toLowerCase().includes(fq)));
+  const kb=$("a-kinds");kb.replaceChildren();for(const [k,label] of KINDS){const b=el("button",actKind===k?"on":"");b.type="button";b.append(label,el("span","k",String(base.filter(e=>matchKind(e,k)).length)));b.onclick=()=>{actKind=k;actShown=0;render()};kb.append(b)}
+  let list=base.filter(e=>matchKind(e,actKind));
+  if(follow||!actShown)actShown=actSeq;
+  const fresh=list.filter(e=>e.seq>actShown).length;list=list.filter(e=>e.seq<=actShown);
+  const box=$("activity");const top=box.scrollTop;const rows=list.slice(-400).reverse().map(e=>actRow(e,false));
+  if(fresh){const pill=el("button","newpill","Новых событий: "+fresh+" — показать");pill.type="button";pill.onclick=()=>{actShown=actSeq;box.scrollTop=0;render()};rows.unshift(pill)}
+  box.replaceChildren(...(rows.length?rows:[el("div","empty",S.control?"Пока пусто: события появятся, когда агенты начнут работать.":"Лента доступна в UI с --runners: её ведут runner'ы.")]));
+  box.scrollTop=follow?0:top;
+  $("a-total").textContent=ACT.length?"всего в памяти: "+ACT.length+" событий · ошибок: "+ACT.filter(isErr).length:"";
+  $("c-activity").textContent="";
+}
+["a-agent","a-task","a-follow"].forEach(id=>$(id).addEventListener("change",render));$("a-q").addEventListener("input",render);
+function miniFeed(id){const box=el("div","act mini");const list=ACT.filter(e=>e.agentId===id).slice(-12).reverse();
+  box.append(...(list.length?list.map(e=>actRow(e,true)):[el("div","empty","событий пока нет")]));return box}
+
 /* ---------- questions ---------- */
 const qCards=new Map();
 function renderQuestions(s){
@@ -548,9 +796,96 @@ function renderQuestions(s){
   for(const [key,c] of qCards)if(!keep.has(key)){c.remove();qCards.delete(key)}
 }
 
+/* ---------- supervisor ---------- */
+let SUP=null,supKind="all",supAll=false;const supSessions=new Map();const supSeen={project:null,ids:new Set(),needs:new Set()},supOpen=new Set();let supUi=null;
+const RULES=[["questionAfterSec","вопрос оператору без ответа дольше","с"],["stallMin","нет прогресса у агента в сессии дольше","мин"],["repeatCount","одна и та же команда подряд, раз","×"],["testMin","тестовый процесс живёт дольше","мин"]];
+async function messageAgent(taskId,to){
+  const text=(prompt("Сообщение агенту "+to+" ("+taskId+"). Придёт от оператора, даже если агент сейчас занят.")||"").trim();if(!text)return;
+  try{await post("/api/tasks/"+encodeURIComponent(taskId)+"/message",{to:to,text:text});toast("ok",taskId+": отправлено "+to,text,taskId)}catch(e){alert(e.message)}}
+function watchSupervisor(s){const sv=s.supervisor;if(!sv)return;
+  // the first look only remembers its entries; a decision that waits for you pops up even then
+  if(supSeen.project!==s.project.id){supSeen.project=s.project.id;supSeen.ids=new Set(sv.recent.map(e=>e.id));supSeen.needs=new Set()}
+  for(const e of sv.recent){if(supSeen.ids.has(e.id))continue;supSeen.ids.add(e.id);
+    if(e.by==="supervisor"&&e.kind==="action")toast("","Надзор"+(e.taskId?" · "+e.taskId:""),e.text,e.taskId,e.taskId?undefined:"supervisor")}
+  for(const e of sv.needsYou){if(supSeen.needs.has(e.id))continue;supSeen.needs.add(e.id);toast("bad","Надзор: нужно ваше решение"+(e.taskId?" · "+e.taskId:""),e.text,e.taskId,"supervisor").dataset.need=e.id}
+  const open=new Set(sv.needsYou.map(e=>e.id));document.querySelectorAll("#toasts [data-need]").forEach(d=>{if(!open.has(d.dataset.need))d.remove()}); // marked done: its pop-up goes too
+}
+/** Under a "session" entry: where its full log is, and the log itself on demand (prompt, calls, results, its text). */
+function sessionBox(e){const id=e.data.session;const box=el("div","jsess");const b=el("button","ghost",supSessions.has(id)?"Скрыть сессию":"Показать сессию");b.type="button";
+  const where=el("span","",".agent-network/"+e.data.log+(e.data.transcript?" · транскрипт CLI: "+e.data.transcript:""));where.title=e.data.transcript||e.data.log;box.append(b,where);
+  const pre=el("pre","log jlog",supSessions.get(id)||"");pre.hidden=!supSessions.has(id);
+  box.onclick=ev=>ev.stopPropagation();pre.onclick=ev=>ev.stopPropagation(); // reading the log does not fold the row
+  b.onclick=async()=>{if(supSessions.has(id)){supSessions.delete(id);pre.hidden=true;b.textContent="Показать сессию";return}
+    b.disabled=true;try{const j=await getJSON(q("/api/supervisor/sessions/"+id));supSessions.set(id,j.text);pre.textContent=j.text;pre.hidden=false;b.textContent="Скрыть сессию"}catch(err){alert("Не удалось прочитать "+id)}finally{b.disabled=false}};
+  return [box,pre]}
+function supState(st){return !st.enabled?["","выключен"]:st.session?["ok","работает"]:st.held?["warn","ждёт"]:["acc","следит"]}
+function kpi(label,value,hint,dotCls){const k=el("div","kpi");const v=el("div","v");if(dotCls!==undefined)v.append(dot(dotCls));v.append(value);k.append(el("div","l",label),v,el("div","h",hint));return k}
+function makeSupUi(){
+  const set=$("s-settings");const modelState=el("div","note","");const form=el("form","inst");const sel=document.createElement("select");const btn=el("button","ghost","Применить");btn.type="submit";form.append(sel,btn);
+  const hint=el("div","muted","");const rules=el("div","rules");const limits=el("div","muted","");
+  form.onsubmit=async ev=>{ev.preventDefault();let m=sel.value;
+    if(m==="__other__"){m=(prompt("Модель, как её называет CLI надзора (например sonnet или qwen/qwen3-coder-30b). Чтобы она всегда была в списке, добавьте её в supervisor.models в runners.json.")||"").trim();if(!m){sel.dataset.server="";await tick();return}}
+    btn.disabled=true;try{await post("/api/supervisor/model",{model:m});sel.dataset.server="";sel.blur();await tick()}catch(e){alert(e.message)}finally{btn.disabled=false}};
+  set.append(el("h3","","Настройки"),modelState,form,hint,rules,limits,el("div","muted","Пороги, лимиты и свои команды — секция supervisor в runners.json; перечитываются на лету."));
+  const tools=$("s-tools");const tlist=el("div");tools.append(el("h3","","Инструменты"),el("div","muted","Выключенный инструмент не попадёт в следующую сессию надзора."),tlist);
+  $("s-toggle").onclick=async()=>{const b=$("s-toggle");b.disabled=true;try{SUP={...SUP,status:await post("/api/supervisor/"+b.dataset.action)};await tick()}catch(e){alert(e.message)}finally{b.disabled=false}};
+  KINDS_J.forEach(([k,label])=>{const b=el("button","",label);b.type="button";b.dataset.k=k;b.onclick=()=>{supKind=k;renderSupervisor()};$("s-kinds").append(b)});
+  return {modelState,form,sel,hint,rules,limits,tlist}}
+const KINDS_J=[["all","all"],["incident","incident"],["action","action"],["needs-you","needs-you"],["note","note"],["session","session"]];
+function renderSupervisor(){
+  const st=SUP&&SUP.status,journal=(SUP&&SUP.journal)||[],ctl=!!S.control;if(!supUi)supUi=makeSupUi();const u=supUi;
+  const none=$("s-none");none.hidden=!!st;
+  if(!st){none.replaceChildren(el("b","","Надзор не настроен"),el("div","muted",ctl?"Добавьте секцию \"supervisor\" в runners.json и перезапустите UI. Готовые примеры: examples/runner/runners.claude.example.json (Claude, sonnet) и runners.qwen.example.json (Qwen, модель из LM Studio).":"Только чтение: надзор работает в UI, запущенном с --runners и секцией \"supervisor\" в runners.json."))}
+  $("s-body").hidden=!st&&!journal.length;
+  const tg=$("s-toggle");tg.hidden=!st||!ctl;if(st){tg.textContent=st.enabled?"Выключить":"Включить";tg.className="end"+(st.enabled?" ghost":"");tg.dataset.action=st.enabled?"stop":"start"}
+  const needs=journal.filter(e=>e.kind==="needs-you"&&!e.resolvedAt);
+  if(st){const [dc,label]=supState(st);const k=$("s-kpis");
+    k.replaceChildren(
+      kpi("Состояние",label,st.session?"сессия с "+time(st.session.startedAt)+" · "+st.session.incidents.length+" "+plural(st.session.incidents.length,"инцидент","инцидента","инцидентов"):st.held?st.held:st.queued?"в очереди: "+st.queued:st.enabled?"инцидентов нет":"включите кнопкой «Включить»",dc),
+      kpi("Модель",st.model||"—","CLI: "+st.cli),
+      kpi("Сессии за час",st.sessionsLastHour+" / "+st.maxSessionsPerHour,"лимит maxSessionsPerHour"),
+      kpi("Расход 24ч",fmtUsd(st.spend24h.usd),(st.budgetUsd!==null?"бюджет $"+st.budgetUsd:"без бюджета")+(st.spend24h.unpriced?" · без цены: "+st.spend24h.unpriced:"")),
+      kpi("Ждут вас",String(needs.length),needs.length?"решения только для человека":"нет вопросов к вам"))}
+  else $("s-kpis").replaceChildren();
+  // decisions only you can take: the question, its recommendation, a way to the task, "done"
+  // rebuilt only when something changed: a rebuild between press and release would swallow the click
+  const nb=$("s-needs");const nsig=needs.map(e=>e.id).join(",")+(ctl?"#c":"");
+  if(nb.dataset.sig!==nsig){nb.dataset.sig=nsig;nb.replaceChildren();
+  needs.slice().reverse().forEach(e=>{const c=el("div","card need");const hd=el("div","hd");hd.append(el("b","","Нужно ваше решение"),el("span","muted",(e.taskId?e.taskId+" · ":"")+time(e.at)));
+    const parts=e.text.split("\nRecommendation: ");c.append(hd,el("div","",parts[0]));if(parts[1])c.append(el("div","rec","Рекомендация надзора: "+parts[1]));
+    const r=el("div","row2");if(e.taskId){const o=el("button","ghost","Открыть задачу");o.type="button";o.onclick=()=>{go("tasks",route.project);setTimeout(()=>{const x=document.querySelector('#tasks [data-id="'+e.taskId+'"]');if(x)x.scrollIntoView({block:"start",behavior:"smooth"})},300)};r.append(o)}
+    if(ctl){const d=el("button","","Решено");d.type="button";d.onclick=async()=>{d.disabled=true;try{await post("/api/supervisor/resolve",{id:e.id});await tick()}catch(err){alert(err.message);d.disabled=false}};r.append(d)}
+    c.append(r);nb.append(c)})}
+  // journal, newest first
+  $("s-kinds").querySelectorAll("button").forEach(b=>{const k=b.dataset.k;b.classList.toggle("on",k===supKind);const n=k==="all"?journal.length:journal.filter(e=>e.kind===k).length;b.textContent=k;if(n)b.append(el("span","k",String(n)))});
+  const shown=journal.filter(e=>supKind==="all"||e.kind===supKind).slice().reverse();const total=(SUP&&SUP.journalTotal)||journal.length;
+  const jc=$("s-jcount");jc.replaceChildren();if(journal.length){jc.append(supAll?"все "+total:total>journal.length?"последние "+journal.length+" из "+total:String(total));
+    if(total>100){const a=el("a","",supAll?" · только последние 100":" · показать все");a.href="#";a.onclick=async ev=>{ev.preventDefault();supAll=!supAll;await tick()};jc.append(a)}}
+  const jb=$("s-journal");const jsig=supKind+"|"+shown.map(e=>e.id+(e.resolvedAt?"r":"")).join(",")+"|"+!!(st&&st.enabled);
+  if(jb.dataset.sig!==jsig){jb.dataset.sig=jsig;jb.replaceChildren(...(shown.length?shown.map(e=>{const r=el("div","jrow"+(supOpen.has(e.id)?" open":"")+(e.resolvedAt?" resolved":""));r.title=new Date(e.at).toLocaleString([],{hour12:false});
+    const tk=el("span","tk",e.taskId||"");if(e.taskId){tk.onclick=ev=>{ev.stopPropagation();go("tasks",route.project)}}
+    r.append(el("span","tm",time(e.at)),el("span","jk "+e.kind,e.kind),el("span","by",e.by),tk,el("span","txt",e.text+(e.resolvedAt?"\n(решено "+time(e.resolvedAt)+")":"")));
+    if(e.kind==="session"&&e.data&&e.data.session)r.append(...sessionBox(e));
+    r.onclick=()=>{supOpen.has(e.id)?supOpen.delete(e.id):supOpen.add(e.id);r.classList.toggle("open")};return r}):[el("div","empty",st&&st.enabled?"Пока тихо: детектор ничего не нашёл.":"Журнал пуст.")]))}
+  $("s-settings").hidden=$("s-tools").hidden=!st;if(!st)return;
+  // settings: the model of the next session; the select is not rebuilt while you use it
+  u.modelState.textContent=st.model?"модель следующей сессии: "+st.model+(st.session&&st.session.model&&st.session.model!==st.model?" (сейчас идёт "+st.session.model+")":""):"модель задана в command (поставьте {model} в command и \"model\" в секции supervisor, чтобы выбирать здесь)";
+  u.form.hidden=!st.model||!ctl;u.hint.textContent=st.model&&st.models.length<2?"Список для выбора — supervisor.models в runners.json.":"";u.hint.hidden=!u.hint.textContent;
+  const msig=st.models.join("|")+"#"+(st.model||"");
+  if(st.model&&document.activeElement!==u.sel&&u.sel.dataset.server!==msig){u.sel.replaceChildren(...st.models.map(m=>new Option(m,m)),new Option("другая…","__other__"));u.sel.value=st.model;u.sel.dataset.server=msig}
+  u.rules.replaceChildren();u.rules.append(el("span","","задача стала BLOCKED, runner сдался"),el("b","","сразу"));RULES.forEach(([k,label,unit])=>{u.rules.append(el("span","",label),el("b","",unit==="×"?"×"+st.rules[k]:st.rules[k]+" "+unit))});
+  u.limits.textContent="не больше "+st.maxSessionsPerHour+" "+plural(st.maxSessionsPerHour,"сессии","сессий","сессий")+" в час"+(st.budgetUsd!==null?" и $"+st.budgetUsd+" за сутки":", бюджет за сутки не задан (budgetUsd)");
+  // tools: rebuilt only when the list or a switch changed, so a click is never lost
+  const tsig=st.tools.map(t=>t.name+(t.enabled?"+":"-")).join(",")+(ctl?"#c":"");
+  if(u.tlist.dataset.sig!==tsig){u.tlist.dataset.sig=tsig;u.tlist.replaceChildren(...st.tools.map(t=>{const r=el("label","tl"+(t.enabled?"":" off"));const cb=document.createElement("input");cb.type="checkbox";cb.checked=t.enabled;cb.disabled=!ctl;
+    cb.onchange=async()=>{cb.disabled=true;try{SUP={...SUP,status:await post("/api/supervisor/tools",{name:t.name,enabled:cb.checked})};renderSupervisor()}catch(e){alert(e.message);cb.checked=!cb.checked}finally{cb.disabled=false}};
+    const nm=el("span","nm",t.name);if(!t.builtin)nm.append(" ",badge("","свой"));r.append(cb,nm,el("span","ds",t.description));return r}))}
+  const lg=$("s-log");if($("s-logd").open){const atEnd=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-8;lg.textContent=st.log.length?st.log.join("\n"):"(пусто)";if(atEnd)lg.scrollTop=lg.scrollHeight}
+}
+
 /* ---------- switching projects ---------- */
 function resetProject(){
-  S=null;RUNS=[];n=0;knownIds="";openDetails.clear();
+  S=null;RUNS=[];SUP=null;n=0;knownIds="";openDetails.clear();supOpen.clear();["s-needs","s-journal"].forEach(id=>{$(id).dataset.sig="";$(id).replaceChildren()});supSessions.clear();supAll=false;if(supUi)supUi.tlist.dataset.sig="";
   for(const c of runnerCards.values())c.root.remove();runnerCards.clear();
   for(const c of qCards.values())c.remove();qCards.clear();
   ["tasks","runs","events","agents","kpis","ov-runners","ov-phases","ov-events"].forEach(id=>$(id).replaceChildren());

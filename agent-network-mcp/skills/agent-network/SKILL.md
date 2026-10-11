@@ -68,7 +68,7 @@ On a small local model load only this skill: a large development skill crowds ou
 
 ## Rules
 
-- Never invent the scope. If the task `description` does not say concretely what to build (placeholders, no feature), do not guess and do not propose: ask the user and wait. In an interactive session ask in your own chat; in a headless session (started by a runner, nobody reads your chat) use `send_message({to: "operator", message})` and `wait()`: the answer arrives in `pendingMessages`. Name the option you would take in the question: with no answer in 10 minutes go ahead with it and tell the other agents. Name the option you would take in the question: with no answer in 10 minutes go ahead with it and tell the other agents.
+- Never invent the scope. If the task `description` does not say concretely what to build (placeholders, no feature), do not guess and do not propose: ask the user and wait. In an interactive session ask in your own chat; in a headless session (started by a runner, nobody reads your chat) use `send_message({to: "operator", message})` and `wait()`: the answer arrives in `pendingMessages`. Name the option you would take in the question: with no answer in 10 minutes go ahead with it and tell the other agents. The same when the environment stops you twice (a refused command, a hung process, an unreachable service): ask the operator instead of retrying or working around it.
 - Never assume the phase and never try to change it; the server moves phases when the conditions are met.
 - Only do what `allowedActions` lists.
 - Do not make up facts about other agents; ask with `send_message`.

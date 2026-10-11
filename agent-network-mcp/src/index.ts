@@ -7,6 +7,7 @@ import { createServer } from "./server.js";
 import { NetworkService } from "./service.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore } from "./stores/agentStore.js";
+import { createSupervisorServer, supervisorOptionsFromEnv } from "./supervisor/mcp.js";
 
 // stdout carries the MCP protocol; everything human-readable goes to stderr.
 const log = (msg: string): void => {
@@ -14,6 +15,14 @@ const log = (msg: string): void => {
 };
 
 async function main(): Promise<void> {
+  if (process.argv[2] === "supervisor-mcp") {
+    // the supervisor's own tools, for its CLI session (see src/supervisor); it is no agent of the network
+    const server = createSupervisorServer(supervisorOptionsFromEnv(process.env));
+    await server.connect(new StdioServerTransport());
+    log("supervisor tools started");
+    process.stdin.on("end", () => process.exit(0));
+    return;
+  }
   if (process.argv[2] && process.argv[2] !== "serve") {
     const code = await runCli(process.argv.slice(2), process.env, (s) => process.stdout.write(s + "\n"));
     if (code >= 0) process.exit(code);

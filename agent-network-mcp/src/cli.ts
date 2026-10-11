@@ -12,6 +12,9 @@ import { FileStore } from "./storage/fileStore.js";
 import { NetworkService } from "./service.js";
 import { loadRunnersConfig, RunnerPool, watchPrices, type RunnersConfig } from "./ui/runners.js";
 import { startUiServer } from "./ui/server.js";
+import { Journal, type JournalEntry } from "./supervisor/journal.js";
+import { formatSessionLog, listSessionLogs, readSessionLog } from "./supervisor/sessionLog.js";
+import { Supervisor } from "./supervisor/supervisor.js";
 
 const USAGE = `Usage:
   agent-network-mcp task create --title <t> --agents <a,b[,c]> [--description <d>] [--verify <build/test command>]
@@ -23,6 +26,11 @@ const USAGE = `Usage:
   agent-network-mcp task unblock --id <task-001> [--rounds 1] [--network-dir <abs path>]   more fix rounds for a BLOCKED task
   agent-network-mcp task handover --id <task-001> [--network-dir <abs path>]   a BLOCKED task's stuck fix to the lead now
   agent-network-mcp agent list [--network-dir <abs path>]
+  agent-network-mcp supervisor journal [--task <task-001>] [--since 24h|30m|7d|<date>] [--kind action,needs-you] [--json] [--network-dir <abs path>]
+                                what the supervisor found, did and decided (the whole journal, oldest first)
+  agent-network-mcp supervisor sessions [--json] [--network-dir <abs path>]   its sessions: when, incidents, outcome, cost
+  agent-network-mcp supervisor session <n|latest> [--full] [--json] [--network-dir <abs path>]
+                                one session in full: prompt, every tool call and result, its text (--full: arguments and results too)
   agent-network-mcp ui [--port 4777] [--network-dir <abs path>] [--runners runners.json ...]
                         web page on http://127.0.0.1:<port>; read-only, or with --runners: a task form and the
                         agents' runners (start/stop, log tail), started together with the page; repeat --runners
@@ -49,6 +57,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
   if (group === "ui") return runUi(command ? [command, ...rest] : rest, env, out, cwd);
   if (group === "hook") return runHookCli(command, rest, env, out, undefined, cwd);
   if (group === "run") return runAgentRunner(command === undefined ? rest : [command, ...rest], env, out, cwd);
+  if (group === "supervisor" && (command === "journal" || command === "sessions" || command === "session")) return runSupervisorCli(command, rest, env, out, cwd);
   const known = (group === "task" && (command === "create" || command === "list" || command === "stats" || command === "cancel" || command === "unblock" || command === "handover")) || (group === "agent" && command === "list");
   if (!known) {
     out(USAGE);
@@ -198,19 +207,29 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
     }
   }
   try {
-    const specs = projects.map(({ dir, config }) => ({
-      networkDir: dir,
-      ...(config ? { runners: new RunnerPool(dir, config.agents, config.path ? { configPath: config.path } : {}) } : {}),
-      ...(config?.path ? { prices: watchPrices(config.path) } : {}),
-    }));
+    const specs = projects.map(({ dir, config }) => {
+      const runners = config ? new RunnerPool(dir, config.agents, config.path ? { configPath: config.path } : {}) : undefined;
+      const prices = config?.path ? watchPrices(config.path) : undefined;
+      // the supervisor watches this project's runners; it acts through the page, so it is attached once the page is up
+      const supervisor =
+        runners && config?.supervisor
+          ? new Supervisor({ networkDir: dir, config: config.supervisor, pool: runners, ...(config.path ? { configPath: config.path } : {}), ...(prices ? { prices } : {}) })
+          : undefined;
+      return { networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}) };
+    });
     const ui = await startUiServer(specs, { port });
     out(`Agent Network UI: ${ui.url}  (${projects.length === 1 ? `network: ${projects[0]!.dir}` : `projects: ${projects.map((p) => basename(dirname(p.dir))).join(", ")}`})  Ctrl+C to stop`);
-    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)) }] : []));
-    for (const { pool, config, name } of pools) {
+    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)), supervisor: s.supervisor, projectId: ui.projects[i]!.id }] : []));
+    for (const { pool, config, name, supervisor, projectId } of pools) {
       const auto = config.agents.filter((a) => a.autostart !== false).map((a) => a.id);
       for (const id of auto) pool.start(id);
       const where = pools.length > 1 ? ` (${name})` : "";
       out(`runners${where}: ${config.agents.map((a) => a.id).join(", ")}${auto.length ? `; started: ${auto.join(", ")}` : "; none started (autostart: false)"}`);
+      if (supervisor) {
+        supervisor.attach(ui.url, projectId);
+        if (config.supervisor!.autostart) supervisor.start();
+        out(`supervisor${where}: ${config.supervisor!.command[0]}${config.supervisor!.model ? ` (${config.supervisor!.model})` : ""}; ${config.supervisor!.autostart ? "watching" : "off (autostart: false), switch it on on the page"}`);
+      }
     }
     if (pools.length) {
       let stopping = false;
@@ -218,7 +237,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         if (stopping) process.exit(130); // second Ctrl+C: leave now
         stopping = true;
         out("stopping the runners...");
-        void Promise.all(pools.map(({ pool }) => pool.stopAll()))
+        void Promise.all(pools.map(({ pool, supervisor }) => Promise.all([pool.stopAll(), supervisor?.stop()])))
           .then(() => ui.close())
           .then(() => process.exit(0));
       };
@@ -230,6 +249,86 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
     out(`error: ${(e as Error).message}`);
     return 1;
   }
+}
+
+/** "24h", "30m", "7d" back from now, or a date/time; undefined = no limit. */
+function sinceOf(value: string | undefined, now = Date.now()): number | undefined {
+  if (value === undefined) return undefined;
+  const rel = /^(\d+)\s*(m|h|d)$/.exec(value.trim());
+  if (rel) return now - Number(rel[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[rel[2] as "m" | "h" | "d"];
+  const at = Date.parse(value);
+  if (Number.isNaN(at)) throw new AppError("INVALID_INPUT", `--since ${JSON.stringify(value)}: use 30m, 24h, 7d or a date like 2026-10-11 or 2026-10-11T13:00`);
+  return at;
+}
+
+/** The supervisor's journal and sessions, for looking back at what it did and why. */
+async function runSupervisorCli(command: "journal" | "sessions" | "session", args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string): Promise<number> {
+  try {
+    const { values, positionals } = parseArgs({
+      args,
+      allowPositionals: command === "session",
+      options: { task: { type: "string" }, since: { type: "string" }, kind: { type: "string" }, json: { type: "boolean" }, full: { type: "boolean" }, "network-dir": { type: "string" } },
+    });
+    const { dir, detected } = pickNetworkDir(values["network-dir"], env, cwd);
+    if (!dir || !isAbsolute(dir) || !existsSync(dir)) {
+      out(`error: ${dir && isAbsolute(dir) ? `no agent network at ${dir}` : "an absolute --network-dir (or NETWORK_DIR) is required"}${detected ? " (found from the git repository)" : ""}`);
+      return 2;
+    }
+    const networkDir = resolve(dir);
+    if (command === "session") {
+      const which = positionals[0] ?? "latest";
+      const log = await readSessionLog(networkDir, which);
+      out(values.json ? JSON.stringify(log.lines, null, 2) : `${log.file}\n\n${formatSessionLog(log.lines, values.full ?? false)}`);
+      return 0;
+    }
+    if (command === "sessions") {
+      const rows = [];
+      for (const s of await listSessionLogs(networkDir)) {
+        const { lines } = await readSessionLog(networkDir, s.id);
+        const start = lines.find((l) => l.type === "start");
+        const end = lines.find((l) => l.type === "end");
+        const incidents = (start?.type === "start" ? start.incidents : []) as { kind?: string; taskId?: string | null }[];
+        rows.push({
+          session: s.id, startedAt: start?.at ?? null, model: start?.type === "start" ? start.model ?? null : null,
+          incidents: incidents.map((i) => `${i.kind}${i.taskId ? ` ${i.taskId}` : ""}`),
+          events: lines.filter((l) => l.type === "event").length,
+          ...(end?.type === "end" ? { exitCode: end.exitCode, numTurns: end.numTurns ?? null, usd: end.usd ?? null, transcript: end.transcript ?? null } : { exitCode: null }),
+          file: s.file,
+        });
+      }
+      if (values.json) out(JSON.stringify(rows, null, 2));
+      else if (!rows.length) out("The supervisor has not run a session yet.");
+      else for (const r of rows) out(`${[r.session, r.startedAt ? r.startedAt.replace("T", " ").slice(0, 19) : "?", r.model, r.incidents.join(", ") || "no incidents"].filter(Boolean).join("  ")}  ·  ${r.exitCode === null ? "no end (cut off?)" : `exit ${r.exitCode}${r.numTurns !== null && r.numTurns !== undefined ? `, ${r.numTurns} turns` : ""}${r.usd !== null && r.usd !== undefined ? `, $${r.usd.toFixed(2)}` : ""}`}`);
+      return 0;
+    }
+    const since = sinceOf(values.since);
+    const kinds = values.kind ? new Set(values.kind.split(",").map((k) => k.trim()).filter(Boolean)) : undefined;
+    const entries = (await new Journal(await FileStore.open(networkDir)).list(Number.MAX_SAFE_INTEGER)).filter(
+      (e) => (!values.task || e.taskId === values.task) && (since === undefined || Date.parse(e.at) >= since) && (!kinds || kinds.has(e.kind)),
+    );
+    if (values.json) {
+      out(JSON.stringify(entries, null, 2));
+      return 0;
+    }
+    if (!entries.length) out("No journal entries" + (values.task || since !== undefined || kinds ? " for this filter." : " yet: the supervisor has not found anything."));
+    for (const e of entries) out(formatEntry(e));
+    return 0;
+  } catch (e) {
+    out(`error: ${e instanceof AppError ? `${e.code}: ${e.message}` : (e as Error).message}`);
+    return e instanceof AppError ? 2 : 1;
+  }
+}
+
+function formatEntry(e: JournalEntry): string {
+  const head = `${e.at.replace("T", " ").slice(0, 19)}  ${e.kind.padEnd(9)} ${e.by.padEnd(10)} ${(e.taskId ?? "").padEnd(8)}  `;
+  const pad = " ".repeat(head.length);
+  const data = (e.data ?? {}) as { log?: string; transcript?: string; session?: string };
+  const extra = [
+    ...(e.resolvedAt ? [`(resolved ${e.resolvedAt.replace("T", " ").slice(0, 16)})`] : []),
+    ...(data.log ? [`log: ${data.log} (supervisor session ${data.session?.replace(/^session-0*/, "") ?? ""})`] : []),
+    ...(data.transcript ? [`CLI transcript: ${data.transcript}`] : []),
+  ];
+  return [head + e.text.split("\n").join(`\n${pad}`), ...extra.map((x) => pad + x)].join("\n");
 }
 
 function positiveInt(value: string | undefined, name: string, fallback: number, min = 0): number {

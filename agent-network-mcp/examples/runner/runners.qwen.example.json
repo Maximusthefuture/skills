@@ -13,7 +13,9 @@
     "git: only the commands the protocol needs (status, diff, log, show, add, commit, merge, rev-parse); reset, branch -D, push are declined in headless mode (checked on Qwen Code 0.24.7). Add a command only when an agent really needs it.",
     "Model: the command has {model}; \"model\" is the default (an agent can have its own), \"models\" is the choice in the runner card on the page (applies from the next session). Ids as the model server lists them, e.g. curl http://<lm-studio>:1234/v1/models.",
     "prices: USD per 1M tokens for the models whose CLI reports no cost (Qwen); 0 = a free local model, or put a provider's prices to see what the work would cost there. Read again when the file changes.",
-    "autostart: false = start that agent with the button on the page."
+    "autostart: false = start that agent with the button on the page.",
+    "supervisor: the agent that looks after the others (page tab «Надзор»), here on Qwen Code with a model from LM Studio. A detector without a model checks the swarm every 10 s; on an incident it starts one supervisor session with the tools of qwen-supervisor-mcp.json (qwen passes AGENT_NETWORK_UI_URL and the rest of its environment to the MCP server). Shell and file writes are excluded: it acts through the page and frees hung tests and database locks; decisions only you can take come to the page as «нужно ваше решение». Its cost is counted with \"prices\" (0 for a local model); budgetUsd is checked against that. Switch it on/off, pick the model and its tools on the page.",
+    "supervisor.tools: your own commands for it, argv without a shell; {agentCwd} adds an agentId parameter (the agent's folder), {projectDir}/{networkDir} are filled in, own params are checked (type, enum, pattern). \"action\": true for a command that changes something: each run goes into its journal. disabledTools switches any tool off (also on the page)."
   ],
   "networkDir": "/abs/path/project/.agent-network",
   "defaults": {
@@ -88,6 +90,111 @@
       "instructionsFile": "instructions/tester.md"
     }
   ],
+  "supervisor": {
+    "command": [
+      "qwen",
+      "{prompt}",
+      "-o",
+      "stream-json",
+      "--system-prompt",
+      "{systemPrompt}",
+      "--exclude-tools",
+      "run_shell_command",
+      "write_file",
+      "edit",
+      "notebook_edit",
+      "web_fetch",
+      "web_search",
+      "agent",
+      "list_agents",
+      "send_message",
+      "get_goal",
+      "update_goal",
+      "manage_memory",
+      "search_memory",
+      "save_memory",
+      "todo_write",
+      "skill",
+      "monitor",
+      "cron_create",
+      "cron_delete",
+      "cron_list",
+      "ask_user_question",
+      "-m",
+      "{model}",
+      "--auth-type",
+      "openai",
+      "--openai-base-url",
+      "http://127.0.0.1:1234/v1",
+      "--openai-api-key",
+      "lm-studio",
+      "--mcp-config",
+      "/abs/path/agent-network-mcp/examples/runner/qwen-supervisor-mcp.json",
+      "--allowed-tools",
+      "mcp__supervisor",
+      "--max-session-turns",
+      "30",
+      "--max-wall-time",
+      "20m"
+    ],
+    "model": "qwen/qwen3-coder-30b",
+    "models": [
+      "qwen/qwen3.5-9b",
+      "qwen/qwen3-coder-30b"
+    ],
+    "promptFile": "supervisor-prompt.md",
+    "systemPromptFile": "supervisor-system-prompt.md",
+    "rules": {
+      "questionAfterSec": 60,
+      "stallMin": 15,
+      "repeatCount": 3,
+      "testMin": 10
+    },
+    "maxSessionsPerHour": 6,
+    "autostart": true,
+    "tools": [
+      {
+        "name": "surefire_failures",
+        "description": "Test report files with a failure or an error in an agent's folder (target/surefire-reports, failsafe-reports): read them with Read",
+        "command": [
+          "grep",
+          "-rlE",
+          "<(failure|error)[ >]",
+          "target/surefire-reports",
+          "target/failsafe-reports"
+        ],
+        "cwd": "{agentCwd}",
+        "timeoutSec": 20
+      },
+      {
+        "name": "agent_git_log",
+        "description": "The latest 15 commits of an agent's worktree branch",
+        "command": [
+          "git",
+          "log",
+          "--oneline",
+          "--decorate",
+          "-15"
+        ],
+        "cwd": "{agentCwd}",
+        "timeoutSec": 20
+      },
+      {
+        "name": "testcontainers",
+        "description": "Docker containers started by Testcontainers: id, image, how long they run, name",
+        "command": [
+          "docker",
+          "ps",
+          "--filter",
+          "label=org.testcontainers=true",
+          "--format",
+          "{{.ID}} {{.Image}} {{.Status}} {{.Names}}"
+        ],
+        "timeoutSec": 20
+      }
+    ],
+    "disabledTools": []
+  },
   "prices": {
     "qwen/qwen3.5-9b": {
       "input": 0,
