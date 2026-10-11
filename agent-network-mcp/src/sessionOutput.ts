@@ -55,6 +55,8 @@ export type ActivityKind = "session" | "thinking" | "text" | "tool_use" | "tool_
 
 export interface ActivityItem {
   kind: ActivityKind;
+  /** It happened inside a subagent the session started (Claude Code: parent_tool_use_id), not in the session itself. */
+  sub?: true;
   /** tool_use / tool_result: the tool's name. */
   tool?: string;
   /** tool_result: the tool reported an error (a refused command, a failing call). */
@@ -96,6 +98,7 @@ export function toolSummary(name: string, input: unknown): string {
   if (n === "bash" || n === "run_shell_command") return cut(String(i.command ?? ""), 300);
   if (["read", "write", "edit", "multiedit", "read_file", "write_file", "replace", "edit_file", "notebookedit"].includes(n)) return shortPath(i.file_path ?? i.absolute_path ?? i.path ?? i.notebook_path);
   if (n === "glob") return String(i.pattern ?? "");
+  if (n === "agent" || n === "task") return cut(`${String(i.subagent_type ?? "general-purpose")}: ${String(i.description ?? i.prompt ?? "")}`, 300); // a subagent: which one, what for
   if (n === "grep" || n === "search_file_content") return `${String(i.pattern ?? "")}${i.path ? ` in ${shortPath(i.path)}` : ""}`;
   const json = JSON.stringify(i);
   return cut(json === "{}" ? "" : json, 300);
@@ -170,22 +173,23 @@ export class SessionOutput {
     return `${line}\n`;
   }
 
-  private assistantActivity(message: unknown): void {
+  private assistantActivity(message: unknown, sub = false): void {
+    const emit = (e: ActivityItem) => this.emit(sub ? { ...e, sub: true } : e);
     const content = (message as { content?: unknown } | undefined)?.content;
     if (!Array.isArray(content)) return;
     for (const block of content) {
       const b = block as { type?: string; text?: string; thinking?: string; name?: string; id?: string; input?: unknown };
-      if (b.type === "text" && b.text?.trim()) this.emit({ kind: "text", summary: cut(firstLine(b.text), 300), ...(b.text.trim().length > 300 || b.text.includes("\n") ? { detail: cut(b.text.trim(), MAX_DETAIL) } : {}) });
-      else if (b.type === "thinking" && b.thinking?.trim()) this.emit({ kind: "thinking", summary: cut(firstLine(b.thinking), 300), detail: cut(b.thinking.trim(), MAX_DETAIL) });
+      if (b.type === "text" && b.text?.trim()) emit({ kind: "text", summary: cut(firstLine(b.text), 300), ...(b.text.trim().length > 300 || b.text.includes("\n") ? { detail: cut(b.text.trim(), MAX_DETAIL) } : {}) });
+      else if (b.type === "thinking" && b.thinking?.trim()) emit({ kind: "thinking", summary: cut(firstLine(b.thinking), 300), detail: cut(b.thinking.trim(), MAX_DETAIL) });
       else if (b.type === "tool_use" && b.name) {
         if (b.id) this.calls.set(b.id, { tool: b.name, at: this.now() });
-        this.emit({ kind: "tool_use", tool: b.name, summary: toolSummary(b.name, b.input), detail: cut(JSON.stringify(b.input ?? {}, null, 2), MAX_DETAIL) });
+        emit({ kind: "tool_use", tool: b.name, summary: toolSummary(b.name, b.input), detail: cut(JSON.stringify(b.input ?? {}, null, 2), MAX_DETAIL) });
       }
     }
   }
 
   /** What came back from the tools: a "user" event with tool_result blocks. */
-  private toolResults(message: unknown): void {
+  private toolResults(message: unknown, sub = false): void {
     const content = (message as { content?: unknown } | undefined)?.content;
     if (!Array.isArray(content)) return;
     for (const block of content) {
@@ -195,6 +199,7 @@ export class SessionOutput {
       if (b.tool_use_id) this.calls.delete(b.tool_use_id);
       const text = resultText(b.content);
       this.emit({
+        ...(sub ? { sub: true as const } : {}),
         kind: "tool_result",
         ...(call ? { tool: call.tool, durationMs: this.now() - call.at } : {}),
         ...(b.is_error ? { isError: true } : {}),
@@ -223,10 +228,10 @@ export class SessionOutput {
         }
         return null;
       case "assistant":
-        this.assistantActivity(ev.message);
-        return assistantText(ev.message);
+        this.assistantActivity(ev.message, typeof ev.parent_tool_use_id === "string");
+        return typeof ev.parent_tool_use_id === "string" ? null : assistantText(ev.message); // the log shows the session itself; the feed shows both
       case "user":
-        this.toolResults(ev.message);
+        this.toolResults(ev.message, typeof ev.parent_tool_use_id === "string");
         return null;
       case "result": {
         const usage = normalizeUsage(ev.usage);

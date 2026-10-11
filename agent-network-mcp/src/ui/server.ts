@@ -17,6 +17,7 @@ import type { RunnerPool } from "./runners.js";
 import { Journal } from "../supervisor/journal.js";
 import { formatSessionLog, readSessionLog } from "../supervisor/sessionLog.js";
 import type { Supervisor } from "../supervisor/supervisor.js";
+import type { Scheduler } from "../schedule/scheduler.js";
 import { buildUiState } from "./state.js";
 
 export interface UiServer {
@@ -36,6 +37,8 @@ export interface UiProject {
   prices?: () => Promise<{ prices?: Prices; error?: string }>;
   /** The agent that looks after the others when something goes wrong (runners.json "supervisor"). */
   supervisor?: Supervisor;
+  /** Tasks created on a cron (runners.json "schedules"). */
+  scheduler?: Scheduler;
 }
 
 export interface UiOptions {
@@ -58,6 +61,7 @@ interface Project {
   journal: Journal;
   pool?: RunnerPool;
   supervisor?: Supervisor;
+  scheduler?: Scheduler;
   operator?: NetworkService;
   prices?: UiProject["prices"];
   git?: { at: number; value: Promise<GitContext | null> };
@@ -108,6 +112,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       ...(spec.runners ? { pool: spec.runners, operator: await NetworkService.create(networkDir, { id: "operator", type: "ui" }) } : {}),
       ...(spec.prices ? { prices: spec.prices } : {}),
       ...(spec.runners && spec.supervisor ? { supervisor: spec.supervisor } : {}),
+      ...(spec.runners && spec.scheduler ? { scheduler: spec.scheduler } : {}),
     });
   }
   const host = opts.host ?? "127.0.0.1";
@@ -174,7 +179,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const priced = recent.filter((r) => r.costUsd !== null);
     const messages = new MessageStore(p.fs);
     const open = tasks.filter((t) => t.status === "ACTIVE" || t.status === "BLOCKED");
-    const questions = (await Promise.all(open.map((t) => messages.list(t.id)))).flat().filter((m) => m.to === "operator" && !m.readAt).length;
+    const questions = (await Promise.all(open.map((t) => messages.list(t.id)))).flat().filter((m) => m.to === "operator" && m.type === "QUESTION" && !m.readAt).length;
     const runners = p.pool?.list() ?? null;
     const git = await gitOf(p);
     const times = [...tasks.map((t) => t.updatedAt), ...runs.map((r) => r.endedAt ?? r.startedAt)].sort();
@@ -203,6 +208,13 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
   async function supervisorBrief(p: Project) {
     if (!p.supervisor && !p.pool) return null;
     const journal = await p.journal.list(60);
+    // a decision about a question that has been answered (on the page, from the terminal) no longer waits for you
+    for (const e of journal) {
+      const asked = (e.data as { messageId?: unknown } | undefined)?.messageId;
+      if (e.kind !== "needs-you" || e.resolvedAt || !e.taskId || typeof asked !== "string") continue;
+      const q = await new MessageStore(p.fs).get(e.taskId, asked).catch(() => null);
+      if (q?.readAt) Object.assign(e, await p.journal.resolve(e.id));
+    }
     const st = p.supervisor ? await p.supervisor.status() : null;
     return {
       available: !!st,
@@ -253,6 +265,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
           project: { id: p.id, name: p.name, projectDir: tilde(p.projectDir), networkDir: tilde(p.networkDir), count: projects.length },
           control: p.pool ? { runners: await p.pool.details() } : null,
           supervisor: await supervisorBrief(p),
+          schedules: p.scheduler ? await p.scheduler.status() : null,
         });
       }
       if (path === "/api/runs") {
@@ -317,10 +330,15 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     if (taskAction) {
       const id = decodeURIComponent(taskAction[1]!);
       if (taskAction[2] === "message") {
-        const b = body as { to?: unknown; text?: unknown };
-        const message = await operator.messageAgent({ taskId: id, to: String(b.to ?? ""), content: String(b.text ?? "") });
-        await acted(id, `message to ${message.to}: ${message.content}`);
-        return json(201, { message });
+        // always to the task's lead, who passes it on: the operator does not give the agents orders past the lead
+        const b = body as { text?: unknown; urgent?: unknown };
+        const message = await operator.messageLead({ taskId: id, content: String(b.text ?? ""), urgent: b.urgent === true });
+        await acted(id, `message to the lead ${message.to}: ${String(b.text ?? "").trim()}`);
+        // urgent: stop the lead's session (after the tool call in flight) and start a fresh one with the message first
+        const known = pool.list().some((r) => r.id === message.to);
+        const interrupted = b.urgent === true ? (known ? pool.interrupt(message.to, String(b.text ?? "").trim()) : "not-running") : null;
+        if (interrupted && bySupervisor) await acted(id, `interrupted ${message.to}'s session (${interrupted})`);
+        return json(201, { message, ...(interrupted ? { interrupted } : {}) });
       }
       if (taskAction[2] === "handover") {
         const task = await operator.handOverToLead(id);
@@ -347,20 +365,61 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       await acted(answer.taskId, `answered ${answer.to}'s question ${answer.replyTo}: ${answer.content}`);
       return json(201, { answer });
     }
-    const sup = /^\/api\/supervisor\/(start|stop|model|note|tools|resolve)$/.exec(path);
+    const sched = /^\/api\/schedules\/([^/]+)\/(run|enabled)$/.exec(path);
+    if (sched) {
+      if (!p.scheduler) return text(404, 'no schedules: add a "schedules" section to runners.json');
+      const id = decodeURIComponent(sched[1]!);
+      if (sched[2] === "run") return json(200, { run: await p.scheduler.runNow(id), schedules: await p.scheduler.status() });
+      return json(200, { schedules: await p.scheduler.setEnabled(id, (body as { enabled?: unknown }).enabled !== false) });
+    }
+    if (path === "/api/questions/dismiss") {
+      const b = body as { taskId?: unknown; messageId?: unknown };
+      const question = await operator.dismissQuestion({ taskId: String(b.taskId ?? ""), messageId: String(b.messageId ?? "") });
+      await acted(question.taskId, `closed ${question.from}'s question ${question.id} without an answer`);
+      return json(200, { question });
+    }
+    const sup = /^\/api\/supervisor\/(start|stop|model|note|tools|resolve|rules|limits)$/.exec(path);
     if (sup) {
-      if (sup[1] === "resolve") return json(200, { entry: await p.journal.resolve(String((body as { id?: unknown }).id ?? "")) });
+      if (sup[1] === "resolve") {
+        // the operator's decision: with "answer" it goes to the agent (the answer to the question the decision is about,
+        // else a message to the task's lead); without, the decision is just closed. Either way the question no longer waits.
+        const b = body as { id?: unknown; answer?: unknown };
+        const id = String(b.id ?? "");
+        const open = (await p.journal.list(Number.MAX_SAFE_INTEGER)).find((e) => e.id === id);
+        const asked = (open?.data as { messageId?: unknown } | undefined)?.messageId;
+        let sent: Awaited<ReturnType<typeof operator.messageLead>> | undefined;
+        if (typeof b.answer === "string") {
+          if (open?.resolvedAt) throw new AppError("INVALID_INPUT", `${id} is decided already (${open.resolvedAt}): nothing is sent twice`);
+          if (!open?.taskId) throw new AppError("INVALID_INPUT", `${id} names no task: there is nobody to send the answer to`);
+          const question = typeof asked === "string" ? await operator.messages.get(open.taskId, asked).catch(() => null) : null;
+          sent = question && !question.readAt ? await operator.answerQuestion({ taskId: open.taskId, messageId: question.id, answer: b.answer }) : await operator.messageLead({ taskId: open.taskId, content: b.answer });
+        }
+        const entry = await p.journal.resolve(id);
+        if (entry.taskId && typeof asked === "string") await operator.dismissQuestion({ taskId: entry.taskId, messageId: asked }).catch(() => null);
+        return json(200, { entry, ...(sent ? { sent } : {}) });
+      }
       if (sup[1] === "note") {
-        const b = body as { kind?: unknown; text?: unknown; taskId?: unknown };
+        const b = body as { kind?: unknown; text?: unknown; taskId?: unknown; messageId?: unknown };
         const kind = b.kind === "action" || b.kind === "needs-you" ? b.kind : "note";
         if (typeof b.text !== "string" || !b.text.trim()) throw new AppError("INVALID_INPUT", "text must not be empty");
-        const entry = await p.journal.add({ kind, by: bySupervisor ? "supervisor" : "operator", ...(typeof b.taskId === "string" && b.taskId ? { taskId: b.taskId } : {}), text: b.text.trim().slice(0, 4000) });
+        const asked = typeof b.messageId === "string" && /^msg-\d+$/.test(b.messageId) ? b.messageId : undefined; // the agent's question this is about
+        if (asked && kind === "needs-you" && typeof b.taskId === "string") {
+          // answered while the supervisor was looking: there is nothing left to decide
+          const q = await operator.messages.get(b.taskId, asked).catch(() => null);
+          if (q?.readAt) throw new AppError("INVALID_INPUT", `${asked} is answered already (${q.readAt}): nothing to escalate; check overview again`);
+        }
+        const entry = await p.journal.add({ kind, by: bySupervisor ? "supervisor" : "operator", ...(typeof b.taskId === "string" && b.taskId ? { taskId: b.taskId } : {}), text: b.text.trim().slice(0, 4000), ...(asked ? { data: { messageId: asked } } : {}) });
         return json(201, { entry });
       }
       if (!p.supervisor) return text(404, 'no supervisor: add a "supervisor" section to runners.json');
       if (sup[1] === "start") return json(200, p.supervisor.start());
       if (sup[1] === "stop") return json(200, await p.supervisor.stop());
       if (sup[1] === "model") return json(200, await p.supervisor.setModel(String((body as { model?: unknown }).model ?? "")));
+      if (sup[1] === "rules") return json(200, await p.supervisor.setRules((body as { rules?: unknown }).rules));
+      if (sup[1] === "limits") {
+        const b = body as { maxSessionsPerHour?: unknown; budgetUsd?: unknown };
+        return json(200, await p.supervisor.setLimits({ ...(b.maxSessionsPerHour !== undefined ? { maxSessionsPerHour: b.maxSessionsPerHour } : {}), ...(b.budgetUsd !== undefined ? { budgetUsd: b.budgetUsd } : {}) }));
+      }
       const b = body as { name?: unknown; enabled?: unknown };
       return json(200, await p.supervisor.setToolEnabled(String(b.name ?? ""), b.enabled !== false));
     }

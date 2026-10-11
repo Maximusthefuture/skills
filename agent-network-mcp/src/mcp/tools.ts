@@ -45,12 +45,13 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   );
   tool(
     "send_message",
-    "Send a message to ONE other agent of your task, or to 'operator' (the human) with a question only a human can answer. Your identity is added automatically. Also used to negotiate files: requestFiles asks the owner for permission to CHANGE their files (reading any file needs no permission), grantFiles (owner) gives it. A request blocks the asker until the owner answers, so owners answer first (nextAction 'respond').",
+    "Send a message to ONE other agent of your task, or to 'operator' (the human) with a question only a human can answer (or, with fyi: true, something it should know that needs no answer). Your identity is added automatically. Also used to negotiate files: requestFiles asks the owner for permission to CHANGE their files (reading any file needs no permission), grantFiles (owner) gives it. A request blocks the asker until the owner answers, so owners answer first (nextAction 'respond').",
     {
       to: z.string().describe("Agent id of the recipient, one of the other agents of your task, e.g. 'reviewer'; or 'operator' to ask the human operator a question (the answer arrives in pendingMessages)"),
       message: z.string().describe("Text of the message, e.g. 'I take the controller and service, you take validation. Agreed?'"),
       requestFiles: z.array(z.string()).optional().describe("Only to CHANGE files OWNED by the recipient (never for reading: reading needs no permission). Explain why in message. The owner replies with grantFiles or a refusal"),
       grantFiles: z.array(z.string()).optional().describe("Owner only: let the recipient change these files of yours (answer to their request); message = conditions. To refuse, send a normal message with the reason"),
+      fyi: z.boolean().optional().describe("To 'operator' only. true: for information, no answer expected (a reply to the operator's message, a status it asked for); it does not hold you. Default: a question the operator answers"),
     },
     async (a) => swarm.sendMessage(a),
   );

@@ -14,6 +14,7 @@ import { loadRunnersConfig, RunnerPool } from "../../src/ui/runners.js";
 import { tmpDir } from "../helpers/tmp.js";
 
 interface Call {
+  cwd: string;
   argv: string[];
   env: NodeJS.ProcessEnv;
   signal: AbortSignal;
@@ -55,11 +56,11 @@ async function setup(supervisor: Record<string, unknown> = {}, extra: Partial<Su
   const pool = new RunnerPool(networkDir, config.agents, { configPath });
   const fs = await FileStore.open(networkDir);
   const calls: Call[] = [];
-  const run: SupervisorOptions["run"] = (argv, env, _cwd, _sink, signal, onEvent: (e: ActivityItem) => void) =>
+  const run: SupervisorOptions["run"] = (argv, env, cwd, _sink, signal, onEvent: (e: ActivityItem) => void) =>
     new Promise((resolve) => {
       onEvent({ kind: "tool_use", tool: "mcp__supervisor__overview", summary: "overview" });
       signal.addEventListener("abort", () => resolve({ code: 143 }));
-      calls.push({ argv, env, signal, finish: resolve });
+      calls.push({ cwd, argv, env, signal, finish: resolve });
     });
   const make = () => {
     const sup = new Supervisor({ networkDir, config: config.supervisor!, pool, configPath, pollMs: 20, run, ps: async () => "", now: () => Date.now() + 120_000, ...extra });
@@ -82,7 +83,8 @@ describe("supervisor", () => {
     sup.start();
     await vi.waitFor(() => expect(calls).toHaveLength(1));
 
-    const { argv, env } = calls[0]!;
+    const { argv, env, cwd } = calls[0]!;
+    expect(cwd.startsWith(join(networkDir, ".."))).toBe(false); // outside the project: no project CLAUDE.md, hooks or settings
     expect(argv.slice(0, 2)).toEqual(["claude", "-p"]);
     expect(argv.slice(-2)).toEqual(["--model", "sonnet"]);
     expect(argv[2]).toContain("You are the supervisor of this swarm.");
@@ -193,6 +195,32 @@ describe("supervisor", () => {
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]!.argv.slice(-2)).toEqual(["--model", "haiku"]);
     expect(JSON.parse(calls[0]!.env.AGENT_NETWORK_SUPERVISOR_TOOLS!)).toEqual({ tools: [], disabled: ["kill_test"] });
+  });
+
+  it("thresholds set on the page: checked, written back to runners.json", async () => {
+    const { make, configPath } = await setup();
+    const sup = make();
+    expect((await sup.setRules({ checkInMin: 1, stallMin: 20 })).rules).toMatchObject({ checkInMin: 1, stallMin: 20, questionAfterSec: 60 });
+    expect(JSON.parse(await readFile(configPath, "utf8")).supervisor.rules).toMatchObject({ checkInMin: 1, stallMin: 20 });
+    await expect(sup.setRules({ checkInMin: 0 })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(sup.setRules({ nope: 1 })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("checkInMin") });
+  });
+
+  it("limits set on the page: checked, written back, the queue held by the old limit goes on", async () => {
+    const { calls, make, ask, configPath } = await setup({ maxSessionsPerHour: 1 });
+    await ask("first");
+    const sup = make();
+    sup.start();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    calls[0]!.finish({ code: 0 });
+    await ask("second");
+    await vi.waitFor(async () => expect((await sup.status()).held).toContain("limit 1"), { timeout: 5000 });
+    expect(await sup.setLimits({ maxSessionsPerHour: 12, budgetUsd: 3 })).toMatchObject({ maxSessionsPerHour: 12, budgetUsd: 3 });
+    await vi.waitFor(() => expect(calls).toHaveLength(2), { timeout: 5000 }); // the held incident goes at the next look
+    expect(JSON.parse(await readFile(configPath, "utf8")).supervisor).toMatchObject({ maxSessionsPerHour: 12, budgetUsd: 3 });
+    expect((await sup.setLimits({ budgetUsd: null })).budgetUsd).toBeNull();
+    await expect(sup.setLimits({ maxSessionsPerHour: 0 })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(sup.setLimits({ budgetUsd: -1 })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
   it("a command without {model} offers no choice of model", async () => {

@@ -208,7 +208,7 @@ export class Swarm {
     };
   }
 
-  async sendMessage(input: { to?: string; message?: string; requestFiles?: string[]; grantFiles?: string[] }): Promise<SwarmContext> {
+  async sendMessage(input: { to?: string; message?: string; requestFiles?: string[]; grantFiles?: string[]; fyi?: boolean }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
     const others = task.agents.filter((a) => a !== this.me);
@@ -217,6 +217,11 @@ export class Swarm {
     if (!input.message?.trim()) throw invalid("'message' must not be empty");
     if (input.to === OPERATOR) {
       if (input.requestFiles?.length || input.grantFiles?.length) throw invalid("The operator owns no files: requestFiles/grantFiles go to agents. Ask the operator a plain question.");
+      if (input.fyi) {
+        // for the operator's information: shown on the page, answered by nobody, holds nobody
+        const told = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "INFORMATION", content: input.message });
+        return { ...this.reply(await this.contextNow()), ok: true, action: "INFO_SENT", messageId: told.id, note: "The operator sees it on the page; no answer comes. Go on with your work." } as SwarmContext;
+      }
       const asked = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "QUESTION", content: input.message });
       return {
         ...this.reply(await this.contextNow()), ok: true, action: "QUESTION_SENT", messageId: asked.id,
@@ -504,7 +509,7 @@ export class Swarm {
       unread: messages.filter((m) => m.to === this.me && !m.readAt),
       openToMe: open.filter((m) => m.to === this.me),
       openFromMe: open.filter((m) => m.from === this.me),
-      myQuestions: messages.filter((m) => m.from === this.me && m.to === OPERATOR && !m.readAt),
+      myQuestions: messages.filter((m) => m.from === this.me && m.to === OPERATOR && m.type === "QUESTION" && !m.readAt),
       myLastMessageAt: messages.filter((m) => m.from === this.me && m.to !== OPERATOR).at(-1)?.createdAt,
       ...(task.phase === "INTEGRATE" ? { followUpBudget: await this.service.followUpBudget(task) } : {}),
       handoff: await this.handoffPhase(task),

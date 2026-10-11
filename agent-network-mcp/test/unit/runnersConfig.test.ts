@@ -13,8 +13,33 @@ import { tmpDir } from "../helpers/tmp.js";
 const EXAMPLES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "examples", "runner");
 
 describe("runners config", () => {
+  it("the Qwen example needs no editing: the project is where ui runs, the agents get worktrees next to it, the package path fills itself in", async () => {
+    const repo = join(EXAMPLES, "..", "..");
+    const c = await loadRunnersConfig(join(EXAMPLES, "runners.qwen.example.json"), { projectDir: "/work/shop" });
+    expect(JSON.stringify({ ...c, path: "" })).not.toMatch(/\/abs\/path|\{agentNetworkMcp\}/);
+    expect(c.networkDir).toBe("/work/shop/.agent-network");
+    expect(c.agents.map((a) => [a.id, a.cwd, a.worktree?.branch, a.autostart])).toEqual([
+      ["backend", "/work/shop-backend", "swarm-backend", true],
+      ["reviewer", "/work/shop-reviewer", "swarm-reviewer", true],
+      ["tester", "/work/shop-tester", "swarm-tester", false],
+    ]);
+    expect(c.agents[0]!.promptFile).toBe(join(repo, "examples", "runner", "qwen-prompt.md"));
+    const mcp = c.agents[0]!.command[c.agents[0]!.command.indexOf("--mcp-config") + 1]!;
+    expect(JSON.parse(mcp).mcpServers["agent-network"].args).toEqual([join(repo, "dist", "index.js")]); // inline: no other file to edit
+    expect(c.agents[0]!.command).toEqual(expect.arrayContaining(["--max-subagent-depth", "1"]));
+    expect(c.agents[0]!.command).not.toContain("agent"); // subagents on
+    // a copy elsewhere works too; without a project (ui outside a repository, no "project") the worktree agents are refused
+    const copy = join(await tmpDir(), "runners.json");
+    await writeFile(copy, await readFile(join(EXAMPLES, "runners.qwen.example.json"), "utf8"));
+    expect((await loadRunnersConfig(copy, { projectDir: "/work/blog" })).agents[1]!.cwd).toBe("/work/blog-reviewer");
+    await expect(loadRunnersConfig(copy)).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.stringContaining("start ui inside the project's git repository") });
+    const pinned = join(await tmpDir(), "runners.json");
+    await writeFile(pinned, JSON.stringify({ ...JSON.parse(await readFile(copy, "utf8")), project: "/work/shop" }));
+    expect((await loadRunnersConfig(pinned, { projectDir: "/elsewhere" })).networkDir).toBe("/work/shop/.agent-network"); // "project" wins
+  });
+
   it("the shipped examples load: three agents, own worktrees, the prompt right after the CLI", async () => {
-    const qwen = await loadRunnersConfig(join(EXAMPLES, "runners.qwen.example.json"));
+    const qwen = await loadRunnersConfig(join(EXAMPLES, "runners.qwen.example.json"), { projectDir: "/abs/path/project" });
     expect(qwen.networkDir).toBe("/abs/path/project/.agent-network");
     expect(qwen.agents.map((a) => [a.id, a.cwd, a.autostart])).toEqual([
       ["backend", "/abs/path/project-backend", true],
@@ -22,7 +47,7 @@ describe("runners config", () => {
       ["tester", "/abs/path/project-tester", false],
     ]);
     expect(qwen.agents[0]!.command.slice(0, 2)).toEqual(["qwen", "{prompt}"]);
-    expect(qwen.agents[0]!.promptFile).toBe(join(EXAMPLES, "qwen-prompt.md")); // resolved next to the config
+    expect(qwen.agents[0]!.promptFile).toBe(join(EXAMPLES, "qwen-prompt.md"));
     expect(qwen.agents[1]!.instructionsFile).toBe(join(EXAMPLES, "instructions", "reviewer.md"));
 
     const claude = await loadRunnersConfig(join(EXAMPLES, "runners.claude.example.json"));
@@ -248,5 +273,29 @@ describe("token prices", () => {
     } finally {
       await ui.close();
     }
+  });
+});
+
+describe("urgent interrupt", () => {
+  it("waits for the tool call in flight: the session stops only when its result comes", async () => {
+    const dir = await tmpDir();
+    let stopped = 0;
+    let emit!: RunnerOptions["onActivity"];
+    const pool = new RunnerPool(join(dir, ".agent-network"), [{ id: "backend", command: ["x", "{prompt}"] }] as never, {
+      run: (o) => {
+        emit = o.onActivity;
+        o.urgent!.attach(() => stopped++);
+        return new Promise((r) => o.signal!.addEventListener("abort", () => r(0)));
+      },
+    });
+    pool.start("backend");
+    emit!({ kind: "tool_use", tool: "Bash", summary: "./mvnw -q test" });
+    expect(pool.interrupt("backend", "Commit now.")).toBe("after-tool");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(stopped).toBe(0); // the test run is not cut in the middle
+    emit!({ kind: "tool_result", tool: "Bash", summary: "Tests run: 3" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(stopped).toBe(1);
+    await pool.stopAll();
   });
 });

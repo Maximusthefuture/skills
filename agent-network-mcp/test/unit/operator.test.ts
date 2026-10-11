@@ -99,6 +99,25 @@ describe("questions to the operator", () => {
     await expect(operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "operator"] })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
+  it("fyi to the operator: shown for information, no question, holds nobody, closed with Ok", async () => {
+    const { dir, operator, backend, task } = await setup();
+    const told = await backend.sendMessage({ to: "operator", message: "Understood: only the test fix stays.", fyi: true });
+    expect(told).toMatchObject({ ok: true, action: "INFO_SENT", nextAction: "propose" }); // no wait for an answer
+    expect((await backend.context()).questionsToOperator).toBeUndefined();
+    const msgs = await operator.messages.list(task.id);
+    expect(msgs.at(-1)).toMatchObject({ from: "backend", to: "operator", type: "INFORMATION" });
+
+    ui = await startUiServer(dir, { port: 0, runners: new RunnerPool(dir, []) });
+    const state = async () => (await (await fetch(`${ui!.url}/api/state`)).json()) as any;
+    let s = await state();
+    expect(s.openQuestions).toEqual([]); // not a question: nothing to answer, the supervisor is not woken
+    expect(s.operatorNotes).toEqual([expect.objectContaining({ taskId: task.id, from: "backend", text: "Understood: only the test fix stays." })]);
+    const ok = await fetch(`${ui.url}/api/questions/dismiss`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ taskId: task.id, messageId: s.operatorNotes[0].messageId }) });
+    expect(ok.status).toBe(200);
+    s = await state();
+    expect(s.operatorNotes).toEqual([]);
+  });
+
   it("the page lists open questions and answers them", async () => {
     const { dir, backend, task } = await setup();
     const q = await backend.sendMessage({ to: "operator", message: "Which database?" });

@@ -66,7 +66,15 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         eventsTotal: evs.total,
         subtasks: Object.fromEntries((await Promise.all(task.agents.map((a) => subtasks.get(task.id, a)))).map((l) => [l.agentId, l.items])),
         followUps: tasks.filter((t) => t.parentTaskId === task.id).map((t) => t.id),
-        questions: operatorQuestions(await messageStore.list(task.id)),
+        ...(await (async () => {
+          const all = await messageStore.list(task.id);
+          return { questions: operatorQuestions(all), notes: operatorNotes(all) };
+        })()),
+        /** Unread messages the agents' hooks have already shown them (Claude Code): delivered, though not acted on yet. */
+        delivered: (await Promise.all(task.agents.map((a) => fs.readJson<{ notified?: string[] }>(["hooks", `${a}.json`]).catch(() => null))))
+          .flatMap((h) => h?.notified ?? [])
+          .filter((k) => k.startsWith(`${task.id}/`))
+          .map((k) => k.slice(task.id.length + 1)),
         openspec: task.openspec ? await openspecView(dirname(fs.root), task, agreement, impls) : null,
       };
     }),
@@ -91,6 +99,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
     agents: agentViews,
     notStarted: missing,
     openQuestions: taskViews.flatMap((t) => t.questions.filter((q) => !q.answered).map((q) => ({ taskId: t.id, taskTitle: t.title, ...q }))),
+    /** What agents sent the operator for information (fyi): no answer expected, shown until the operator has seen it. */
+    operatorNotes: taskViews.flatMap((t) => t.notes.filter((n) => !n.seen).map((n) => ({ taskId: t.id, taskTitle: t.title, ...n }))),
     tasks: taskViews.sort((a, b) => Number(a.status !== "ACTIVE") - Number(b.status === "COMPLETED") || a.id.localeCompare(b.id)),
   };
 }
@@ -122,9 +132,16 @@ async function openspecView(projectDir: string, task: Task, agreement: Agreement
 }
 
 /** Questions agents asked the operator, with the operator's answers. */
+/** What agents told the operator for information (send_message with fyi): no answer expected. */
+function operatorNotes(messages: Message[]) {
+  return messages
+    .filter((m) => m.to === "operator" && m.type !== "QUESTION")
+    .map((m) => ({ messageId: m.id, from: m.from, text: m.content, at: m.createdAt, seen: !!m.readAt }));
+}
+
 function operatorQuestions(messages: Message[]) {
   return messages
-    .filter((m) => m.to === "operator")
+    .filter((m) => m.to === "operator" && m.type === "QUESTION")
     .map((q) => ({
       messageId: q.id,
       from: q.from,

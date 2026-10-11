@@ -440,6 +440,8 @@ export class NetworkService {
     const task = await this.tasks.get(assertTaskId(input.taskId));
     const question = await this.messages.get(task.id, assertMessageId(input.messageId));
     if (question.to !== OPERATOR) throw new AppError("INVALID_INPUT", `${question.id} is not a question to the operator`);
+    // the page, the CLI and the supervisor may answer at nearly the same time: the agent gets one answer, not two
+    if (question.readAt) throw new AppError("INVALID_INPUT", `${question.id} is answered or closed already (${question.readAt})`);
     if (!input.answer.trim()) throw new AppError("INVALID_INPUT", "The answer must not be empty");
     const answer = await this.messages.create({ taskId: task.id, from: OPERATOR, to: question.from, type: "INFORMATION", content: input.answer.trim(), replyTo: question.id });
     await this.messages.markRead(question);
@@ -448,17 +450,34 @@ export class NetworkService {
   }
 
   /**
-   * The operator (or the supervisor acting for it) writes to an agent of a task without being asked: an ordinary
-   * message, so a waiting agent wakes up with it and a busy one gets it through its hooks.
+   * The operator closes a question without answering it: the agent went ahead on its own, or it was settled another
+   * way (on the supervisor's tab). The agent gets no message; the question no longer waits on the page.
    */
-  async messageAgent(input: { taskId: string; to: string; content: string }): Promise<Message> {
-    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator writes to agents this way");
+  async dismissQuestion(input: { taskId: string; messageId: string }): Promise<Message> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator closes questions to the operator");
+    const task = await this.tasks.get(assertTaskId(input.taskId));
+    const question = await this.messages.get(task.id, assertMessageId(input.messageId));
+    if (question.to !== OPERATOR) throw new AppError("INVALID_INPUT", `${question.id} is not a question to the operator`);
+    return this.messages.markRead(question);
+  }
+
+  /**
+   * The operator (or the supervisor acting for it) writes to a task without being asked. It goes to the task's lead
+   * only, who acts on it and passes on to the other agents what concerns them: one voice for the team, no orders
+   * crossing the lead's plan. An ordinary message, so a waiting lead wakes up with it and a busy one gets it through
+   * its hooks. (Answers to an agent's own question still go to that agent: answerQuestion.)
+   */
+  async messageLead(input: { taskId: string; content: string; urgent?: boolean }): Promise<Message> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator writes to the lead this way");
     const task = await this.tasks.get(assertTaskId(input.taskId));
     if (task.status === "COMPLETED" || task.status === "CANCELLED") throw new AppError("ALREADY_COMPLETED", `Task ${task.id} is ${task.status}`);
-    const to = assertAgentId(input.to, "to");
-    if (!task.agents.includes(to)) throw new AppError("NOT_ASSIGNED", `Agent '${to}' is not part of ${task.id}`);
     if (!input.content.trim()) throw new AppError("INVALID_INPUT", "The message must not be empty");
-    const message = await this.messages.create({ taskId: task.id, from: OPERATOR, to, type: "INFORMATION", content: input.content.trim() });
+    const to = this.phases.integrator(task);
+    const others = task.agents.filter((a) => a !== to);
+    const note = others.length
+      ? `[From the operator to you, the lead of ${task.id}: act on it, and pass on to ${others.join(", ")} with send_message what they need to do. No reply needed; if you reply, use fyi: true.]\n`
+      : `[From the operator. No reply needed; if you reply, use fyi: true.]\n`;
+    const message = await this.messages.create({ taskId: task.id, from: OPERATOR, to, type: "INFORMATION", content: `${note}${input.content.trim()}`, ...(input.urgent ? { urgent: true } : {}) });
     await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: to, sourceAgent: OPERATOR, payload: { messageId: message.id, from: OPERATOR, type: message.type } });
     return message;
   }

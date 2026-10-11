@@ -1,10 +1,9 @@
 {
   "_comment": [
-    "Example for `agent-network-mcp ui --runners runners.json`: three Qwen Code agents on a project in git, one worktree each.",
-    "Copy it (e.g. to agent-network-mcp/runners.json, which is gitignored) and replace every /abs/path with your paths.",
-    "Worktrees: cd /abs/path/project && git worktree add ../project-backend -b swarm-backend && git worktree add ../project-reviewer -b swarm-reviewer && git worktree add ../project-tester -b swarm-tester",
+    "Qwen Code agents for any project, nothing to edit: run `node <agent-network-mcp>/dist/index.js ui --runners <agent-network-mcp>/examples/runner/runners.qwen.example.json` inside your project (a git repository with at least one commit). The project is the repository you start it in.",
+    "defaults.worktree: every agent works in its own git worktree next to the project, <project>-<agent> on branch swarm-<agent>, created at start when missing (from the project's HEAD); the network is <project>/.agent-network, kept out of git through .git/info/exclude. Give an agent a \"cwd\" to put it elsewhere. Several projects on one page: copy this file per project and add \"project\": \"/abs/path/to/it\".",
+    "{agentNetworkMcp} is this repository's folder (the loader fills it in), so the file works where it lies; a copy elsewhere works too.",
     "--max-session-turns 70: short sessions on purpose. Every turn reads the whole context again, so one 200-turn session costs several times more than three of 70. A session that reaches the limit after doing something is a planned end, not a failure: the runner starts a fresh one at once and tells it to go on from git status and its subtasks.",
-    "networkDir is shared by all agents; relative paths here (promptFile) are resolved against this file's folder.",
     "qwen does not expand ${AGENT_ID} in --mcp-config but passes its environment to MCP servers: the runner sets AGENT_ID and NETWORK_DIR.",
     "Prompt first, right after qwen: --allowed-tools takes several values and would swallow it.",
     "instructionsFile (per agent, relative to this file): the agent's own instructions, appended to the standard prompt and read again before every session; can also be set on the page.",
@@ -15,9 +14,12 @@
     "prices: USD per 1M tokens for the models whose CLI reports no cost (Qwen); 0 = a free local model, or put a provider's prices to see what the work would cost there. Read again when the file changes.",
     "autostart: false = start that agent with the button on the page.",
     "supervisor: the agent that looks after the others (page tab «Надзор»), here on Qwen Code with a model from LM Studio. A detector without a model checks the swarm every 10 s; on an incident it starts one supervisor session with the tools of qwen-supervisor-mcp.json (qwen passes AGENT_NETWORK_UI_URL and the rest of its environment to the MCP server). Shell and file writes are excluded: it acts through the page and frees hung tests and database locks; decisions only you can take come to the page as «нужно ваше решение». Its cost is counted with \"prices\" (0 for a local model); budgetUsd is checked against that. Switch it on/off, pick the model and its tools on the page.",
-    "supervisor.tools: your own commands for it, argv without a shell; {agentCwd} adds an agentId parameter (the agent's folder), {projectDir}/{networkDir} are filled in, own params are checked (type, enum, pattern). \"action\": true for a command that changes something: each run goes into its journal. disabledTools switches any tool off (also on the page)."
+    "supervisor.tools: your own commands for it, argv without a shell; {agentCwd} adds an agentId parameter (the agent's folder), {projectDir}/{networkDir} are filled in, own params are checked (type, enum, pattern). \"action\": true for a command that changes something: each run goes into its journal. disabledTools switches any tool off (also on the page).",
+    "schedules: tasks the page creates by itself on a cron (local time; @daily, @weekdays = Mon-Fri 9:00, ...), no model involved. A run is skipped while the previous task of the same schedule is still open. {date} and {time} in title/description are filled in. Off here (\"enabled\": false): switch it on on the Tasks tab or here.",
+    "Subagents: the agent tool is not excluded, so an agent can start the subagents of .qwen/agents/ in its folder for bounded side jobs. Only the agent itself talks to the swarm (the system prompt says so); give subagents tools without mcp__agent-network. Add \"agent\" to --exclude-tools to switch subagents off.",
+    "The helper subagent of Qwen is a file: copy examples/runner/qwen-agents/helper.md to ~/.qwen/agents/ once (every project and worktree sees it), or to .qwen/agents/ of the project and commit it. --max-subagent-depth 1: a subagent starts no subagents of its own.",
+    "The model server is http://127.0.0.1:1234/v1 (LM Studio on this machine); another host: change --openai-base-url in both commands (agents and supervisor). The MCP servers are given inline (--mcp-config takes JSON)."
   ],
-  "networkDir": "/abs/path/project/.agent-network",
   "defaults": {
     "command": [
       "qwen",
@@ -28,7 +30,6 @@
       "{systemPrompt}",
       "--exclude-tools",
       "web_fetch",
-      "agent",
       "list_agents",
       "get_goal",
       "update_goal",
@@ -44,7 +45,7 @@
       "--openai-api-key",
       "lm-studio",
       "--mcp-config",
-      "/abs/path/agent-network-mcp/examples/runner/qwen-mcp.json",
+      "{\"mcpServers\":{\"agent-network\":{\"command\":\"node\",\"args\":[\"{agentNetworkMcp}/dist/index.js\"],\"env\":{\"AGENT_TYPE\":\"qwen\"}}}}",
       "--approval-mode",
       "auto-edit",
       "--allowed-tools",
@@ -58,6 +59,8 @@
       "run_shell_command(git merge)",
       "run_shell_command(git rev-parse)",
       "run_shell_command(./mvnw)",
+      "--max-subagent-depth",
+      "1",
       "--max-session-turns",
       "70",
       "--max-wall-time",
@@ -68,26 +71,24 @@
       "qwen/qwen3.5-9b",
       "qwen/qwen3-coder-30b"
     ],
-    "promptFile": "qwen-prompt.md",
+    "promptFile": "{agentNetworkMcp}/examples/runner/qwen-prompt.md",
     "maxRestarts": 2,
-    "systemPromptFile": "swarm-system-prompt.md"
+    "systemPromptFile": "{agentNetworkMcp}/examples/runner/swarm-system-prompt.md",
+    "worktree": true
   },
   "agents": [
     {
       "id": "backend",
-      "cwd": "/abs/path/project-backend",
-      "instructionsFile": "instructions/backend.md"
+      "instructionsFile": "{agentNetworkMcp}/examples/runner/instructions/backend.md"
     },
     {
       "id": "reviewer",
-      "cwd": "/abs/path/project-reviewer",
-      "instructionsFile": "instructions/reviewer.md"
+      "instructionsFile": "{agentNetworkMcp}/examples/runner/instructions/reviewer.md"
     },
     {
       "id": "tester",
-      "cwd": "/abs/path/project-tester",
       "autostart": false,
-      "instructionsFile": "instructions/tester.md"
+      "instructionsFile": "{agentNetworkMcp}/examples/runner/instructions/tester.md"
     }
   ],
   "supervisor": {
@@ -129,7 +130,7 @@
       "--openai-api-key",
       "lm-studio",
       "--mcp-config",
-      "/abs/path/agent-network-mcp/examples/runner/qwen-supervisor-mcp.json",
+      "{\"mcpServers\":{\"supervisor\":{\"command\":\"node\",\"args\":[\"{agentNetworkMcp}/dist/index.js\",\"supervisor-mcp\"]}}}",
       "--allowed-tools",
       "mcp__supervisor",
       "--max-session-turns",
@@ -137,18 +138,20 @@
       "--max-wall-time",
       "20m"
     ],
-    "model": "qwen/qwen3-coder-30b",
+    "model": "qwen/qwen3.5-9b",
     "models": [
       "qwen/qwen3.5-9b",
       "qwen/qwen3-coder-30b"
     ],
-    "promptFile": "supervisor-prompt.md",
-    "systemPromptFile": "supervisor-system-prompt.md",
+    "promptFile": "{agentNetworkMcp}/examples/runner/supervisor-prompt.md",
+    "systemPromptFile": "{agentNetworkMcp}/examples/runner/supervisor-system-prompt.md",
     "rules": {
       "questionAfterSec": 60,
       "stallMin": 15,
       "repeatCount": 3,
-      "testMin": 10
+      "testMin": 10,
+      "refusedCount": 4,
+      "checkInMin": 30
     },
     "maxSessionsPerHour": 6,
     "autostart": true,
@@ -195,6 +198,20 @@
     ],
     "disabledTools": []
   },
+  "schedules": [
+    {
+      "id": "nightly-flaky-tests",
+      "cron": "0 3 * * 1-5",
+      "title": "Flaky tests {date}",
+      "description": "Run the full test suite twice (./mvnw -q -B verify -Dsurefire.timeout=900). Fix tests that fail only sometimes: shared state, ordering, time, ports, container reuse. Production code stays as it is unless a test proves a real bug; then ask the operator. In result: which tests were flaky, why, what you changed.",
+      "agents": [
+        "backend",
+        "reviewer"
+      ],
+      "maxFixRounds": 1,
+      "enabled": false
+    }
+  ],
   "prices": {
     "qwen/qwen3.5-9b": {
       "input": 0,

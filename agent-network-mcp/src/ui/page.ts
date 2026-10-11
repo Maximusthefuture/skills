@@ -86,7 +86,7 @@ pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var
 .arow .tool{display:inline-block;padding:0 6px;margin-right:6px;border:1px solid var(--line);border-radius:5px;font:11px var(--mono);color:var(--text);background:var(--card)}
 .kind{font:11px var(--mono);white-space:nowrap}
 .kind.tool_use{color:var(--accent)}.kind.tool_result{color:var(--ok)}.kind.err{color:var(--bad)}.kind.thinking{color:var(--violet)}.kind.result{color:var(--accent);font-weight:600}.kind.runner,.kind.session{color:var(--idle)}.kind.stderr{color:var(--warn)}.kind.text{color:var(--text)}
-.arow.err .sum{color:var(--bad)}
+.arow.err .sum{color:var(--bad)}.arow.subag{background:color-mix(in srgb,var(--violet) 5%,transparent)}.arow .subm{color:var(--violet);font-size:11px;margin-right:4px}
 .adetail{padding:6px 12px 12px;border-bottom:1px solid var(--line);background:var(--bg);font-size:12px}.adetail pre.log{max-height:380px}
 .akinds{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:6px;overflow:hidden}.akinds button{background:none;border:0;border-radius:0;color:var(--muted);font:11px var(--mono);padding:5px 10px}.akinds button.on{background:var(--card2);color:var(--text)}
 .akinds button .k{opacity:.7;margin-left:4px}
@@ -103,11 +103,25 @@ pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var
 pre.jlog{grid-column:1/-1;max-height:420px;cursor:text;margin:0}
 .ph .end a{color:var(--accent);text-decoration:none}.jrow.resolved .jk.needs-you{color:var(--muted);font-weight:400}
 .ph .sk{margin-left:12px;font-weight:400}.ph .sk button{padding:3px 8px}
-.need{border-left:3px solid var(--bad);margin-bottom:10px}.need .hd{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.need .rec{margin-top:6px;padding:6px 10px;background:var(--bg);border-radius:6px}.need .row2{display:flex;gap:8px;margin-top:8px}.need .row2 button{padding:4px 12px}
+.need{border-left:3px solid var(--bad);margin-bottom:10px}.need textarea{margin-top:8px;min-height:70px}.need .row2{flex-wrap:wrap}.need .hd{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.need .rec{margin-top:6px;padding:6px 10px;background:var(--bg);border-radius:6px}.need .row2{display:flex;gap:8px;margin-top:8px}.need .row2 button{padding:4px 12px}
 .scol{display:grid;gap:12px;align-content:start}.scol h3{margin:0 0 6px;font-size:13px}
 .tl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 10px;padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer}.tl:last-child{border:0}.tl input{width:auto;margin:3px 0 0}.tl .nm{font:12px var(--mono)}.tl .ds{grid-column:2;font-size:12px;color:var(--muted)}.tl.off .nm{color:var(--muted);text-decoration:line-through}
-.rules{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;font-size:12px;margin-top:8px}.rules b{font:12px var(--mono);font-weight:500;text-align:right}
-.mail{border:0;background:none;color:var(--accent);padding:0 0 0 6px;font-size:12px;cursor:pointer}
+.rules{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;font-size:12px;margin-top:8px}.rules b{font:12px var(--mono);font-weight:500;text-align:right;white-space:nowrap}.rules input{width:64px;padding:2px 6px;font:12px var(--mono);text-align:right}.rules .row2{display:flex;gap:8px;align-items:center;margin-top:4px}.rules .row2 button{padding:3px 10px}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.runner .row2{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-top:12px}.runner .row2 a{font-size:12px;color:var(--muted)}.runner .row2 a:hover{color:var(--accent)}
+.mail{display:inline-flex;align-items:center;justify-content:center;width:32px;height:30px;margin-left:8px;padding:0;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--accent);font-size:17px;line-height:1;vertical-align:middle;cursor:pointer}.mail:hover{border-color:var(--accent);background:var(--accbg)}
+.fyi{border:1px solid var(--line);border-left:3px solid var(--accent);background:var(--card)}.fyi .who{font-weight:600}.fyi .tag{font:11px var(--mono);color:var(--accent);margin-left:6px}.fyi .row2{display:flex;gap:8px;align-items:center;margin-top:8px}.fyi .row2 button{padding:3px 12px}
+.compose .hist .from{color:var(--accent);font-weight:600;margin-right:4px}.compose .hist .rd.warn{color:var(--warn)}
+.compose .urgent{display:flex;gap:10px;align-items:flex-start;margin-top:10px;padding:8px 12px;border:1px solid var(--qline);border-radius:8px;background:var(--qbg);font-size:12px;color:var(--muted);cursor:pointer}.compose .urgent input{width:18px;height:18px;margin:1px 0 0;flex:none;accent-color:var(--warn);cursor:pointer}.compose .urgent b{color:var(--warn);font-size:13px;margin-right:2px}.compose .urgent.on{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn) inset}
+button.warnbtn{background:var(--warn);border-color:var(--warn);color:#fff}
+#schedules{margin-bottom:14px}.srow{display:grid;grid-template-columns:auto minmax(0,1.6fr) 110px minmax(0,1fr) minmax(0,1.3fr) auto;gap:12px;align-items:center;padding:9px 14px;border-top:1px solid var(--line);font-size:13px}
+.srow input{width:auto;margin:0}.srow .nm b{display:block}.srow .nm span,.srow .sub2{font-size:12px;color:var(--muted)}.srow .cr{font:12px var(--mono)}.srow .last.err{color:var(--bad)}.srow .last.skip{color:var(--warn)}.srow button{padding:4px 12px;white-space:nowrap}.srow.off .nm,.srow.off .cr{opacity:.55}
+@media (max-width:820px){.srow{grid-template-columns:auto minmax(0,1fr) auto}.srow .cr,.srow .nx,.srow .last{grid-column:2}}
+.compose{margin:6px 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}.compose.open{border-color:var(--accent)}
+.compose .hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.compose .hd button{padding:4px 12px}.compose .hd .muted{font-size:12px}
+.compose textarea{min-height:76px;margin-top:8px;background:var(--card)}.compose .row2{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}.compose .row2 button{padding:5px 14px}
+.compose .who{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)}.compose .who button{padding:1px 9px;font-size:12px;border-radius:999px}
+.compose .hist{margin-top:8px;font-size:12px}.compose .hist div{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:8px;padding:4px 0;border-top:1px solid var(--line)}.compose .hist .tm{color:var(--muted);font-family:var(--mono)}.compose .hist .rd{color:var(--muted);white-space:nowrap}.compose .hist .rd.ok{color:var(--ok)}
 @media (max-width:700px){.jrow{grid-template-columns:56px 74px minmax(0,1fr)}.jrow .by{display:none}.jrow .txt{grid-column:1/-1}}
 .ptl{display:flex;gap:3px;height:26px;margin:10px 0}
 .ptl .seg{min-width:84px;display:block;line-height:24px;text-align:center;padding:0 8px;font:11px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--bg);color:var(--muted);border:1px solid var(--line);border-radius:5px}
@@ -127,6 +141,20 @@ pre.jlog{grid-column:1/-1;max-height:420px;cursor:text;margin:0}
 .ovp .tt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ovp .tt span{color:var(--muted);font:11px var(--mono);margin-right:6px}.ovp .badge{text-align:center}.ovp .pct{font:12px var(--mono);text-align:right}
 @media (max-width:700px){.ptl .seg,.ptl .seg.past,.ptl .seg.now,.ptl .seg.bad{min-width:0;padding:0 4px;font-size:10px}.ovp{grid-template-columns:minmax(0,1fr) auto}.ovp .pbar{grid-column:1/-1}.ovp .pct{grid-row:1;grid-column:2}.ovp .badge{display:none}.prow{grid-template-columns:90px minmax(0,1fr) 44px}}
 .tscroll{overflow-x:auto}
+.acards{display:grid;gap:10px;margin:10px 0}
+.acard{border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:10px 12px;min-width:0}
+.acard .ah{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.acard .ah b{font-size:14px}.acard .tag{font:11px var(--mono);color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:0 7px}
+.acard .stats2{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center}.acard .stats2 .chip{font:11px var(--mono)}
+.acard .ag{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;margin-top:8px}
+.acard .lbl{font:10.5px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:3px}
+.acard .txt{font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.acard .asec{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
+.acard .find{display:flex;gap:8px;align-items:flex-start;margin-top:5px;font-size:13px}.acard .find .badge{flex:none;margin-top:1px}.acard .find>*:last-child{min-width:0;flex:1}
+.acard .scroll.subs{margin-top:0;max-height:170px}
+.icard{border-left:3px solid var(--accent);margin-bottom:10px}
+details.more{margin:0}details.more>summary{list-style:none;cursor:pointer;color:var(--text);font-size:13px;line-height:1.5}details.more>summary::-webkit-details-marker{display:none}
+details.more>summary .tg::after{content:"ещё ▾";color:var(--accent);font-size:12px;white-space:nowrap}details.more[open]>summary .tg::after{content:"свернуть ▴"}details.more[open]>summary .pv{display:none}
+@media (max-width:820px){.acard .ag{grid-template-columns:1fr}.acard .stats2{margin-left:0}}
 tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;padding:4px 0 6px 18px}
 [hidden]{display:none!important}.nw{white-space:nowrap}.path{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .app>div{min-width:0}
@@ -158,6 +186,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
   <main>
     <div class="banner note err" id="priceerr" hidden></div>
     <section id="questions" hidden><div class="grid" id="qlist"></div><div style="height:14px"></div></section>
+    <section id="notes" hidden><div class="grid" id="nlist"></div><div style="height:14px"></div></section>
 
     <section data-panel="overview">
       <div class="hrow"><div><h1>Обзор</h1><div class="lead">Что делают агенты сейчас и сколько это стоит.</div></div><div class="end win" id="win"><button data-w="24h">24ч</button><button data-w="7d">7д</button><button data-w="30d">30д</button></div></div>
@@ -181,6 +210,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
         </div>
         <div class="checks"><button type="submit">Создать задачу</button><span class="note" id="formnote"></span></div>
       </form>
+      <div class="panel" id="schedules" hidden></div>
       <div id="tasks"></div>
     </section>
 
@@ -270,7 +300,7 @@ function inWin(iso,w){return !!iso&&Date.now()-Date.parse(iso)<=WIN[w||win]}
 let S=null,RUNS=[],PROJ=[],controlMode=false,n=0;
 async function tick(){
   try{
-    const s=await getJSON(q("/api/state"));S=s;controlMode=!!s.control;watchTransitions(s);watchSupervisor(s);
+    const s=await getJSON(q("/api/state"));S=s;controlMode=!!s.control;watchTransitions(s);watchSupervisor(s);watchNotes(s);
     if(!route.project)route.project=s.project.id;
     if(["overview","runs","runners"].includes(route.tab)||!n)RUNS=(await getJSON(q("/api/runs"))).runs;
     if(route.tab==="projects"||n%3===0)PROJ=(await getJSON("/api/projects")).projects;
@@ -279,7 +309,7 @@ async function tick(){
     n++;render();
   }catch(e){$("topbar").textContent="нет связи с сервером"}
 }
-function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);
+function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
   if(route.tab==="runners"){renderControl(S);renderAgents(S)}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();
   if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y)} // a refresh never moves the page
@@ -516,9 +546,12 @@ function renderStats(t){
     d.append(tb);box.append(d)}
   return box;
 }
+/** Text that may be long: in full when short, else a preview that opens on click (the open state survives the refresh by its key). */
+function longText(text,key,limit){text=text||"";if(text.length<=limit)return el("div","txt",text);
+  const d=el("details","more");d.dataset.key=key;const sm=el("summary");sm.append(el("span","pv",text.slice(0,limit).replace(/\s+\S*$/,"")+"… "),el("span","tg"));d.append(sm,el("div","txt full",text));return d}
 function renderTask(t){
   const c=el("div","card task"+(t.status!=="ACTIVE"&&t.status!=="BLOCKED"?" done":""));
-  const hd=el("div");const h3=el("h3","",t.id+" · "+t.title);h3.append(badge(t.queue,QUEUE[t.queue]||t.queue));if(t.openspec)h3.append(badge("","OpenSpec"));hd.append(h3);hd.append(el("div","muted",t.description));
+  const hd=el("div");const h3=el("h3","",t.id+" · "+t.title);const sch=scheduleOf(t);if(sch)h3.append(badge("","по расписанию "+sch));h3.append(badge(t.queue,QUEUE[t.queue]||t.queue));if(t.openspec)h3.append(badge("","OpenSpec"));hd.append(h3);hd.append(el("div","muted",t.description));
   const chain=[];if(t.parentTaskId)chain.push("follow-up от "+t.parentTaskId);if(t.followUps&&t.followUps.length)chain.push("follow-up задачи: "+t.followUps.join(", "));if(t.followUpBudget)chain.push("бюджет follow-up: "+t.followUpBudget.used+"/"+t.followUpBudget.max);
   if(chain.length)hd.append(el("div","muted",chain.join(" · ")));
   if(t.openspec)hd.append(renderOpenspec(t));
@@ -531,31 +564,43 @@ function renderTask(t){
     PHASES.forEach((p,i)=>steps.append(el("div","step"+(i<idx?" past":i===idx?" now":""),p+(p==="SYNC"&&t.syncRound&&idx>=2?" #"+t.syncRound:""))));
     c.append(steps)}
   if(t.status==="ACTIVE"||t.status==="BLOCKED")c.append(progressBlock(t));
+  if(S.control&&(t.status==="ACTIVE"||t.status==="BLOCKED"))c.append(renderCompose(t));
   if(t.waitingOn.length){const w=el("div","chips");w.append(el("span","muted","ждём:"));t.waitingOn.forEach(x=>w.append(el("span","chip",x)));c.append(w)}
-  const tbl=el("table");tbl.append(head(["Агент","Задача в agreement","Подзадачи","Implementation","Sync (раунд "+t.syncRound+")"]));
+  // one card per agent: who, statuses at a glance, its part and its plan side by side, its report and the review short (full on click)
+  const cards=el("div","acards");const lead=t.agents[0];const rs=S.control?S.control.runners:[];
   for(const id of t.agents){
-    const r=el("tr");const c0=td(id);
-    if(S.control&&(t.status==="ACTIVE"||t.status==="BLOCKED")){const m=el("button","mail","✉");m.type="button";m.title="написать агенту "+id;m.onclick=()=>messageAgent(t.id,id);c0.append(m)}
-    r.append(c0);
+    const card=el("div","acard");const hd=el("div","ah");
     const as=t.agreement&&t.agreement.assignments.find(a=>a.agentId===id);const ap=t.agreement&&t.agreement.approvedBy.includes(id);
-    const c1=el("td");c1.append(el("span","",as?as.responsibility:"—"));if(as&&as.files&&as.files.length){const fd=el("details","files");fd.dataset.key="files-"+id;fd.append(el("summary","muted","файлы ("+as.files.length+")"),el("div","muted mono",as.files.join(", ")));c1.append(fd)}if(as&&as.dependsOn&&as.dependsOn.length)c1.append(el("div","muted","сдаёт после: "+as.dependsOn.join(", ")+" (dependsOn)"));if(t.agreement&&as)c1.append(" ",el("span","badge "+(ap?"PASS":"WAITING"),ap?"одобрил":"не одобрил"));r.append(c1);
-    const subs=(t.subtasks&&t.subtasks[id])||[];const live=subs.filter(x=>x.status!=="DROPPED");
-    const c2=el("td","sub");if(!subs.length)c2.append(el("span","muted","—"));else{const doing=subs.find(x=>x.status==="DOING");
-      c2.append(el("div","",live.filter(x=>x.status==="DONE").length+"/"+live.length+(doing?" · ▶ "+doing.id:"")));
-      // a long plan scrolls in its own box (opened at the step in progress) instead of stretching the row
-      const sl=el("div","scroll subs");sl.dataset.scroll="subs-"+id;
-      const icon={DONE:"✓",DOING:"▶",TODO:"·",DROPPED:"✕"};subs.forEach(x=>{const d=el("div",x.status,icon[x.status]+" "+x.id+" "+x.title);if(x.note)d.title=x.note;sl.append(d)});c2.append(sl)}
-    r.append(c2);
-    const im=t.implementations.find(i=>i.agentId===id);
-    const c3=el("td");c3.append(im?badge(im.status):el("span","muted","—"));if(im&&im.summary)c3.append(el("div","muted",im.summary));if(im&&im.filesChanged.length)c3.append(el("div","muted mono",im.filesChanged.join(", ")));r.append(c3);
-    const rep=t.syncReports.filter(x=>x.agentId===id&&x.round===t.syncRound).pop();
-    const c4=el("td");c4.append(rep?badge(rep.status):el("span","muted","—"));
-    if(rep)rep.findings.forEach(f=>{const d=el("div","muted");d.append(el("span","badge "+f.severity,f.severity)," "+f.description+(f.relatedAgent?" → "+f.relatedAgent:""));c4.append(d)});
-    r.append(c4);tbl.append(r);
+    const im=t.implementations.find(i=>i.agentId===id);const rep=t.syncReports.filter(x=>x.agentId===id&&x.round===t.syncRound).pop();
+    const subs=(t.subtasks&&t.subtasks[id])||[];const live=subs.filter(x=>x.status!=="DROPPED");const r=rs.find(x=>x.id===id);
+    const model=r&&r.model||(t.stats&&(t.stats.agents.find(a=>a.agentId===id)||{models:[]}).models[0])||"";
+    hd.append(el("b","",id));if(id===lead)hd.append(el("span","tag","lead"));if(model)hd.append(el("span","muted mono",model));
+    if(S.control&&id===t.agents[0]&&(t.status==="ACTIVE"||t.status==="BLOCKED")){const m=el("button","mail");m.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>';m.type="button";m.title="написать lead'у "+id+": он передаст остальным";m.setAttribute("aria-label",m.title);
+      m.onclick=()=>{const key=route.project+"/"+t.id;composeOpen.add(key);render();const ta=document.querySelector('[data-compose="'+key+'"] textarea');if(ta){ta.scrollIntoView({block:"center",behavior:"smooth"});ta.focus({preventScroll:true})}};hd.append(m)}
+    const st=el("span","stats2");
+    if(t.agreement)st.append(badge(ap?"PASS":"WAITING",ap?"agreement ✓":"agreement ждёт"));
+    if(live.length)st.append(el("span","chip",live.filter(x=>x.status==="DONE").length+"/"+live.length+" подзадач"));
+    st.append(im?badge(im.status):badge("","не сдавал"));
+    if(rep)st.append(badge(rep.status,"ревью #"+t.syncRound+": "+rep.status));
+    hd.append(st);card.append(hd);
+    const grid=el("div","ag");const left=el("div");left.append(el("div","lbl","Задача"),longText(as?as.responsibility:"—","resp-"+id,240));
+    if(as&&as.files&&as.files.length){const fd=el("details","files");fd.dataset.key="files-"+id;fd.append(el("summary","muted","файлы ("+as.files.length+")"),el("div","muted mono",as.files.join(", ")));left.append(fd)}
+    if(as&&as.dependsOn&&as.dependsOn.length)left.append(el("div","muted","сдаёт после: "+as.dependsOn.join(", ")+" (dependsOn)"));
+    const right=el("div","sub");right.append(el("div","lbl","Подзадачи"+(subs.find(x=>x.status==="DOING")?" · ▶ "+subs.find(x=>x.status==="DOING").id:"")));
+    if(!subs.length)right.append(el("span","muted","—"));
+    else{const sl=el("div","scroll subs");sl.dataset.scroll="subs-"+id; // a long plan scrolls in its own box, opened at the step in progress
+      const icon={DONE:"✓",DOING:"▶",TODO:"·",DROPPED:"✕"};subs.forEach(x=>{const d=el("div",x.status,icon[x.status]+" "+x.id+" "+x.title);if(x.note)d.title=x.note;sl.append(d)});right.append(sl)}
+    grid.append(left,right);card.append(grid);
+    if(im&&(im.summary||im.filesChanged.length)){const sec=el("div","asec");sec.append(el("div","lbl","Итог агента"));if(im.summary)sec.append(longText(im.summary,"impl-"+id,280));
+      if(im.filesChanged.length){const fd=el("details","files");fd.dataset.key="changed-"+id;fd.append(el("summary","muted","изменённые файлы ("+im.filesChanged.length+")"),el("div","muted mono",im.filesChanged.join(", ")));sec.append(fd)}card.append(sec)}
+    if(rep&&rep.findings.length){const sec=el("div","asec");sec.append(el("div","lbl","Ревью раунда "+t.syncRound));
+      rep.findings.forEach((f,i)=>{const row=el("div","find");row.append(el("span","badge "+f.severity,f.severity),longText(f.description+(f.relatedAgent?" → "+f.relatedAgent:""),"find-"+id+"-"+i,200));sec.append(row)});card.append(sec)}
+    cards.append(card);
   }
-  const tw=el("div","tscroll");tw.append(tbl);c.append(tw); // a wide table scrolls inside the card, not the page
-  t.integrations.filter(x=>x.round===t.syncRound).slice(-1).forEach(x=>{const d=el("div","");d.append(el("b","","Интеграция ("+x.agentId+"): "),badge(x.status)," "+x.result);if(x.commits.length)d.append(el("div","muted mono","commits: "+x.commits.join(", ")));
-    x.findings.forEach(f=>{const r=el("div","muted");r.append(el("span","badge "+f.severity,f.severity)," "+f.description+(f.relatedAgent?" → "+f.relatedAgent:""));d.append(r)});c.append(d)});
+  c.append(cards);
+  t.integrations.filter(x=>x.round===t.syncRound).slice(-1).forEach(x=>{const d=el("div","acard icard");const hd=el("div","ah");hd.append(el("b","","Интеграция"),el("span","muted",x.agentId),el("span","stats2"));hd.lastChild.append(badge(x.status));d.append(hd);
+    d.append(longText(x.result,"integ",360));if(x.commits.length)d.append(el("div","muted mono","commits: "+x.commits.join(", ")));
+    x.findings.forEach((f,i)=>{const row=el("div","find");row.append(el("span","badge "+f.severity,f.severity),longText(f.description+(f.relatedAgent?" → "+f.relatedAgent:""),"ifind-"+i,200));d.append(row)});c.append(d)});
   if(t.agreement){const d=el("details");d.append(el("summary","","Agreement v"+t.agreement.version+" — "+t.agreement.summary));
     t.agreement.assignments.forEach(a=>d.append(el("div","",a.agentId+": "+a.responsibility)));
     t.grants.forEach(g=>d.append(el("div","muted mono","доступ: "+g.from+" → "+g.to+": "+g.files.join(", "))));
@@ -572,7 +617,29 @@ function count(shown,total){return total>shown?"последние "+shown+" и�
 function scrollBox(details,kind){const box=el("div","scroll");box.dataset.scroll=kind;details.append(box);
   details.addEventListener("toggle",()=>{if(!details.open)return;if(box.dataset.top!==undefined)box.scrollTop=+box.dataset.top;else if(kind==="msgs")box.scrollTop=box.scrollHeight});return box}
 const openDetails=new Set();
+/** Tasks the page creates on a cron (runners.json "schedules"): on/off, when next, what the last run did, run now. */
+const schedState=new Map();
+function renderSchedules(s){
+  const box=$("schedules");const list=s.schedules||[];box.hidden=!list.length;if(!list.length){box.replaceChildren();return}
+  const sig=JSON.stringify(list)+"|"+Math.floor(Date.now()/60000)+"|"+JSON.stringify([...schedState])+"|"+!!s.control;if(box.dataset.sig===sig)return;box.dataset.sig=sig;
+  const ph=el("div","ph","По расписанию");ph.append(el("span","end","cron из runners.json · задача не ставится, пока предыдущая из того же расписания открыта"));
+  const rows=list.map(x=>{const r=el("div","srow"+(x.enabled?"":" off"));
+    const sw=document.createElement("input");sw.type="checkbox";sw.checked=x.enabled;sw.disabled=!s.control;sw.title=x.enabled?"выключить":"включить";
+    sw.onchange=async()=>{sw.disabled=true;try{await post("/api/schedules/"+encodeURIComponent(x.id)+"/enabled",{enabled:sw.checked});await tick()}catch(e){alert(e.message);sw.checked=!sw.checked;sw.disabled=false}};
+    const nm=el("div","nm");nm.append(el("b","",x.title),el("span","",x.id+" · "+x.agents.join(", ")+(x.openspec?" · OpenSpec "+x.openspec:"")));
+    const nx=el("div","nx");if(x.nextRunAt){const d=new Date(x.nextRunAt);const same=d.toDateString()===new Date().toDateString();nx.append(el("div","",(same?"":d.toLocaleDateString([],{day:"numeric",month:"short"})+" ")+time(x.nextRunAt).slice(0,5)),el("div","sub2","через "+mins(Math.max(0,d-Date.now()))))}else nx.append(el("span","muted",x.enabled?"не наступит":"выключено"));
+    const run=x.runs[0];const st=schedState.get(x.id);
+    const last=el("div","last"+(run&&run.error?" err":run&&run.skipped?" skip":""),!run?"ещё не запускалось":run.taskId?time(run.at).slice(0,5)+" → "+run.taskId+(x.openTask===run.taskId?" (идёт)":""):run.skipped?time(run.at).slice(0,5)+" пропуск: "+run.skipped:time(run.at).slice(0,5)+" ошибка: "+run.error);
+    if(st&&st.note)last.append(el("div","sub2",st.note));
+    const b=el("button","ghost",st&&st.pending?"Ставлю…":"Запустить сейчас");b.type="button";b.disabled=!s.control||!!(st&&st.pending);b.title=x.openTask?"пропустится: "+x.openTask+" ещё открыта":"поставить задачу сейчас";
+    b.onclick=async()=>{schedState.set(x.id,{pending:true});render();
+      try{const j=await post("/api/schedules/"+encodeURIComponent(x.id)+"/run",{});schedState.set(x.id,{note:j.run.taskId?"создана "+j.run.taskId:j.run.skipped?"пропуск: "+j.run.skipped:"ошибка: "+j.run.error})}catch(e){schedState.set(x.id,{note:"ошибка: "+e.message})}await tick()};
+    r.append(sw,nm,el("div","cr",x.cron),nx,last,b);return r});
+  box.replaceChildren(ph,...rows)}
+function scheduleOf(t){for(const x of (S.schedules||[]))if(x.runs.some(r=>r.taskId===t.id))return x.id;return null}
 function renderTasks(){
+  renderSchedules(S);
+  if(document.activeElement&&document.activeElement.matches&&document.activeElement.matches("#tasks .compose textarea"))return; // you are writing to a lead: the refresh waits
   const s=S;$("newbtn").hidden=!s.control;if(!s.control)$("newtask").hidden=true;
   $("tasks-lead").textContent="Текущие и завершённые задачи проекта "+s.project.name+"."+(s.control?"":" Только чтение: чтобы ставить задачи, запустите UI с --runners.");
   updateForm(s);
@@ -671,7 +738,7 @@ function renderControl(s){
     c.info.textContent=(r.session?"сейчас: "+r.session.taskId+" · сессия #"+r.session.attempt+" · "+since(r.session.startedAt):r.running&&r.startedAt?"ждёт задачу · запущен "+ago(r.startedAt):r.stoppedAt?"остановлен "+ago(r.stoppedAt):"не запускался")+(mine.length?" · за 24ч "+fmtUsd(mine.reduce((a,x)=>a+x.costUsd,0),mine.some(x=>x.costEstimated)):"");
     c.cwd.textContent=r.cwd?"папка: "+r.cwd:"папка: текущая";c.cwd.title=r.cwd||"";
     c.cmd.textContent=r.command;c.cmd.title=r.command;
-    c.feed.replaceChildren(miniFeed(r.id));
+    miniFeed(r.id,c.feed);
     c.modelHint.textContent=r.model&&r.models.length<2?"Список моделей для выбора — поле \"models\" в runners.json (в defaults или у агента).":"";c.modelHint.hidden=!c.modelHint.textContent;
     c.modelState.textContent=r.model?"модель: "+r.model:"модель: задана в command (поставьте {model} в command и \"model\" в runners.json, чтобы выбирать здесь)";c.modelForm.hidden=!r.model;
     const msig=r.models.join("|")+"#"+(r.model||"");
@@ -703,7 +770,7 @@ function makeRunnerCard(id){
   details.addEventListener("toggle",()=>{if(details.open)loadLog(id,c)});
   const feedHead=el("div","row2");const feedTitle=el("b","","Активность");const feedLink=el("a","","вся лента агента →");feedLink.href="#";
   feedLink.onclick=ev=>{ev.preventDefault();$("a-agent").dataset.sig="";go("activity",route.project);setTimeout(()=>{$("a-agent").value=id;render()},0)};
-  feedHead.append(feedTitle,feedLink);const feed=el("div");
+  feedHead.append(feedTitle,feedLink);const feed=el("div","act mini");
   root.append(top,info,cwd,cmd,modelState,modelForm,modelHint,instState,inst,instDetails,feedHead,feed,details);
   const c={root,dot:dt,badge:badgeEl,btn,info,cwd,cmd,details,pre,modelState,modelForm,modelSel,modelHint,instState,instInput,instPre,instDetails,feed};return c}
 async function loadLog(id,c){try{const j=await getJSON(q("/api/runners/"+encodeURIComponent(id)+"/log"));
@@ -757,30 +824,45 @@ function actRow(e,mini){
   const sum=el("span","sum");
   if(e.tool){const t=el("span","tool",(e.kind==="tool_result"?(e.isError?"✗ ":"✓ "):"")+e.tool.replace(/^mcp__agent-network__/,"swarm·").replace(/^mcp__supervisor__/,"supervisor·"));sum.append(t)}
   sum.append((e.durationMs!==undefined?secs(e.durationMs)+" · ":"")+(e.summary||""));sum.title=e.summary||"";
+  if(e.sub){r.classList.add("subag");sum.prepend(el("span","subm","↳ сабагент "))}
   r.append(el("span","seq","#"+e.seq),el("span","tm",time(e.at)),el("span","who",e.agentId),kind,sum);
-  const wrap=el("div");wrap.append(r);
+  const wrap=el("div");wrap.dataset.seq=String(e.seq);wrap.append(r);
   if(actOpen.has(e.seq)){const d=el("div","adetail");d.append(el("div","muted",[e.agentId,e.taskId?e.taskId+(e.attempt?" · сессия #"+e.attempt:""):null,new Date(e.at).toLocaleString([],{hour12:false}),"#"+e.seq].filter(Boolean).join(" · ")));
     if(e.detail)d.append(el("pre","log",e.detail));else d.append(el("div","muted","подробностей нет"));wrap.append(d)}
   r.onclick=()=>{if(actOpen.has(e.seq))actOpen.delete(e.seq);else actOpen.add(e.seq);render()};
   return wrap}
+/** Rebuild a scrolled list without moving what you are reading: the first visible row stays where it was (at the very top, the list shows the newest). */
+function keepAnchor(box,rebuild){const top=box.scrollTop;let anchor=null,off=0;const bt=()=>box.getBoundingClientRect().top;
+  if(top>0)for(const r of box.querySelectorAll("[data-seq]")){const rt=r.getBoundingClientRect();if(rt.bottom>bt()+1){anchor=r.dataset.seq;off=rt.top-bt();break}}
+  rebuild();
+  if(top>0){const r=anchor&&box.querySelector('[data-seq="'+anchor+'"]');box.scrollTop=top;if(r)box.scrollTop+=r.getBoundingClientRect().top-bt()-off}}
 function renderActivity(){
   const agents=[...new Set(ACT.map(e=>e.agentId))].sort();fillSelect("a-agent","Все агенты",agents);fillSelect("a-task","Все задачи",[...new Set(ACT.map(e=>e.taskId).filter(Boolean))].sort());
   const fa=$("a-agent").value,ft=$("a-task").value,fq=$("a-q").value.trim().toLowerCase(),follow=$("a-follow").checked;
   const base=ACT.filter(e=>(!fa||e.agentId===fa)&&(!ft||e.taskId===ft)&&(!fq||((e.summary||"")+" "+(e.tool||"")+" "+(e.detail||"")).toLowerCase().includes(fq)));
-  const kb=$("a-kinds");kb.replaceChildren();for(const [k,label] of KINDS){const b=el("button",actKind===k?"on":"");b.type="button";b.append(label,el("span","k",String(base.filter(e=>matchKind(e,k)).length)));b.onclick=()=>{actKind=k;actShown=0;render()};kb.append(b)}
+  const counts=KINDS.map(([k])=>base.filter(e=>matchKind(e,k)).length);const kb=$("a-kinds");const ksig=actKind+"|"+counts.join(",");
+  if(kb.dataset.sig!==ksig){kb.dataset.sig=ksig;kb.replaceChildren();KINDS.forEach(([k,label],i)=>{const b=el("button",actKind===k?"on":"");b.type="button";b.append(label,el("span","k",String(counts[i])));b.onclick=()=>{actKind=k;actShown=0;render()};kb.append(b)})}
   let list=base.filter(e=>matchKind(e,actKind));
-  if(follow||!actShown)actShown=actSeq;
-  const fresh=list.filter(e=>e.seq>actShown).length;list=list.filter(e=>e.seq<=actShown);
-  const box=$("activity");const top=box.scrollTop;const rows=list.slice(-400).reverse().map(e=>actRow(e,false));
-  if(fresh){const pill=el("button","newpill","Новых событий: "+fresh+" — показать");pill.type="button";pill.onclick=()=>{actShown=actSeq;box.scrollTop=0;render()};rows.unshift(pill)}
-  box.replaceChildren(...(rows.length?rows:[el("div","empty",S.control?"Пока пусто: события появятся, когда агенты начнут работать.":"Лента доступна в UI с --runners: её ведут runner'ы.")]));
-  box.scrollTop=follow?0:top;
+  const box=$("activity");
+  // "следить" brings new events in only while you are at the top; scrolled down to read, the list holds still and new ones wait in the pill
+  if((follow&&box.scrollTop<40)||!actShown)actShown=actSeq;
+  const fresh=list.filter(e=>e.seq>actShown).length;list=list.filter(e=>e.seq<=actShown).slice(-400);
+  // rebuilt only when what is shown changed: a rebuild resets the scroll and swallows clicks
+  const sig=[actKind,fa,ft,fq,list.length,list.length?list[0].seq+"-"+list[list.length-1].seq:"",fresh,[...actOpen].join(".")].join("|");
+  if(box.dataset.sig!==sig){box.dataset.sig=sig;const rows=list.slice().reverse().map(e=>actRow(e,false));
+    if(fresh){const pill=el("button","newpill","Новых событий: "+fresh+" — показать");pill.type="button";pill.onclick=()=>{actShown=actSeq;box.scrollTop=0;render()};rows.unshift(pill)}
+    keepAnchor(box,()=>box.replaceChildren(...(rows.length?rows:[el("div","empty",S.control?"Пока пусто: события появятся, когда агенты начнут работать.":"Лента доступна в UI с --runners: её ведут runner'ы.")])))}
   $("a-total").textContent=ACT.length?"всего в памяти: "+ACT.length+" событий · ошибок: "+ACT.filter(isErr).length:"";
   $("c-activity").textContent="";
 }
 ["a-agent","a-task","a-follow"].forEach(id=>$(id).addEventListener("change",render));$("a-q").addEventListener("input",render);
-function miniFeed(id){const box=el("div","act mini");const list=ACT.filter(e=>e.agentId===id).slice(-12).reverse();
-  box.append(...(list.length?list.map(e=>actRow(e,true)):[el("div","empty","событий пока нет")]));return box}
+/** The runner card's latest events, in one box that stays. Scrolled down to read, the window stops sliding: it keeps
+ *  the events from the one you are reading down and adds the new ones on top. */
+function miniFeed(id,box){const mine=ACT.filter(e=>e.agentId===id);let from=mine.length-12;
+  if(box.scrollTop>0&&box.dataset.oldest){const i=mine.findIndex(e=>String(e.seq)===box.dataset.oldest);if(i>=0)from=Math.min(from,i)}
+  const list=mine.slice(Math.max(0,from)).reverse();box.dataset.oldest=list.length?String(list[list.length-1].seq):"";
+  const sig=list.map(e=>e.seq).join(".")+"|"+list.filter(e=>actOpen.has(e.seq)).map(e=>e.seq).join(".");if(box.dataset.sig===sig)return;box.dataset.sig=sig;
+  keepAnchor(box,()=>box.replaceChildren(...(list.length?list.map(e=>actRow(e,true)):[el("div","empty","событий пока нет")])))}
 
 /* ---------- questions ---------- */
 const qCards=new Map();
@@ -788,7 +870,10 @@ function renderQuestions(s){
   const open=s.openQuestions||[];$("questions").hidden=!open.length;const box=$("qlist");const keep=new Set();
   for(const qq of open){const key=route.project+"/"+qq.taskId+"/"+qq.messageId;keep.add(key);if(qCards.has(key))continue;
     const c=el("div","card q");const h=el("div","");h.append(el("span","who",qq.from),el("span","muted"," · "+qq.taskId+" «"+qq.taskTitle+"» · "+time(qq.askedAt)));c.append(h,el("div","",qq.question));
-    if(s.control){const f=el("form","");const ta=document.createElement("textarea");ta.placeholder="Ваш ответ агенту "+qq.from;const r2=el("div","row2");const b=el("button","","Ответить");b.type="submit";const note=el("span","note","");r2.append(b,note);f.append(ta,r2);
+    if(s.control){const f=el("form","");const ta=document.createElement("textarea");ta.placeholder="Ваш ответ агенту "+qq.from;const r2=el("div","row2");const b=el("button","","Ответить");b.type="submit";const note=el("span","note","");
+      const x=el("button","ghost","Закрыть без ответа");x.type="button";x.title="агент ничего не получит: например, он уже сделал по своему предложению или вопрос решён иначе";
+      x.onclick=async()=>{if(!confirm("Закрыть вопрос "+qq.from+" без ответа? Агент ничего не получит."))return;x.disabled=true;try{await post("/api/questions/dismiss",{taskId:qq.taskId,messageId:qq.messageId});await tick()}catch(e){note.className="note err";note.textContent=e.message;x.disabled=false}};
+      r2.append(b,x,note);f.append(ta,r2);
       f.onsubmit=async ev=>{ev.preventDefault();if(!ta.value.trim())return;b.disabled=true;note.className="note";note.textContent="отправляю…";
         try{await post("/api/questions/answer",{taskId:qq.taskId,messageId:qq.messageId,answer:ta.value});note.className="note ok";note.textContent="отправлено";await tick()}catch(e){note.className="note err";note.textContent=e.message;b.disabled=false}};
       c.append(f)}else c.append(el("div","muted","ответить можно из UI, запущенного с --runners"));
@@ -798,10 +883,49 @@ function renderQuestions(s){
 
 /* ---------- supervisor ---------- */
 let SUP=null,supKind="all",supAll=false;const supSessions=new Map();const supSeen={project:null,ids:new Set(),needs:new Set()},supOpen=new Set();let supUi=null;
-const RULES=[["questionAfterSec","вопрос оператору без ответа дольше","с"],["stallMin","нет прогресса у агента в сессии дольше","мин"],["repeatCount","одна и та же команда подряд, раз","×"],["testMin","тестовый процесс живёт дольше","мин"]];
-async function messageAgent(taskId,to){
-  const text=(prompt("Сообщение агенту "+to+" ("+taskId+"). Придёт от оператора, даже если агент сейчас занят.")||"").trim();if(!text)return;
-  try{await post("/api/tasks/"+encodeURIComponent(taskId)+"/message",{to:to,text:text});toast("ok",taskId+": отправлено "+to,text,taskId)}catch(e){alert(e.message)}}
+const RULES=[["questionAfterSec","вопрос оператору без ответа дольше","с"],["stallMin","нет прогресса у агента в сессии дольше","мин"],["repeatCount","одна и та же команда подряд, раз","×"],["testMin","тестовый процесс живёт дольше","мин"],["refusedCount","отказов в правах за 10 мин, раз","×"],["checkInMin","агент работает над фазой задачи дольше (чек-ин)","мин"]];
+/* writing to the lead: open state, draft and sending survive the card being rebuilt every refresh */
+const composeOpen=new Set(),drafts=new Map(),sendState=new Map();
+const OP_NOTE=/^\[From the operator[^\]]*\]\n/;
+function renderCompose(t){
+  const lead=t.agents[0],others=t.agents.slice(1),key=route.project+"/"+t.id,open=composeOpen.has(key),st=sendState.get(key)||{};
+  const box=el("div","compose"+(open?" open":""));box.dataset.compose=key;
+  const mine=t.messages.filter(m=>(m.from==="operator"&&m.to===lead&&!m.replyTo)||(m.from===lead&&m.to==="operator"&&m.type!=="QUESTION")).slice(-4);
+  const hd=el("div","hd");
+  if(!open){const b=el("button","ghost","✉ Написать lead'у "+lead);b.type="button";
+    b.onclick=()=>{composeOpen.add(key);render();const ta=document.querySelector('[data-compose="'+key+'"] textarea');if(ta){ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length)}};
+    hd.append(b,el("span","muted",drafts.get(key)?"есть черновик":others.length?"он выполнит своё и передаст "+others.join(", "):"он единственный агент задачи"));box.append(hd)}
+  else{
+    hd.append(el("b","","Сообщение lead'у "+lead),el("span","muted",others.length?"выполнит своё и передаст остальным ("+others.join(", ")+"); дойдёт, даже если он занят":"дойдёт, даже если он занят"));box.append(hd);
+    const ta=document.createElement("textarea");ta.placeholder=others.length?"Например: «"+others[0]+": сначала посмотри DTO, потом сервис». Назовите агента, если это про него.":"Что сделать или учесть";ta.value=drafts.get(key)||"";
+    ta.oninput=()=>drafts.set(key,ta.value);
+    if(others.length){const who=el("div","who");who.append("касается:");others.forEach(a=>{const c=el("button","ghost",a);c.type="button";c.title="вставить «"+a+": »";
+      c.onclick=()=>{const at=ta.selectionStart??ta.value.length;const ins=(at&&!/\s$/.test(ta.value.slice(0,at))?" ":"")+a+": ";ta.value=ta.value.slice(0,at)+ins+ta.value.slice(at);drafts.set(key,ta.value);ta.focus();ta.setSelectionRange(at+ins.length,at+ins.length)};who.append(c)});box.append(who)}
+    box.append(ta);
+    const urg=el("label","urgent"+(st.urgent?" on":""));const uc=document.createElement("input");uc.type="checkbox";uc.checked=!!st.urgent;
+    const ut=el("span","");ut.append(el("b","","⚡ Срочно"),el("span",""," — остановить текущую сессию lead'а (после её текущей команды) и начать новую с этим сообщением первым. Обычное сообщение агент может пропустить, срочное — нет; цена — несколько ходов на новую сессию."));
+    urg.append(uc,ut);box.append(urg);
+    const r=el("div","row2");const send=el("button",st.urgent?"warnbtn":"",st.pending?"Отправляю…":st.urgent?"⚡ Отправить срочно":"Отправить");
+    uc.onchange=()=>{sendState.set(key,{...(sendState.get(key)||{}),urgent:uc.checked});urg.classList.toggle("on",uc.checked);send.className=uc.checked?"warnbtn":"";send.textContent=uc.checked?"⚡ Отправить срочно":"Отправить"};send.type="button";send.disabled=!!st.pending;
+    const cancel=el("button","ghost","Свернуть");cancel.type="button";cancel.onclick=()=>{composeOpen.delete(key);render()};
+    const note=el("span","note"+(st.error?" err":""),st.error||"⌘/Ctrl+Enter — отправить, Esc — свернуть (черновик останется)");
+    const doSend=async()=>{const text=ta.value.trim();if(!text){note.className="note err";note.textContent="Напишите сообщение";ta.focus();return}
+      const urgent=uc.checked;sendState.set(key,{pending:true,urgent:urgent});send.disabled=true;send.textContent="Отправляю…";
+      const how={now:"сессия остановлена, новая начнётся с сообщения","after-tool":"сессия остановится после текущей команды, новая начнётся с сообщения","next-session":"сессии сейчас нет: следующая начнётся с сообщения","not-running":"runner остановлен: сообщение ждёт в pendingMessages"};
+      try{const j=await post("/api/tasks/"+encodeURIComponent(t.id)+"/message",{text:text,urgent:urgent});drafts.delete(key);composeOpen.delete(key);ta.blur();sendState.set(key,{sentAt:new Date().toISOString()});
+        toast(urgent?"warn":"ok",t.id+": "+(urgent?"срочно lead'у ":"отправлено lead'у ")+lead,(j.interrupted?how[j.interrupted]+". ":"")+text,t.id)}
+      catch(e){sendState.set(key,{error:e.message})}
+      await tick()};
+    send.onclick=doSend;
+    ta.onkeydown=ev=>{if(ev.key==="Enter"&&(ev.metaKey||ev.ctrlKey)){ev.preventDefault();doSend()}else if(ev.key==="Escape"){composeOpen.delete(key);ta.blur();render()}};
+    r.append(send,cancel,note);box.append(r)}
+  // what you wrote before and whether the lead has read it (it reads with its next action)
+  if(mine.length){const h=el("div","hist");mine.slice().reverse().forEach(m=>{const d=el("div");const txt=m.content.replace(OP_NOTE,"");const his=m.from===lead;
+    const body=el("span","");if(his)body.append(el("span","from",lead+":"));body.append(txt.length>300?txt.slice(0,300)+"…":txt);
+    if(m.urgent)body.prepend(el("span","from","⚡"));
+    const got=(t.delivered||[]).includes(m.id);
+    d.append(el("span","tm",time(m.createdAt)),body,el("span","rd"+(his||m.readAt?" ok":got?" warn":""),his?"к сведению":m.readAt?"✓ получил":got?"доставлено, ответа нет":"• ещё не дошло"));d.title=his?"":m.readAt?"агент после этого сообщения уже обращался к рою":got?"хук показал сообщение агенту, но тот к рою ещё не обращался; если важно — отправьте срочно":"агент ещё не делал вызовов инструментов после этого сообщения";h.append(d)});box.append(h)}
+  return box}
 function watchSupervisor(s){const sv=s.supervisor;if(!sv)return;
   // the first look only remembers its entries; a decision that waits for you pops up even then
   if(supSeen.project!==s.project.id){supSeen.project=s.project.id;supSeen.ids=new Set(sv.recent.map(e=>e.id));supSeen.needs=new Set()}
@@ -826,7 +950,7 @@ function makeSupUi(){
   form.onsubmit=async ev=>{ev.preventDefault();let m=sel.value;
     if(m==="__other__"){m=(prompt("Модель, как её называет CLI надзора (например sonnet или qwen/qwen3-coder-30b). Чтобы она всегда была в списке, добавьте её в supervisor.models в runners.json.")||"").trim();if(!m){sel.dataset.server="";await tick();return}}
     btn.disabled=true;try{await post("/api/supervisor/model",{model:m});sel.dataset.server="";sel.blur();await tick()}catch(e){alert(e.message)}finally{btn.disabled=false}};
-  set.append(el("h3","","Настройки"),modelState,form,hint,rules,limits,el("div","muted","Пороги, лимиты и свои команды — секция supervisor в runners.json; перечитываются на лету."));
+  set.append(el("h3","","Настройки"),modelState,form,hint,rules,limits,el("div","muted","Пороги меняются здесь или в supervisor.rules в runners.json; лимиты и свои команды — там же. Всё перечитывается на лету."));
   const tools=$("s-tools");const tlist=el("div");tools.append(el("h3","","Инструменты"),el("div","muted","Выключенный инструмент не попадёт в следующую сессию надзора."),tlist);
   $("s-toggle").onclick=async()=>{const b=$("s-toggle");b.disabled=true;try{SUP={...SUP,status:await post("/api/supervisor/"+b.dataset.action)};await tick()}catch(e){alert(e.message)}finally{b.disabled=false}};
   KINDS_J.forEach(([k,label])=>{const b=el("button","",label);b.type="button";b.dataset.k=k;b.onclick=()=>{supKind=k;renderSupervisor()};$("s-kinds").append(b)});
@@ -854,7 +978,17 @@ function renderSupervisor(){
   needs.slice().reverse().forEach(e=>{const c=el("div","card need");const hd=el("div","hd");hd.append(el("b","","Нужно ваше решение"),el("span","muted",(e.taskId?e.taskId+" · ":"")+time(e.at)));
     const parts=e.text.split("\nRecommendation: ");c.append(hd,el("div","",parts[0]));if(parts[1])c.append(el("div","rec","Рекомендация надзора: "+parts[1]));
     const r=el("div","row2");if(e.taskId){const o=el("button","ghost","Открыть задачу");o.type="button";o.onclick=()=>{go("tasks",route.project);setTimeout(()=>{const x=document.querySelector('#tasks [data-id="'+e.taskId+'"]');if(x)x.scrollIntoView({block:"start",behavior:"smooth"})},300)};r.append(o)}
-    if(ctl){const d=el("button","","Решено");d.type="button";d.onclick=async()=>{d.disabled=true;try{await post("/api/supervisor/resolve",{id:e.id});await tick()}catch(err){alert(err.message);d.disabled=false}};r.append(d)}
+    if(ctl){
+      // what to do with it: the recommendation or your own words go to the agent (an answer to its question, else to the lead); or just close
+      const asked=e.data&&e.data.messageId,whom=asked?"ответом на вопрос агента ("+asked+")":"lead'у задачи";
+      const note=el("span","note","");const ta=document.createElement("textarea");ta.placeholder="Ваш ответ — уйдёт "+whom;ta.hidden=true;
+      const resolve=async(answer,btn)=>{if(answer!==undefined&&!answer.trim()){note.className="note err";note.textContent="Напишите ответ";return}
+        btn.disabled=true;note.className="note";note.textContent="отправляю…";
+        try{await post("/api/supervisor/resolve",answer===undefined?{id:e.id}:{id:e.id,answer:answer});nb.dataset.sig="";await tick()}catch(err){note.className="note err";note.textContent=err.message;btn.disabled=false}};
+      if(parts[1]&&e.taskId){const a=el("button","","Принять рекомендацию");a.type="button";a.title="отправит рекомендацию надзора "+whom;a.onclick=()=>resolve(parts[1],a);r.append(a)}
+      if(e.taskId){const w=el("button","ghost","Ответить по-своему");w.type="button";w.onclick=()=>{if(ta.hidden){ta.hidden=false;w.textContent="Отправить ответ";ta.focus()}else resolve(ta.value,w)};r.append(w)}
+      const d=el("button","ghost","Закрыть без ответа");d.type="button";d.title=asked?"агент ничего не получит; его вопрос "+asked+" тоже закроется":"агент ничего не получит";d.onclick=()=>resolve(undefined,d);r.append(d,note);
+      c.append(ta)}
     c.append(r);nb.append(c)})}
   // journal, newest first
   $("s-kinds").querySelectorAll("button").forEach(b=>{const k=b.dataset.k;b.classList.toggle("on",k===supKind);const n=k==="all"?journal.length:journal.filter(e=>e.kind===k).length;b.textContent=k;if(n)b.append(el("span","k",String(n)))});
@@ -873,8 +1007,29 @@ function renderSupervisor(){
   u.form.hidden=!st.model||!ctl;u.hint.textContent=st.model&&st.models.length<2?"Список для выбора — supervisor.models в runners.json.":"";u.hint.hidden=!u.hint.textContent;
   const msig=st.models.join("|")+"#"+(st.model||"");
   if(st.model&&document.activeElement!==u.sel&&u.sel.dataset.server!==msig){u.sel.replaceChildren(...st.models.map(m=>new Option(m,m)),new Option("другая…","__other__"));u.sel.value=st.model;u.sel.dataset.server=msig}
-  u.rules.replaceChildren();u.rules.append(el("span","","задача стала BLOCKED, runner сдался"),el("b","","сразу"));RULES.forEach(([k,label,unit])=>{u.rules.append(el("span","",label),el("b","",unit==="×"?"×"+st.rules[k]:st.rules[k]+" "+unit))});
-  u.limits.textContent="не больше "+st.maxSessionsPerHour+" "+plural(st.maxSessionsPerHour,"сессии","сессий","сессий")+" в час"+(st.budgetUsd!==null?" и $"+st.budgetUsd+" за сутки":", бюджет за сутки не задан (budgetUsd)");
+  // thresholds: edited here, written to runners.json, applied at the detector's next look; not rebuilt while you type
+  const rsig=JSON.stringify(st.rules)+(ctl?"#c":"");
+  if(u.rules.dataset.sig!==rsig&&!u.rules.contains(document.activeElement)){u.rules.dataset.sig=rsig;u.rules.replaceChildren();u.rules.append(el("span","","задача стала BLOCKED, runner сдался"),el("b","","сразу"));
+    RULES.forEach(([k,label,unit])=>{const inp=document.createElement("input");inp.type="number";inp.min="0";inp.step="any";inp.value=String(st.rules[k]);inp.dataset.k=k;inp.disabled=!ctl;inp.title=unit==="×"?"раз":unit;
+      const v=el("b","");v.append(inp,el("span","muted"," "+(unit==="×"?"раз":unit)));u.rules.append(el("span","",label),v)});
+    if(ctl){const save=el("button","ghost","Сохранить пороги");save.type="button";const note=el("span","note","");
+      save.onclick=async()=>{const rules={};let bad="";u.rules.querySelectorAll("input[data-k]").forEach(i=>{const n=Number(i.value);if(!(n>0))bad=i.dataset.k;rules[i.dataset.k]=n});
+        if(bad){note.className="note err";note.textContent="порог должен быть больше 0";return}
+        save.disabled=true;try{SUP={...SUP,status:await post("/api/supervisor/rules",{rules:rules})};u.rules.dataset.sig="";note.className="note ok";note.textContent="сохранено в runners.json";renderSupervisor()}catch(e){note.className="note err";note.textContent=e.message}finally{save.disabled=false}};
+      const r=el("div","row2");r.style.gridColumn="1/-1";r.append(save,note);u.rules.append(r)}}
+  // limits: sessions an hour and USD a day, edited here like the thresholds (not rebuilt while you type)
+  const lsig=st.maxSessionsPerHour+"|"+st.budgetUsd+(ctl?"#c":"");
+  if(u.limits.dataset.sig!==lsig&&!u.limits.contains(document.activeElement)){u.limits.dataset.sig=lsig;u.limits.replaceChildren();u.limits.className="rules";
+    const num=(k,v,step,ph)=>{const i=document.createElement("input");i.type="number";i.min="0";i.step=step;i.dataset.k=k;i.value=v===null?"":String(v);i.placeholder=ph;i.disabled=!ctl;return i};
+    const per=num("maxSessionsPerHour",st.maxSessionsPerHour,"1",""),bud=num("budgetUsd",st.budgetUsd,"any","нет");
+    const b1=el("b","");b1.append(per,el("span","muted"," в час"));const b2=el("b","");b2.append(el("span","muted","$ "),bud,el("span","muted"," за сутки"));
+    u.limits.append(el("span","","сессий надзора не больше"),b1,el("span","","расход надзора не больше (пусто — без бюджета)"),b2);
+    if(ctl){const save=el("button","ghost","Сохранить лимиты");save.type="button";const note=el("span","note","");
+      save.onclick=async()=>{const p=Number(per.value);const bv=bud.value.trim();
+        if(!Number.isInteger(p)||p<1||p>100){note.className="note err";note.textContent="сессий в час: целое 1..100";return}
+        if(bv!==""&&!(Number(bv)>=0)){note.className="note err";note.textContent="бюджет: число ≥ 0 или пусто";return}
+        save.disabled=true;try{SUP={...SUP,status:await post("/api/supervisor/limits",{maxSessionsPerHour:p,budgetUsd:bv===""?null:Number(bv)})};u.limits.dataset.sig="";renderSupervisor()}catch(e){note.className="note err";note.textContent=e.message}finally{save.disabled=false}};
+      const r=el("div","row2");r.style.gridColumn="1/-1";r.append(save,note);u.limits.append(r)}}
   // tools: rebuilt only when the list or a switch changed, so a click is never lost
   const tsig=st.tools.map(t=>t.name+(t.enabled?"+":"-")).join(",")+(ctl?"#c":"");
   if(u.tlist.dataset.sig!==tsig){u.tlist.dataset.sig=tsig;u.tlist.replaceChildren(...st.tools.map(t=>{const r=el("label","tl"+(t.enabled?"":" off"));const cb=document.createElement("input");cb.type="checkbox";cb.checked=t.enabled;cb.disabled=!ctl;
@@ -883,11 +1038,26 @@ function renderSupervisor(){
   const lg=$("s-log");if($("s-logd").open){const atEnd=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-8;lg.textContent=st.log.length?st.log.join("\n"):"(пусто)";if(atEnd)lg.scrollTop=lg.scrollHeight}
 }
 
+/* ---------- notes: what agents told you for information (fyi), no answer expected ---------- */
+const nCards=new Map();const seenNotes={project:null,ids:new Set()};
+function watchNotes(s){const list=s.operatorNotes||[];
+  if(seenNotes.project!==s.project.id){seenNotes.project=s.project.id;seenNotes.ids=new Set(list.map(n=>n.taskId+"/"+n.messageId));return}
+  for(const n of list){const k=n.taskId+"/"+n.messageId;if(seenNotes.ids.has(k))continue;seenNotes.ids.add(k);toast("",n.from+" → вам · "+n.taskId+" · к сведению",n.text,n.taskId)}}
+function renderNotes(s){
+  const list=s.operatorNotes||[];$("notes").hidden=!list.length;const box=$("nlist");const keep=new Set();
+  for(const n of list){const key=route.project+"/"+n.taskId+"/"+n.messageId;keep.add(key);if(nCards.has(key))continue;
+    const c=el("div","card fyi");const h=el("div","");h.append(el("span","who",n.from),el("span","tag","к сведению"),el("span","muted"," · "+n.taskId+" «"+n.taskTitle+"» · "+time(n.at)));c.append(h,el("div","",n.text));
+    if(s.control){const r=el("div","row2");const ok=el("button","ghost","Ок");ok.type="button";ok.title="прочитано: убрать отсюда (агенту ничего не уходит)";
+      ok.onclick=async()=>{ok.disabled=true;try{await post("/api/questions/dismiss",{taskId:n.taskId,messageId:n.messageId});await tick()}catch(e){ok.disabled=false;alert(e.message)}};r.append(ok,el("span","muted","ответа не ждёт"));c.append(r)}
+    nCards.set(key,c);box.append(c)}
+  for(const [key,c] of nCards)if(!keep.has(key)){c.remove();nCards.delete(key)}
+}
+
 /* ---------- switching projects ---------- */
 function resetProject(){
   S=null;RUNS=[];SUP=null;n=0;knownIds="";openDetails.clear();supOpen.clear();["s-needs","s-journal"].forEach(id=>{$(id).dataset.sig="";$(id).replaceChildren()});supSessions.clear();supAll=false;if(supUi)supUi.tlist.dataset.sig="";
   for(const c of runnerCards.values())c.root.remove();runnerCards.clear();
-  for(const c of qCards.values())c.remove();qCards.clear();
+  for(const c of qCards.values())c.remove();qCards.clear();for(const c of nCards.values())c.remove();nCards.clear();
   ["tasks","runs","events","agents","kpis","ov-runners","ov-phases","ov-events"].forEach(id=>$(id).replaceChildren());
   ["f-agent","f-task","f-model","f-status","e-task","e-type"].forEach(id=>{$(id).dataset.sig="";$(id).value=""});expandedRuns.clear();
   $("newtask").hidden=true;$("formnote").textContent="";$("openspec").replaceChildren(new Option("— без OpenSpec —",""));

@@ -12,9 +12,16 @@ export interface DetectRules {
   repeatCount: number;
   /** A test JVM in an agent's folder running this long. */
   testMin: number;
+  /** This many tool calls refused (no permission, blocked) within 10 minutes, even when each command is different. */
+  refusedCount: number;
+  /** An agent works on one phase of a task this long: the supervisor checks in (and again every as many minutes). */
+  checkInMin: number;
 }
 
-export const DEFAULT_RULES: DetectRules = { questionAfterSec: 60, stallMin: 15, repeatCount: 3, testMin: 10 };
+export const DEFAULT_RULES: DetectRules = { questionAfterSec: 60, stallMin: 15, repeatCount: 3, testMin: 10, refusedCount: 4, checkInMin: 30 };
+
+/** A tool result that says the call was not allowed (Claude Code and Qwen Code wordings). */
+export const REFUSED = /requires? approval|has been denied|was blocked|not allowed|permission denied|declined|Contains simple_expansion|outside (the )?allowed/i;
 
 export interface SnapshotTask {
   id: string;
@@ -23,6 +30,8 @@ export interface SnapshotTask {
   status: string;
   syncRound: number;
   blockedReason?: string | null;
+  /** When the task entered its current phase. */
+  phaseSince?: string;
 }
 
 export interface SnapshotQuestion {
@@ -43,6 +52,8 @@ export interface SnapshotAgent {
   progress?: string;
   /** The task it works on: its session's, else its oldest open task (the one it takes next). */
   task?: string;
+  /** Its latest tool results (the activity feed), oldest first. */
+  results?: { at: string; tool?: string; isError?: boolean; summary: string }[];
 }
 
 export interface TestProcess {
@@ -68,7 +79,7 @@ export interface DetectMemory {
   progress: Record<string, { mark: string; since: number }>;
 }
 
-export type IncidentKind = "question" | "blocked" | "stall" | "repeat" | "hung-test" | "gave-up";
+export type IncidentKind = "question" | "blocked" | "stall" | "repeat" | "refused" | "check-in" | "hung-test" | "gave-up";
 
 export interface Incident {
   key: string;
@@ -149,6 +160,34 @@ export function detect(s: Snapshot, mem: DetectMemory, rules: DetectRules = DEFA
     for (const [command, n] of counts) {
       if (n < rules.repeatCount) continue;
       found.push({ key: `repeat:${a.id}:${hash(command)}`, kind: "repeat", ...(a.session || a.task ? { taskId: a.session?.taskId ?? a.task } : {}), agentId: a.id, summary: `${a.id} ran the same command ${n} times: ${command}`, data: { command, times: n } });
+    }
+
+    // working on one phase for long: a look every checkInMin, before anyone has to ask why it takes so long
+    const working = a.session ? s.tasks.find((t) => t.id === a.session!.taskId && t.status === "ACTIVE") : undefined;
+    if (working?.phaseSince) {
+      const minutes = Math.floor((s.now - Date.parse(working.phaseSince)) / 60_000);
+      const busy = (a.results ?? []).filter((r) => s.now - Date.parse(r.at) <= 30 * 60_000 && !isWaiting(r.tool ?? "")).length >= 5; // waiting is no work
+      if (busy && minutes >= rules.checkInMin) {
+        const n = Math.floor(minutes / rules.checkInMin);
+        found.push({
+          key: `checkin:${a.id}:${working.id}:${working.phase}:${working.syncRound}:${n}`, kind: "check-in", taskId: working.id, agentId: a.id,
+          summary: `${a.id} has been working on ${working.id} «${working.title}» in ${working.phase} for ${minutes} min (session ${a.session!.attempt}): is it moving, and what would help?`,
+          data: { minutes, phase: working.phase, attempt: a.session!.attempt },
+        });
+      }
+    }
+
+    // refused again and again with different commands: it probes for something it may not do (repeat misses this)
+    const recent = (a.results ?? []).filter((r) => s.now - Date.parse(r.at) <= 10 * 60_000);
+    const refused = recent.filter((r) => r.isError && REFUSED.test(r.summary));
+    const quiet = !Object.entries(mem.handled).some(([k, at]) => k.startsWith(`refused:${a.id}:`) && s.now - Date.parse(at) < 15 * 60_000);
+    if (refused.length >= rules.refusedCount && quiet) {
+      const taskId = a.session?.taskId ?? a.task;
+      found.push({
+        key: `refused:${a.id}:${refused[0]!.at}`, kind: "refused", ...(taskId ? { taskId } : {}), agentId: a.id,
+        summary: `${a.id} was refused ${refused.length} times in 10 min: ${[...new Set(refused.map((r) => r.summary.slice(0, 80)))].slice(0, 4).join(" | ")}`,
+        data: { refused: refused.map((r) => ({ at: r.at, tool: r.tool ?? null, result: r.summary.slice(0, 200) })) },
+      });
     }
 
     // the runner stopped starting sessions for a task

@@ -11,4 +11,5 @@ You are {agent}, the tester of this team. Task: {taskId} ("{title}").
   - Run your tests and report the real outcome; report only runs you actually did.
   - Keep command output short: it stays in your context and is read again on every turn. Run your own test classes quietly (`./mvnw -q test -Dtest='MultiCurrency*' -Dsurefire.timeout=300 2>&1 | tail -40`); on a failure read that test's report in `target/surefire-reports/` instead of printing the whole log.
 - SYNC: check the developers' tests: every scenario has a test, each test can fail, and it checks behaviour rather than implementation details.
+- Commit after every subtask that turns green (a work-in-progress commit is fine): the next session after a turn limit starts from git log, not from a long uncommitted diff.
 - When nextAction is done, end your session.

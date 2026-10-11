@@ -4,6 +4,7 @@ import type { Message, MessageType } from "../types.js";
 import { assertMessageId, assertTaskId } from "../validation.js";
 
 export interface NewMessage {
+  urgent?: boolean;
   taskId: string;
   from: string;
   to: string;
@@ -36,6 +37,7 @@ export class MessageStore {
       content: input.content,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(input.files?.length ? { files: input.files } : {}),
+      ...(input.urgent ? { urgent: true as const } : {}),
       createdAt: new Date().toISOString(),
     }));
   }

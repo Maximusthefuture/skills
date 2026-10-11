@@ -14,7 +14,9 @@
     "Model: the command has {model}; \"model\" is the default (the tester runs on haiku), \"models\" is the choice in the runner card on the page (applies from the next session).",
     "autostart: false = start that agent with the button on the page.",
     "supervisor: the agent that looks after the others (page tab «Надзор»). A detector without a model checks the swarm every 10 s; on an incident (a question to you unanswered for questionAfterSec, a BLOCKED task, no progress for stallMin, the same command repeatCount times, a test JVM older than testMin, a runner that gave up) it starts one supervisor session with the tools of supervisor-mcp.json. Read-only file tools, no shell: it acts through the page (answers, messages, +rounds, handover) and frees hung tests and database locks; decisions only you can take come to the page as «нужно ваше решение». maxSessionsPerHour and budgetUsd (USD per 24 h) cap its cost; a quiet run costs nothing, one incident about $0.2–0.6 on sonnet. Switch it on/off, pick the model and its tools on the page.",
-    "supervisor.tools: your own commands for it, argv without a shell; {agentCwd} adds an agentId parameter (the agent's folder), {projectDir}/{networkDir} are filled in, own params are checked (type, enum, pattern). \"action\": true for a command that changes something: each run goes into its journal. disabledTools switches any tool off (also on the page)."
+    "supervisor.tools: your own commands for it, argv without a shell; {agentCwd} adds an agentId parameter (the agent's folder), {projectDir}/{networkDir} are filled in, own params are checked (type, enum, pattern). \"action\": true for a command that changes something: each run goes into its journal. disabledTools switches any tool off (also on the page).",
+    "schedules: tasks the page creates by itself on a cron (local time; @daily, @weekdays = Mon-Fri 9:00, ...), no model involved. A run is skipped while the previous task of the same schedule is still open. {date} and {time} in title/description are filled in. Off here (\"enabled\": false): switch it on on the Tasks tab or here.",
+    "Subagents: Agent in --tools lets an agent start subagents for bounded side jobs; --agents defines \"helper\" (read and run only, no swarm tools). Only the agent itself talks to the swarm: the built-in general-purpose subagent would inherit the agent-network tools, so the system prompt tells agents to use helper (or a project agent such as critic). Each subagent is a separate context: tokens. Drop Agent from --tools to switch subagents off."
   ],
   "networkDir": "/abs/path/project/.agent-network",
   "defaults": {
@@ -26,7 +28,7 @@
       "stream-json",
       "--verbose",
       "--tools",
-      "Read,Write,Edit,Glob,Grep,Bash,Skill",
+      "Read,Write,Edit,Glob,Grep,Bash,Skill,Agent",
       "--system-prompt",
       "{systemPrompt}",
       "--model",
@@ -40,8 +42,11 @@
       "/abs/path/agent-network-mcp/examples/claude-hooks/settings.json",
       "--permission-mode",
       "acceptEdits",
+      "--agents",
+      "{\"helper\": {\"description\": \"A bounded side job for a swarm agent: search or read across many files, find why one test fails, review a diff. Reads and runs commands, changes nothing, reports back briefly.\", \"prompt\": \"You are a helper subagent of an agent in an agent-network swarm. Do exactly the job you were given and report back briefly: what you found, with file:line, and what you would do; nothing else. Never call agent-network tools (swarm_context, send_message, complete, subtasks, propose, approve, wait, ...): only the agent that started you talks to the swarm. Do not edit files. Keep command output short (tail, grep).\", \"tools\": [\"Read\", \"Grep\", \"Glob\", \"Bash\"]}}",
       "--allowedTools",
       "mcp__agent-network",
+      "Agent",
       "Read",
       "Write",
       "Edit",
@@ -122,7 +127,9 @@
       "questionAfterSec": 60,
       "stallMin": 15,
       "repeatCount": 3,
-      "testMin": 10
+      "testMin": 10,
+      "refusedCount": 4,
+      "checkInMin": 30
     },
     "maxSessionsPerHour": 6,
     "budgetUsd": 5,
@@ -169,5 +176,19 @@
       }
     ],
     "disabledTools": []
-  }
+  },
+  "schedules": [
+    {
+      "id": "nightly-flaky-tests",
+      "cron": "0 3 * * 1-5",
+      "title": "Flaky tests {date}",
+      "description": "Run the full test suite twice (./mvnw -q -B verify -Dsurefire.timeout=900). Fix tests that fail only sometimes: shared state, ordering, time, ports, container reuse. Production code stays as it is unless a test proves a real bug; then ask the operator. In result: which tests were flaky, why, what you changed.",
+      "agents": [
+        "backend",
+        "reviewer"
+      ],
+      "maxFixRounds": 1,
+      "enabled": false
+    }
+  ]
 }

@@ -15,6 +15,8 @@ import { startUiServer } from "./ui/server.js";
 import { Journal, type JournalEntry } from "./supervisor/journal.js";
 import { formatSessionLog, listSessionLogs, readSessionLog } from "./supervisor/sessionLog.js";
 import { Supervisor } from "./supervisor/supervisor.js";
+import { Scheduler } from "./schedule/scheduler.js";
+import { ensureWorktrees, gitRoot } from "./worktrees.js";
 
 const USAGE = `Usage:
   agent-network-mcp task create --title <t> --agents <a,b[,c]> [--description <d>] [--verify <build/test command>]
@@ -170,7 +172,11 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
   const { values } = parseArgs({ args, options: { port: { type: "string" }, "network-dir": { type: "string" }, runners: { type: "string", multiple: true } } });
   const configs: RunnersConfig[] = [];
   try {
-    for (const file of values.runners ?? []) configs.push(await loadRunnersConfig(file));
+    // one config: the project is the git repository ui is started in, unless the config names it ("project")
+    const here = (values.runners ?? []).length === 1 ? await gitRoot(cwd) : null;
+    for (const file of values.runners ?? []) configs.push(await loadRunnersConfig(file, here ? { projectDir: here } : {}));
+    // agents that work in their own worktree get it now, before their runners start
+    for (const config of configs) for (const line of await ensureWorktrees(config.agents)) out(`worktree created: ${line}`);
   } catch (e) {
     out(`error: ${(e as Error).message}`);
     return 2;
@@ -215,16 +221,24 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         runners && config?.supervisor
           ? new Supervisor({ networkDir: dir, config: config.supervisor, pool: runners, ...(config.path ? { configPath: config.path } : {}), ...(prices ? { prices } : {}) })
           : undefined;
-      return { networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}) };
+      const scheduler =
+        runners && config?.schedules?.length
+          ? new Scheduler({ networkDir: dir, schedules: config.schedules, ...(config.path ? { configPath: config.path } : {}), log: (line) => out(line) })
+          : undefined;
+      return { networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}) };
     });
     const ui = await startUiServer(specs, { port });
     out(`Agent Network UI: ${ui.url}  (${projects.length === 1 ? `network: ${projects[0]!.dir}` : `projects: ${projects.map((p) => basename(dirname(p.dir))).join(", ")}`})  Ctrl+C to stop`);
-    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)), supervisor: s.supervisor, projectId: ui.projects[i]!.id }] : []));
-    for (const { pool, config, name, supervisor, projectId } of pools) {
+    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)), supervisor: s.supervisor, scheduler: s.scheduler, projectId: ui.projects[i]!.id }] : []));
+    for (const { pool, config, name, supervisor, scheduler, projectId } of pools) {
       const auto = config.agents.filter((a) => a.autostart !== false).map((a) => a.id);
       for (const id of auto) pool.start(id);
       const where = pools.length > 1 ? ` (${name})` : "";
       out(`runners${where}: ${config.agents.map((a) => a.id).join(", ")}${auto.length ? `; started: ${auto.join(", ")}` : "; none started (autostart: false)"}`);
+      if (scheduler) {
+        scheduler.start();
+        out(`schedules${where}: ${config.schedules!.map((s) => `${s.id} (${s.cron}${s.enabled ? "" : ", off"})`).join(", ")}`);
+      }
       if (supervisor) {
         supervisor.attach(ui.url, projectId);
         if (config.supervisor!.autostart) supervisor.start();
@@ -237,7 +251,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         if (stopping) process.exit(130); // second Ctrl+C: leave now
         stopping = true;
         out("stopping the runners...");
-        void Promise.all(pools.map(({ pool, supervisor }) => Promise.all([pool.stopAll(), supervisor?.stop()])))
+        void Promise.all(pools.map(({ pool, supervisor, scheduler }) => Promise.all([pool.stopAll(), supervisor?.stop(), scheduler?.stop()])))
           .then(() => ui.close())
           .then(() => process.exit(0));
       };

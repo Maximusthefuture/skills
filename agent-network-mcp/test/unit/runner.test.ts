@@ -17,6 +17,12 @@ const task = (id: string, status: Task["status"], agents = ["backend", "reviewer
 });
 
 describe("renderPrompt", () => {
+  it("after the turn limit with a long uncommitted diff: commit first", () => {
+    const base = { agent: "backend", taskId: "task-001", title: "t", attempt: 5, afterTurnLimit: true };
+    expect(renderPrompt(DEFAULT_PROMPT, base)).not.toContain("first commit what already works");
+    expect(renderPrompt(DEFAULT_PROMPT, { ...base, uncommitted: 32 })).toContain("32 files are changed and not committed: first commit what already works");
+  });
+
   it("fills the placeholders and adds the resume note only on restarts", () => {
     const first = renderPrompt(DEFAULT_PROMPT, { agent: "backend", taskId: "task-002", title: "Cancel orders", attempt: 1 });
     expect(first).toContain('You are agent backend of the agent-network swarm. Task task-002 ("Cancel orders")');
@@ -68,5 +74,25 @@ describe("pickTask", () => {
     expect(pickTask(tasks, "backend")?.id).toBe("task-009");
     expect(pickTask([task("task-003", "CANCELLED"), task("task-004", "COMPLETED")], "backend")).toBeNull();
     expect(pickTask(tasks, "nobody")).toBeNull();
+  });
+});
+
+describe("workBrief", () => {
+  it("the folder's branch, latest commits and uncommitted files for the top of the prompt; nothing outside git", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { workBrief } = await import("../../src/progress.js");
+    const { tmpDir } = await import("../helpers/tmp.js");
+    const dir = await tmpDir();
+    expect(await workBrief(dir)).toBe("");
+    const git = (...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
+    git("init", "-q", "-b", "swarm-backend");
+    writeFileSync(join(dir, "a.txt"), "a");
+    git("add", ".");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "first step");
+    for (let i = 0; i < 4; i++) writeFileSync(join(dir, `f${i}.txt`), "x");
+    const brief = await workBrief(dir, 2);
+    expect(brief).toMatch(/^Branch swarm-backend, latest commits:\n {2}[0-9a-f]+ first step\nNot committed \(4 files\):\n {2}\?\? f0.txt\n {2}\?\? f1.txt\n {2}… and 2 more$/);
   });
 });

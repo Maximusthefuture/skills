@@ -1,0 +1,49 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { ensureWorktrees, gitRoot } from "../../src/worktrees.js";
+import { tmpDir } from "../helpers/tmp.js";
+
+const git = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8" });
+
+async function repo(commit = true) {
+  const root = await tmpDir();
+  const project = join(root, "shop");
+  mkdirSync(project);
+  git(project, "init", "-q", "-b", "main");
+  if (commit) {
+    writeFileSync(join(project, "a.txt"), "a");
+    git(project, "add", ".");
+    git(project, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init");
+  }
+  return { root, project };
+}
+const agent = (project: string, id: string) => ({ id, cwd: `${project}-${id}`, worktree: { project, branch: `swarm-${id}` } });
+
+describe("agent worktrees", () => {
+  it("are created next to the project on swarm-<agent> branches, once; the network stays out of git", async () => {
+    const { project } = await repo();
+    const agents = [agent(project, "backend"), agent(project, "reviewer"), { id: "tester", cwd: project }];
+    expect(await ensureWorktrees(agents)).toEqual([`backend: ${project}-backend (branch swarm-backend, new from HEAD)`, `reviewer: ${project}-reviewer (branch swarm-reviewer, new from HEAD)`]);
+    expect(existsSync(join(`${project}-backend`, "a.txt"))).toBe(true);
+    expect(git(`${project}-reviewer`, "branch", "--show-current").trim()).toBe("swarm-reviewer");
+    expect(await gitRoot(`${project}-backend`)).toBeTruthy();
+    expect(readFileSync(join(project, ".git", "info", "exclude"), "utf8")).toContain(".agent-network/");
+    expect(await ensureWorktrees(agents)).toEqual([]); // there already
+    expect(readFileSync(join(project, ".git", "info", "exclude"), "utf8").match(/\.agent-network\//g)).toHaveLength(1);
+  });
+
+  it("reuses an existing branch; refuses a repository without commits and a folder that is no worktree", async () => {
+    const { project } = await repo();
+    git(project, "branch", "swarm-backend");
+    git(project, "worktree", "add", "-q", `${project}-backend`, "swarm-backend");
+    git(project, "worktree", "remove", `${project}-backend`);
+    expect(await ensureWorktrees([agent(project, "backend")])).toEqual([`backend: ${project}-backend (branch swarm-backend, existing)`]);
+
+    mkdirSync(`${project}-stray`);
+    await expect(ensureWorktrees([agent(project, "stray")])).rejects.toMatchObject({ message: expect.stringContaining("is no git worktree") });
+    const empty = await repo(false);
+    await expect(ensureWorktrees([agent(empty.project, "backend")])).rejects.toMatchObject({ message: expect.stringContaining("at least one commit") });
+  });
+});

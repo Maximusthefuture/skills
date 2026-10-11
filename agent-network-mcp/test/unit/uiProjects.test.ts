@@ -228,11 +228,14 @@ describe("several projects on one page", () => {
     ui = await startUiServer([{ networkDir: shop.networkDir, runners: pool }, { networkDir: blog.networkDir }], { port: 0 });
     const post = (path: string, body: unknown) => fetch(`${ui!.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-    const sent = await post(`/api/tasks/${t.id}/message?project=shop`, { to: "reviewer", text: "Look at the DTO first." });
+    // always to the lead, who passes it on; "to" is not up to the page
+    const sent = await post(`/api/tasks/${t.id}/message?project=shop`, { to: "reviewer", text: "Have reviewer look at the DTO first." });
     expect(sent.status).toBe(201);
-    expect(((await sent.json()) as any).message).toMatchObject({ from: "operator", to: "reviewer", type: "INFORMATION", content: "Look at the DTO first." });
-    expect((await post(`/api/tasks/${t.id}/message?project=shop`, { to: "stranger", text: "hi" })).status).toBe(400);
-    expect((await post(`/api/tasks/${t.id}/message?project=shop`, { to: "reviewer", text: "  " })).status).toBe(400);
+    expect(((await sent.json()) as any).message).toMatchObject({
+      from: "operator", to: "backend", type: "INFORMATION",
+      content: `[From the operator to you, the lead of ${t.id}: act on it, and pass on to reviewer with send_message what they need to do. No reply needed; if you reply, use fyi: true.]\nHave reviewer look at the DTO first.`,
+    });
+    expect((await post(`/api/tasks/${t.id}/message?project=shop`, { text: "  " })).status).toBe(400);
 
     const sup = (await (await fetch(`${ui.url}/api/supervisor?project=shop`)).json()) as any;
     expect(sup).toEqual({ status: null, journal: [], journalTotal: 0 });
@@ -240,7 +243,7 @@ describe("several projects on one page", () => {
     expect((await post("/api/supervisor/start?project=shop", {})).status).toBe(404);
     expect((await post("/api/supervisor/note?project=shop", { text: "checked by hand" })).status).toBe(201); // your own note in the journal
 
-    expect((await post(`/api/tasks/${b.id}/message?project=blog`, { to: "writer", text: "hi" })).status).toBe(405);
+    expect((await post(`/api/tasks/${b.id}/message?project=blog`, { text: "hi" })).status).toBe(405);
     expect((await post("/api/supervisor/start?project=blog", {})).status).toBe(405);
     expect((await (await fetch(`${ui.url}/api/state?project=blog`)).json() as any).supervisor).toBeNull();
   });

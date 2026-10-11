@@ -1,11 +1,14 @@
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { AgentWorktree } from "../worktrees.js";
 import { AppError } from "../errors.js";
 import { parseFreshPhases } from "../handoff.js";
 import { isValidModel, runRunner, usesModel, type RunnerOptions, type RunningSession } from "../runner.js";
 import type { ActivityItem } from "../sessionOutput.js";
 import type { Phase } from "../types.js";
 import type { ModelPrice, Prices } from "../stats.js";
+import { parseCron } from "../schedule/cron.js";
 import { DEFAULT_RULES, type DetectRules } from "../supervisor/detect.js";
 import { BUILTIN_TOOLS, parseCustomTool, type CustomTool } from "../supervisor/tools.js";
 import { assertAgentId } from "../validation.js";
@@ -41,7 +44,12 @@ export interface RunnerAgentConfig {
   freshPhases?: Phase[];
   /** Start together with the UI. Default true. */
   autostart?: boolean;
+  /** Its own git worktree, created at start when missing (defaults.worktree: true and no "cwd"). */
+  worktree?: AgentWorktree;
 }
+
+/** This package's folder: "{agentNetworkMcp}" in a config means it, so the shipped examples work without editing. */
+export const PACKAGE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
  * "supervisor": the agent that looks after the others when something goes wrong (see src/supervisor). Its command is a
@@ -69,29 +77,55 @@ export interface SupervisorConfig {
   disabledTools: string[];
 }
 
+/**
+ * "schedules": tasks the page creates by itself on a cron (no model involved). A schedule whose previous task is still
+ * open (ACTIVE or BLOCKED) skips its turn. {date} and {time} in title and description become the run's date and time.
+ */
+export interface ScheduleConfig {
+  id: string;
+  /** 5-field cron in local time, or @daily, @hourly, @weekly, @weekdays... (see schedule/cron.ts). */
+  cron: string;
+  title: string;
+  description: string;
+  /** The first one is the lead; every one must be an agent of this config. */
+  agents: string[];
+  openspec?: string;
+  verifyCommand?: string;
+  maxFixRounds?: number;
+  maxFollowUps?: number;
+  /** Default true; switched on the page, written back here. */
+  enabled: boolean;
+}
+
 export interface RunnersConfig {
   networkDir?: string;
   agents: RunnerAgentConfig[];
   supervisor?: SupervisorConfig;
+  schedules?: ScheduleConfig[];
   /** Where the config came from: the UI writes the instructions file it sets back there. */
   path?: string;
   /** USD per 1M tokens per model, for sessions whose CLI reports no cost. */
   prices?: Prices;
+  /** The project: "project" in the file, else the git repository `ui` was started in. */
+  project?: string;
 }
 
 type RawAgent = Partial<RunnerAgentConfig>;
 
-export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
+export async function loadRunnersConfig(path: string, opts: { projectDir?: string } = {}): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; defaults?: RawAgent; agents?: RawAgent[]; prices?: unknown; supervisor?: unknown };
+  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown };
   try {
-    raw = JSON.parse(await readFile(file, "utf8"));
+    // {agentNetworkMcp} anywhere in the file is this package's folder
+    raw = JSON.parse((await readFile(file, "utf8")).replaceAll("{agentNetworkMcp}", PACKAGE_DIR.replaceAll("\\", "/")));
   } catch (e) {
     throw new AppError("INVALID_CONFIG", `Cannot read ${file}: ${(e as Error).message}`);
   }
   const base = dirname(file);
   const abs = (p: string) => (isAbsolute(p) ? p : resolve(base, p));
   if (!Array.isArray(raw.agents) || raw.agents.length === 0) throw new AppError("INVALID_CONFIG", `${file}: "agents" must list at least one agent`);
+  if (raw.project !== undefined && typeof raw.project !== "string") throw new AppError("INVALID_CONFIG", `${file}: "project" must be the project folder`);
+  const project = typeof raw.project === "string" ? abs(raw.project) : opts.projectDir;
   const seen = new Set<string>();
   const agents: RunnersConfig["agents"] = [];
   for (const a of raw.agents) {
@@ -114,10 +148,16 @@ export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
     for (const [what, f] of [["promptFile", promptFile], ["instructionsFile", instructionsFile], ["systemPromptFile", systemPromptFile]] as const) {
       if (f) await readFile(f, "utf8").catch((e: Error) => { throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" ${what} ${f}: ${e.message}`); });
     }
+    // defaults.worktree: an agent without "cwd" works in <project>-<id> on branch swarm-<id>, created at start
+    const wantsWorktree = (merged as { worktree?: unknown }).worktree === true && !merged.cwd;
+    if (wantsWorktree && !project) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" gets its own worktree, but the project is unknown: start ui inside the project's git repository or set "project"`);
+    const worktree: AgentWorktree | undefined = wantsWorktree ? { project: project!, branch: `swarm-${id}` } : undefined;
+    const cwd = merged.cwd ? abs(merged.cwd) : worktree ? join(dirname(worktree.project), `${basename(worktree.project)}-${id}`) : undefined;
     agents.push({
       id,
       command: merged.command,
-      ...(merged.cwd ? { cwd: abs(merged.cwd) } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(worktree ? { worktree } : {}),
       ...(promptFile ? { promptFile } : {}),
       ...(instructionsFile ? { instructionsFile } : {}),
       ...(systemPromptFile ? { systemPromptFile } : {}),
@@ -130,7 +170,63 @@ export async function loadRunnersConfig(path: string): Promise<RunnersConfig> {
   }
   const prices = parsePrices(raw.prices, file);
   const supervisor = raw.supervisor === undefined ? undefined : await parseSupervisor(raw.supervisor, file, abs);
-  return { ...(typeof raw.networkDir === "string" ? { networkDir: abs(raw.networkDir) } : {}), agents, path: file, ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}) };
+  const schedules = raw.schedules === undefined ? undefined : parseSchedules(raw.schedules, file, agents.map((a) => a.id));
+  return {
+    ...(typeof raw.networkDir === "string" ? { networkDir: abs(raw.networkDir) } : project ? { networkDir: join(project, ".agent-network") } : {}),
+    ...(project ? { project } : {}), agents, path: file,
+    ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(schedules?.length ? { schedules } : {}),
+  };
+}
+
+function parseSchedules(raw: unknown, file: string, agentIds: string[]): ScheduleConfig[] {
+  if (!Array.isArray(raw)) throw new AppError("INVALID_CONFIG", `${file}: "schedules" must be a list of {id, cron, title, description, agents}`);
+  const out: ScheduleConfig[] = [];
+  for (const [i, item] of raw.entries()) {
+    const s = (item ?? {}) as Record<string, unknown>;
+    const where = `${file}: schedules[${i}]${typeof s.id === "string" ? ` "${s.id}"` : ""}`;
+    const bad = (what: string): never => {
+      throw new AppError("INVALID_CONFIG", `${where}: ${what}`);
+    };
+    if (typeof s.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(s.id)) bad('"id": lowercase letters, digits and -, e.g. "nightly-flaky-tests"');
+    if (out.some((o) => o.id === s.id)) bad("this id is listed twice");
+    if (typeof s.cron !== "string") bad('"cron": e.g. "0 3 * * 1-5" (03:00 Mon-Fri, local time) or "@daily"');
+    try {
+      parseCron(s.cron as string);
+    } catch (e) {
+      bad((e as Error).message);
+    }
+    const openspec = typeof s.openspec === "string" && s.openspec.trim() ? s.openspec.trim() : undefined;
+    if ((typeof s.title !== "string" || !s.title.trim()) && !openspec) bad('needs "title" (or "openspec")');
+    if (s.description !== undefined && typeof s.description !== "string") bad('"description" must be text');
+    if (!Array.isArray(s.agents) || !s.agents.length || !s.agents.every((a) => typeof a === "string")) bad('"agents": the lead first, e.g. ["backend", "reviewer"]');
+    const unknown = (s.agents as string[]).filter((a) => !agentIds.includes(a));
+    if (unknown.length) bad(`agents ${unknown.join(", ")} are not agents of this config (${agentIds.join(", ")}): nobody would pick the task up`);
+    for (const k of ["maxFixRounds", "maxFollowUps"] as const) {
+      if (s[k] !== undefined && (typeof s[k] !== "number" || !Number.isInteger(s[k]) || (s[k] as number) < 0)) bad(`"${k}" must be a whole number >= 0`);
+    }
+    out.push({
+      id: s.id as string,
+      cron: s.cron as string,
+      title: typeof s.title === "string" ? s.title.trim() : "",
+      description: typeof s.description === "string" ? s.description : "",
+      agents: s.agents as string[],
+      ...(openspec ? { openspec } : {}),
+      ...(typeof s.verifyCommand === "string" && s.verifyCommand.trim() ? { verifyCommand: s.verifyCommand } : {}),
+      ...(s.maxFixRounds !== undefined ? { maxFixRounds: s.maxFixRounds as number } : {}),
+      ...(s.maxFollowUps !== undefined ? { maxFollowUps: s.maxFollowUps as number } : {}),
+      enabled: s.enabled !== false,
+    });
+  }
+  return out;
+}
+
+/** Switch one schedule on or off in the JSON config, keeping everything else. */
+export async function saveScheduleEnabled(configPath: string, id: string, enabled: boolean): Promise<void> {
+  const raw = JSON.parse(await readFile(configPath, "utf8")) as { schedules?: Record<string, unknown>[] };
+  const s = raw.schedules?.find((x) => x.id === id);
+  if (!s) return;
+  s.enabled = enabled;
+  await writeConfig(configPath, raw);
 }
 
 async function parseSupervisor(raw: unknown, file: string, abs: (p: string) => string): Promise<SupervisorConfig> {
@@ -290,7 +386,15 @@ interface Managed {
   partial: string;
   session: RunningSession | null;
   events: ActivityEvent[];
+  /** Urgent messages from the operator for the next session, and how to stop the current one. */
+  urgent: string[];
+  stopSession: (() => void) | null;
+  /** An interrupt waits for the tool call in flight to finish (not mid-write), at most a while. */
+  interruptAt: number | null;
 }
+
+/** How long an interrupt waits for the tool call in flight before stopping the session anyway. */
+const INTERRUPT_WAIT_MS = 90_000;
 
 /** The runners the UI process owns: start/stop per agent, a log tail of the runner and its sessions. */
 export class RunnerPool {
@@ -304,7 +408,7 @@ export class RunnerPool {
     agents: RunnersConfig["agents"],
     private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string } = {},
   ) {
-    for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [] });
+    for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [], urgent: [], stopSession: null, interruptAt: null });
   }
 
   ids(): string[] {
@@ -393,6 +497,7 @@ export class RunnerPool {
   }
 
   private record(m: Managed, item: ActivityItem): void {
+    if (m.interruptAt !== null && item.kind === "tool_result") queueMicrotask(() => this.interruptNow(m)); // the call in flight is done
     this.append(m.events, { ...item, seq: ++this.seq, at: new Date().toISOString(), agentId: m.config.id, ...(m.session ? { taskId: m.session.taskId, attempt: m.session.attempt } : {}) });
   }
 
@@ -434,6 +539,17 @@ export class RunnerPool {
         m.session = session;
       },
       onActivity: (e) => this.record(m, e),
+      urgent: {
+        take: () => {
+          const text = m.urgent.splice(0).join("\n\n");
+          return text || undefined;
+        },
+        attach: (stop) => {
+          m.stopSession = stop;
+          if (!stop) m.interruptAt = null;
+          else if (m.urgent.length) this.interruptNow(m); // it came while no session ran: the next one starts with it anyway
+        },
+      },
       ...(m.config.maxRestarts !== undefined ? { maxRestarts: m.config.maxRestarts } : {}),
       ...(m.config.freshPhases ? { freshPhases: m.config.freshPhases } : {}),
       signal: controller.signal,
@@ -448,6 +564,37 @@ export class RunnerPool {
       m.stoppedAt = new Date().toISOString();
     });
     return this.view(id);
+  }
+
+  /**
+   * The operator's urgent message: stop the agent's current session as soon as its tool call in flight is done (never
+   * in the middle of one, at most INTERRUPT_WAIT_MS), and start the next session with the message first. Returns what
+   * happens: "now" (stopped), "after-tool" (stops when the call in flight ends), "next-session" (no session runs now;
+   * the next one starts with it), "not-running" (the runner is stopped: the message waits in pendingMessages).
+   */
+  interrupt(id: string, text: string): "now" | "after-tool" | "next-session" | "not-running" {
+    const m = this.get(id);
+    if (!m.controller) return "not-running";
+    m.urgent.push(text);
+    if (!m.stopSession) return "next-session";
+    const last = [...m.events].reverse().find((e) => e.kind === "tool_use" || e.kind === "tool_result");
+    if (last?.kind === "tool_use") {
+      m.interruptAt = Date.now() + INTERRUPT_WAIT_MS;
+      this.say(m, "[ui] urgent message from the operator: the session stops when its current tool call ends");
+      setTimeout(() => {
+        if (m.interruptAt !== null && Date.now() >= m.interruptAt) this.interruptNow(m);
+      }, INTERRUPT_WAIT_MS + 50);
+      return "after-tool";
+    }
+    this.interruptNow(m);
+    return "now";
+  }
+
+  private interruptNow(m: Managed): void {
+    m.interruptAt = null;
+    if (!m.stopSession) return;
+    this.say(m, "[ui] urgent message from the operator: stopping the session; the next one starts with it");
+    m.stopSession();
   }
 
   async stop(id: string): Promise<RunnerView> {

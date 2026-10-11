@@ -5,7 +5,8 @@
 // (writes the server's handoff marker), sessions from attempt N finish it (0 = never); "block:N" = the first session
 // leaves the task BLOCKED, sessions from attempt N finish it; "turns:N" = sessions before attempt N tick a subtask and stop
 // at the turn limit (stream-json result error_max_turns), from attempt N they finish it; "turns-idle:N" = the same
-// without touching anything (no progress)> [prompt and other args...]
+// without touching anything (no progress); "busy:N" = sessions before attempt N make one tool call and keep working until
+// stopped, from attempt N they finish it> [prompt and other args...]
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -53,9 +54,16 @@ if (/^turns(-idle)?:/.test(finishArg) && attempt < Number(finishArg.split(":")[1
   process.stdout.write(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 3, usage: { input_tokens: 10, output_tokens: 1 } }) + "\n");
   process.exit(1);
 }
-const finishOn = Number(finishArg.replace(/^(handoff|block|turns|turns-idle|turns-files):/, ""));
+if (finishArg.startsWith("busy:") && attempt < Number(finishArg.split(":")[1])) {
+  // a session at work: one tool call done, then it keeps going until it is stopped (an urgent message interrupts it)
+  process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "./mvnw -q test" } }] } }) + "\n");
+  process.stdout.write(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "Tests run: 3" }] } }) + "\n");
+  setInterval(() => {}, 1e9);
+} else {
+const finishOn = Number(finishArg.replace(/^(handoff|block|turns|turns-idle|turns-files|busy):/, ""));
 if (finishOn > 0 && attempt >= finishOn) {
   finish(taskId);
   process.exit(0);
 }
 process.exit(3);
+}

@@ -91,6 +91,12 @@ Rules:
   in the question: with no answer in 10 minutes the server tells you to go ahead with it; do so and tell the other agents
   (`send_message`) and your `result`. A later answer still arrives in `pendingMessages`.
 - Anything only a human can decide (requirements, scope, an irreversible action) goes to the user the same way.
+- Subagents: a bounded side job (search or read across many files, why one test fails, a review of your diff) may go to
+  a subagent with read-only tools (the runner examples define `helper`). Only you talk to the swarm: a subagent never
+  calls the agent-network tools, so not `general-purpose`, which would inherit them.
+- Not a question? A reply to the operator's message, an "understood", a status it asked for: `send_message({to:
+  "operator", message, fyi: true})`. It is shown to the operator for information, needs no answer and does not hold
+  you. Send it only when the operator should know; a plain acknowledgement is usually not needed at all.
 - When the environment stops you (a command is refused, a process hangs, a service or port cannot be reached) and two
   attempts did not help, stop retrying and never work around a refusal: ask the operator with `send_message` (what is
   stuck, what you tried, what you need, the option you will take otherwise) and go on with what does not depend on it.

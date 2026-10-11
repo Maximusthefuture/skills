@@ -28,7 +28,7 @@ export interface SupervisorServerOptions {
 
 export const SUPERVISOR_INSTRUCTIONS =
   "You are the supervisor of an agent-network swarm: the operator's deputy. Start with overview, then look into the incidents of your task. " +
-  "Fix what is mechanical yourself (answer process questions, free a hung test, explain a refused command to the agent, give a stuck fix one more round or to the lead) and tell the agents what you did with message_agent. " +
+  "Fix what is mechanical yourself (answer process questions, free a hung test, explain a refused command, give a stuck fix one more round or to the lead) and tell the task's lead what you did with message_lead: the lead passes it on to the agents it concerns. " +
   "What only the human can decide (requirements, scope, design, cancelling, anything irreversible) goes to escalate with your recommendation. Record every finding with note.";
 
 export function supervisorOptionsFromEnv(env: NodeJS.ProcessEnv): SupervisorServerOptions {
@@ -67,7 +67,7 @@ export function createSupervisorServer(o: SupervisorServerOptions): McpServer {
     if (!res.ok) throw new AppError(json.error ?? "INVALID_INPUT", json.message ?? `${method} ${path}: ${res.status}`);
     return json;
   };
-  const note = (kind: "note" | "action" | "needs-you", text: string, taskId?: string) => api("POST", "/api/supervisor/note", { kind, text, ...(taskId ? { taskId } : {}) });
+  const note = (kind: "note" | "action" | "needs-you", text: string, taskId?: string, messageId?: string) => api("POST", "/api/supervisor/note", { kind, text, ...(taskId ? { taskId } : {}), ...(messageId ? { messageId } : {}) });
   const state = () => api("GET", "/api/state");
   const task = async (taskId: string) => {
     const t = ((await state()).tasks as Json[]).find((x) => x.id === taskId);
@@ -126,7 +126,7 @@ export function createSupervisorServer(o: SupervisorServerOptions): McpServer {
 
   tool("answer_question", "Answer a question an agent asked the operator, when it is a process or technical question you can answer. Requirements and scope go to escalate.", { taskId: z.string(), messageId: z.string(), answer: z.string() }, async (a) => (await api("POST", "/api/questions/answer", a)).answer);
 
-  tool("message_agent", "Tell an agent of a task what you found and what to do (it gets it as a message from the operator, also while busy).", { taskId: z.string(), to: z.string().describe("agent id"), text: z.string() }, async ({ taskId, to, text }) => (await api("POST", `/api/tasks/${encodeURIComponent(taskId)}/message`, { to, text })).message);
+  tool("message_lead", "Tell the lead of a task what you found and what to do; the lead acts on it and passes on to the agents it concerns (it gets it as a message from the operator, also while busy). Name the agent it is about in the text.", { taskId: z.string(), text: z.string() }, async ({ taskId, text }) => (await api("POST", `/api/tasks/${encodeURIComponent(taskId)}/message`, { text })).message);
 
   tool("unblock", "Give a BLOCKED task more fix rounds (1..3) when another try is likely to work.", { taskId: z.string(), rounds: z.number().int().min(1).max(3).optional() }, async ({ taskId, rounds }) => {
     const t = (await api("POST", `/api/tasks/${encodeURIComponent(taskId)}/unblock`, { rounds: rounds ?? 1 })).task as Json;
@@ -140,15 +140,18 @@ export function createSupervisorServer(o: SupervisorServerOptions): McpServer {
 
   tool("note", "Record what you found or decided in your journal on the page (short, concrete).", { text: z.string(), taskId: z.string().optional() }, async ({ text, taskId }) => (await note("note", text, taskId)).entry);
 
-  tool("escalate", "Hand a decision only the human can take to the operator, with your recommendation; it stays on the page until they look.", { taskId: z.string(), question: z.string(), recommendation: z.string() }, async ({ taskId, question, recommendation }) =>
-    (await note("needs-you", `${question}\nRecommendation: ${recommendation}`, taskId)).entry,
+  tool(
+    "escalate",
+    "Hand a decision only the human can take to the operator, with your recommendation; it stays on the page until they look. When it is about an agent's question to the operator, give its messageId: marking the decision done closes that question too.",
+    { taskId: z.string(), question: z.string(), recommendation: z.string(), messageId: z.string().optional().describe("the agent's question (msg-NNN) this decision answers, if any") },
+    async ({ taskId, question, recommendation, messageId }) => (await note("needs-you", `${question}\nRecommendation: ${recommendation}`, taskId, messageId)).entry,
   );
 
   tool("processes", "Test JVMs (surefire, maven) running in the agents' folders, with how long they run.", {}, async () => (await listProcesses(o.folders, exec)).map((p) => ({ pid: p.pid, agentId: p.agentId, minutes: Math.round(p.elapsedSec / 60), command: short(p.command, 300) })));
 
   tool("thread_dump", "jstack of one test JVM from processes, cut to the main thread and the threads in project or test code: shows where a test hangs.", { pid: z.number().int() }, async ({ pid }) => threadDump(pid, o.folders, exec));
 
-  tool("kill_test", "End a hung test JVM from processes (SIGTERM, then SIGKILL): the agent's test run fails instead of hanging. Tell the agent why with message_agent.", { pid: z.number().int(), reason: z.string() }, async ({ pid, reason }) => {
+  tool("kill_test", "End a hung test JVM from processes (SIGTERM, then SIGKILL): the agent's test run fails instead of hanging. Tell the lead which agent's test it was and why with message_lead.", { pid: z.number().int(), reason: z.string() }, async ({ pid, reason }) => {
     const res = await killTest(pid, o.folders, exec);
     await note("action", `killed test process ${pid} of ${res.agentId} (${res.killed}): ${reason}`);
     return res;

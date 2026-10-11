@@ -35,6 +35,23 @@ describe("SessionOutput", () => {
     expect(out.sessionId()).toBe("ae13-7d02"); // Claude Code keeps its transcript under this id
   });
 
+  it("a subagent's work is marked as such in the feed and kept out of the session's own log", () => {
+    const events: ActivityItem[] = [];
+    const out = new SessionOutput((e) => events.push(e));
+    const send = (o: unknown) => out.feed(`${JSON.stringify(o)}\n`);
+    send({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "a1", name: "Agent", input: { subagent_type: "helper", description: "Why OrderServiceTest fails", prompt: "..." } }] } });
+    expect(out.feed(`${JSON.stringify({ type: "assistant", parent_tool_use_id: "a1", message: { content: [{ type: "text", text: "Reading the report." }, { type: "tool_use", id: "r1", name: "Read", input: { file_path: "/x/target/surefire-reports/OrderServiceTest.txt" } }] } })}\n`)).toBe("");
+    send({ type: "user", parent_tool_use_id: "a1", message: { content: [{ type: "tool_result", tool_use_id: "r1", content: "Tests run: 9, Errors: 1" }] } });
+    send({ type: "user", parent_tool_use_id: null, message: { content: [{ type: "tool_result", tool_use_id: "a1", content: "Duplicate key: a row left by another class." }] } });
+    expect(events.map((e) => [e.kind, e.tool ?? null, e.sub ?? false, e.summary])).toEqual([
+      ["tool_use", "Agent", false, "helper: Why OrderServiceTest fails"],
+      ["text", null, true, "Reading the report."],
+      ["tool_use", "Read", true, "/x/target/surefire-reports/OrderServiceTest.txt"],
+      ["tool_result", "Read", true, "Tests run: 9, Errors: 1"],
+      ["tool_result", "Agent", false, "Duplicate key: a row left by another class."],
+    ]);
+  });
+
   it("a JSON tool result (MCP) is summed up on one line, not as its first line \"{\"", () => {
     const events: ActivityItem[] = [];
     const out = new SessionOutput((e) => events.push(e));

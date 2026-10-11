@@ -10,6 +10,7 @@ import { AgentStore } from "../../src/stores/agentStore.js";
 import { MessageStore } from "../../src/stores/messageStore.js";
 import { SessionStore } from "../../src/stores/sessionStore.js";
 import { TaskStore } from "../../src/stores/taskStore.js";
+import { RunnerPool } from "../../src/ui/runners.js";
 import { tmpDir } from "../helpers/tmp.js";
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), "..", "helpers", "fakeAgent.mjs");
@@ -48,7 +49,8 @@ const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function start(networkDir: string, command: string[], extra: Partial<RunnerOptions> = {}) {
   const controller = new AbortController();
   const lines: string[] = [];
-  const done = runRunner({ agent: "backend", networkDir, command, pollMs: 15, restartDelayMs: 10, stdio: "ignore", signal: controller.signal, log: (l) => lines.push(l), ...extra });
+  // the agent's folder: the network's parent (a temp dir), not this repository, whose git status is slow under load
+  const done = runRunner({ agent: "backend", networkDir, command, pollMs: 15, restartDelayMs: 10, stdio: "ignore", signal: controller.signal, log: (l) => lines.push(l), cwd: dirname(networkDir), ...extra });
   return { lines, done, stop: async () => (controller.abort(), done) };
 }
 
@@ -317,3 +319,22 @@ describe("agent runner", () => {
     expect(await runCli(["run", "--agent", "b", "--network-dir", s.networkDir, "--poll-ms", "1", "--", "x"], {}, (l) => out.push(l))).toBe(1);
   });
 });
+
+describe("urgent message from the operator", () => {
+  it("stops the session at a tool boundary and starts the next one with the message first; no failed attempt", async () => {
+    const s = await setup();
+    const task = await s.newTask("t");
+    const pool = new RunnerPool(s.networkDir, [{ id: "backend", command: [process.execPath, FAKE, s.log, "busy:2", "{prompt}"], cwd: dirname(s.networkDir), autostart: true }] as never, {});
+    expect(pool.interrupt("backend", "Commit now.")).toBe("not-running");
+    pool.start("backend");
+    await until(() => s.launches().length === 1 && pool.activity(0, 100, "backend").some((e) => e.kind === "tool_result"), "the first session at work");
+    expect(pool.interrupt("backend", "Commit what is green now.")).toBe("now"); // no tool call in flight
+    await until(async () => (await s.tasks.get(task.id)).status === "COMPLETED", "the second session", 10_000);
+    const [first, second] = s.launches();
+    expect(first!.args.join(" ")).not.toContain("URGENT");
+    expect(second!.args.join(" ")).toContain("URGENT FROM THE OPERATOR — your previous session was stopped so that you read this first:\nCommit what is green now.");
+    expect(pool.log("backend").join("\n")).toContain("stopped for the operator's urgent message");
+    await pool.stopAll();
+  });
+});
+

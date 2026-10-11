@@ -212,6 +212,8 @@ export interface Message {
   files?: string[];
   createdAt: string;
   readAt?: string;
+  /** The operator sent it urgently: the agent's session was stopped and the next one started with it. */
+  urgent?: true;
 }
 
 export const EVENT_TYPES = [

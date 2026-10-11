@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isHandedOver } from "./handoff.js";
-import { progressMark } from "./progress.js";
+import { progressMark, uncommittedCount, workBrief } from "./progress.js";
 import { NetworkService } from "./service.js";
 import { SessionOutput, type ActivityItem, type SessionResult } from "./sessionOutput.js";
 import { FileStore } from "./storage/fileStore.js";
@@ -33,6 +33,21 @@ const RESUME =
   " This is session {attempt} for this task: the previous one ended before the task was done. " +
   "Call swarm_context to see where the task stands (your 'subtasks' show which steps are already done); do not redo work that is already committed or reported.";
 
+/**
+ * How the operator reaches an agent at once (Claude and Qwen alike): the runner stops the session the agent is in and
+ * starts a fresh one whose prompt begins with the message. The page owns it (RunnerPool.interrupt).
+ */
+export interface UrgentChannel {
+  /** The urgent message(s) for the next session, taken once. */
+  take(): string | undefined;
+  /** The runner hands over how to stop the session it runs now (null between sessions). */
+  attach(stop: (() => void) | null): void;
+}
+
+export const URGENT =
+  "URGENT FROM THE OPERATOR — your previous session was stopped so that you read this first:\n{message}\n" +
+  "Act on it first (it is also in pendingMessages), then go on with the task as usual.\n\n";
+
 const HANDOFF =
   " This is a fresh session for phase {phase}: the previous session handed the task over when the phase changed. " +
   "You have not seen the earlier discussion, on purpose: work from swarm_context (the task and the agreement) and the code, not from what the others say they did.";
@@ -40,7 +55,7 @@ const HANDOFF =
 const TURN_LIMIT =
   " The previous session for this task reached its turn limit in the middle of the work: sessions are kept short on purpose, " +
   "because the whole context is read again on every turn. Call swarm_context (your 'subtasks' show what is done and what is in progress), " +
-  "run git status and git diff to see changes that are not committed yet, and go on from there without redoing finished steps.";
+  "look at the state of your folder at the end of this prompt (read the diff only of the files you need), and go on from there without redoing finished steps.";
 
 export interface PromptVars {
   agent: string;
@@ -51,13 +66,22 @@ export interface PromptVars {
   handoff?: Phase;
   /** The previous session ended at its turn limit after making progress. */
   afterTurnLimit?: boolean;
+  /** Files changed and not committed in the agent's folder, when that many that a fresh session should commit first. */
+  uncommitted?: number;
 }
+
+/** From this many uncommitted files on, a session after the turn limit is told to commit first. */
+export const COMMIT_FIRST_AT = 8;
 
 export function renderPrompt(template: string, v: PromptVars): string {
   const resume = v.handoff
     ? HANDOFF.replaceAll("{phase}", v.handoff)
     : v.afterTurnLimit
-      ? TURN_LIMIT
+      ? TURN_LIMIT +
+        (v.uncommitted
+          ? ` ${v.uncommitted} files are changed and not committed: first commit what already works (a work-in-progress commit is fine), ` +
+            "then go on and commit after every subtask that turns green. Every fresh session then starts from git log instead of a long diff."
+          : "")
       : v.attempt > 1
         ? RESUME.replaceAll("{attempt}", String(v.attempt))
         : "";
@@ -165,6 +189,8 @@ export interface RunnerOptions {
   onSession?: (session: RunningSession | null) => void;
   /** The sessions' activity as it comes (tool calls, results, text): the activity feed on the page. */
   onActivity?: (e: ActivityItem) => void;
+  /** The operator's urgent messages: interrupt the current session and start the next one with the message first. */
+  urgent?: UrgentChannel;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -338,10 +364,21 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const handoff = handedTo.get(task.id);
     handedTo.delete(task.id);
     const afterTurnLimit = turnLimited.delete(task.id);
-    const vars = { agent, taskId: task.id, title: task.title, attempt, ...(handoff ? { handoff } : {}), ...(afterTurnLimit ? { afterTurnLimit } : {}) };
+    // a long uncommitted diff costs every fresh session many turns of finding its bearings: commit first
+    const uncommitted = afterTurnLimit ? await uncommittedCount(opts.cwd) : 0;
+    const vars = {
+      agent, taskId: task.id, title: task.title, attempt, ...(handoff ? { handoff } : {}), ...(afterTurnLimit ? { afterTurnLimit } : {}),
+      ...(uncommitted >= COMMIT_FIRST_AT ? { uncommitted } : {}),
+    };
     const template = (opts.promptFile ? await readText(opts.promptFile, "prompt file", log) : undefined) ?? opts.promptTemplate ?? DEFAULT_PROMPT;
     const instructions = opts.instructionsFile ? await readText(opts.instructionsFile, "instructions file", log) : undefined;
-    const prompt = withInstructions(renderPrompt(template, vars), instructions, vars);
+    const urgent = opts.urgent?.take();
+    // where the work stands on disk, so the session does not spend its first turns (and context) on git log and status
+    const brief = await workBrief(opts.cwd).catch(() => "");
+    const prompt =
+      (urgent ? URGENT.replace("{message}", urgent) : "") +
+      withInstructions(renderPrompt(template, vars), instructions, vars) +
+      (brief ? `\n\nYour folder right now (from the runner, no need to run git log or git status for this):\n${brief}` : "");
     const env = {
       ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt), AGENT_NETWORK_RUNNER: "1",
       ...(freshPhases.length ? { AGENT_NETWORK_FRESH_PHASES: freshPhases.join(",") } : {}),
@@ -355,7 +392,18 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const wantsSystem = opts.command.some((a) => a.includes("{systemPrompt}"));
     const systemText = wantsSystem ? (opts.systemPromptFile ? await readText(opts.systemPromptFile, "system prompt file", log) : undefined) : undefined;
     const system = wantsSystem ? renderPrompt(systemText?.trim() || FALLBACK_SYSTEM_PROMPT, vars) : undefined;
-    const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal, opts.onActivity);
+    // its own stop, so that an urgent message ends this session without stopping the runner
+    const session = new AbortController();
+    const stopAll = () => session.abort();
+    signal?.addEventListener("abort", stopAll, { once: true });
+    let interrupted = false;
+    opts.urgent?.attach(() => {
+      interrupted = true;
+      session.abort();
+    });
+    const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal?.aborted ? signal : session.signal, opts.onActivity);
+    opts.urgent?.attach(null);
+    signal?.removeEventListener("abort", stopAll);
     const endedAt = new Date();
     opts.onSession?.(null);
     // a session stopped by its turn limit after doing something is a planned end (short sessions keep the context small)
@@ -376,6 +424,12 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       })
       .catch((e: Error) => log(`cannot record the session: ${e.message}`));
     if (signal?.aborted) break;
+    if (interrupted) {
+      // the operator's urgent message: a planned end, the next session starts at once with the message first
+      plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
+      say(`${task.id}: session ${attempt} stopped for the operator's urgent message; a fresh session starts with it`);
+      continue;
+    }
 
     const after = await tasks.find(task.id);
     if (!after || isFinished(after)) {

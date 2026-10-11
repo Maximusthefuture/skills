@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AppError } from "../errors.js";
 import { progressMark } from "../progress.js";
 import { buildArgv, FALLBACK_SYSTEM_PROMPT, isValidModel, runSession, usesModel, withModel, type SessionRun } from "../runner.js";
@@ -14,7 +16,7 @@ import { TaskStore } from "../stores/taskStore.js";
 import type { RunnerPool, SupervisorConfig } from "../ui/runners.js";
 import { loadRunnersConfig, saveSupervisorField } from "../ui/runners.js";
 import { BUILTIN_DESCRIPTIONS, BUILTIN_TOOLS } from "./tools.js";
-import { detect, emptyMemory, testProcesses, type DetectMemory, type Incident, type Snapshot } from "./detect.js";
+import { DEFAULT_RULES, detect, emptyMemory, testProcesses, type DetectMemory, type Incident, type Snapshot } from "./detect.js";
 import { Journal } from "./journal.js";
 import { claudeTranscript, SessionLog } from "./sessionLog.js";
 
@@ -33,6 +35,8 @@ export interface SupervisorOptions {
   configPath?: string;
   /** The project's token prices, for CLIs that report no cost (Qwen, local models). */
   prices?: () => Promise<{ prices?: Prices }>;
+  /** Where its CLI sessions run; default: its own folder under the system temp dir, outside the project. */
+  cwd?: string;
   /** How often the detector looks. Default 10 s. */
   pollMs?: number;
   /** Tests: replace the CLI session, `ps` and the clock. */
@@ -80,9 +84,23 @@ export class Supervisor {
   private enabled = false;
   private timer?: NodeJS.Timeout;
   private ticking?: Promise<void>;
-  private current: { startedAt: string; incidents: string[]; model?: string; controller: AbortController; done: Promise<void> } | null = null;
+  private current: { startedAt: string; incidents: string[]; checkIns: Incident[]; model?: string; controller: AbortController; done: Promise<void> } | null = null;
   private held: string | null = null;
   private configError: string | null = null;
+  /** Changes made on the page: while one is being written, and for a read that overlapped one, the file is not re-read. */
+  private edits = 0;
+  private editing = 0;
+
+  /** Runs a change made on the page so that no re-read of the file overlaps it (it would bring the old value back). */
+  private async edit<T>(change: () => Promise<T>): Promise<T> {
+    this.editing++;
+    try {
+      return await change();
+    } finally {
+      this.editing--;
+      this.edits++;
+    }
+  }
   private lines: string[] = [];
   private partial = "";
   private uiUrl?: string;
@@ -137,24 +155,67 @@ export class Supervisor {
 
   /** Switch one of its tools on or off from the next session; written back to the config file ("disabledTools"). */
   async setToolEnabled(name: string, enabled: boolean): Promise<SupervisorStatus> {
-    const cfg = this.opts.config;
-    const known = [...BUILTIN_TOOLS, ...cfg.tools.map((t) => t.name)] as string[];
-    if (!known.includes(name)) throw new AppError("INVALID_INPUT", `No supervisor tool "${name}" (tools: ${known.join(", ")})`);
-    cfg.disabledTools = enabled ? cfg.disabledTools.filter((n) => n !== name) : [...new Set([...cfg.disabledTools, name])];
-    if (this.opts.configPath) await saveSupervisorField(this.opts.configPath, "disabledTools", cfg.disabledTools);
-    this.say(`[supervisor] tool ${name}: ${enabled ? "on" : "off"} (applies from the next session)`);
-    return this.statusNow();
+    return this.edit(async () => {
+      const cfg = this.opts.config;
+      const known = [...BUILTIN_TOOLS, ...cfg.tools.map((t) => t.name)] as string[];
+      if (!known.includes(name)) throw new AppError("INVALID_INPUT", `No supervisor tool "${name}" (tools: ${known.join(", ")})`);
+      cfg.disabledTools = enabled ? cfg.disabledTools.filter((n) => n !== name) : [...new Set([...cfg.disabledTools, name])];
+      if (this.opts.configPath) await saveSupervisorField(this.opts.configPath, "disabledTools", cfg.disabledTools);
+      this.say(`[supervisor] tool ${name}: ${enabled ? "on" : "off"} (applies from the next session)`);
+      return this.statusNow();
+    });
+  }
+
+  /** Thresholds of the detector (DetectRules), checked and written back to the config file; the next look uses them. */
+  async setRules(raw: unknown): Promise<SupervisorStatus> {
+    return this.edit(async () => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new AppError("INVALID_INPUT", "rules must be an object, e.g. {\"checkInMin\": 10}");
+      const rules = { ...this.opts.config.rules };
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        if (!(k in DEFAULT_RULES)) throw new AppError("INVALID_INPUT", `Unknown rule "${k}" (${Object.keys(DEFAULT_RULES).join(", ")})`);
+        if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) throw new AppError("INVALID_INPUT", `rules.${k} must be a number > 0`);
+        rules[k as keyof typeof rules] = v;
+      }
+      this.opts.config.rules = rules;
+      if (this.opts.configPath) await saveSupervisorField(this.opts.configPath, "rules", rules);
+      this.say(`[supervisor] rules: ${Object.entries(rules).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+      return this.statusNow();
+    });
+  }
+
+  /** Sessions an hour and USD a day (null = no budget), checked and written back to the config file; applies at once. */
+  async setLimits(raw: { maxSessionsPerHour?: unknown; budgetUsd?: unknown }): Promise<SupervisorStatus> {
+    return this.edit(async () => {
+      const cfg = this.opts.config;
+      if (raw.maxSessionsPerHour !== undefined) {
+        const n = raw.maxSessionsPerHour;
+        if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 100) throw new AppError("INVALID_INPUT", "maxSessionsPerHour must be a whole number 1..100");
+        cfg.maxSessionsPerHour = n;
+        if (this.opts.configPath) await saveSupervisorField(this.opts.configPath, "maxSessionsPerHour", n);
+      }
+      if (raw.budgetUsd !== undefined) {
+        const b = raw.budgetUsd;
+        if (b !== null && (typeof b !== "number" || !Number.isFinite(b) || b < 0)) throw new AppError("INVALID_INPUT", "budgetUsd must be a number >= 0, or null for no budget");
+        if (b === null) delete cfg.budgetUsd;
+        else cfg.budgetUsd = b;
+        if (this.opts.configPath) await saveSupervisorField(this.opts.configPath, "budgetUsd", b);
+      }
+      this.say(`[supervisor] limits: ${cfg.maxSessionsPerHour} sessions an hour, ${cfg.budgetUsd === undefined ? "no budget" : `$${cfg.budgetUsd} a day`}`);
+      return this.statusNow();
+    });
   }
 
   /** The model of the next session; written back to the config file. */
   async setModel(raw: string): Promise<SupervisorStatus> {
-    const model = raw.trim();
-    if (!usesModel(this.opts.config.command)) throw new AppError("INVALID_INPUT", 'The supervisor command has no {model}: put "{model}" where it names the model and set "model"');
-    if (!isValidModel(model)) throw new AppError("INVALID_INPUT", `Not a model name: ${JSON.stringify(raw)} (no spaces, not starting with "-")`);
-    this.opts.config.model = model;
-    if (this.opts.configPath) await saveSupervisorField(this.opts.configPath, "model", model);
-    this.say(`[supervisor] model: ${model}${this.current ? " (applies from the next session)" : ""}`);
-    return this.statusNow();
+    return this.edit(async () => {
+      const model = raw.trim();
+      if (!usesModel(this.opts.config.command)) throw new AppError("INVALID_INPUT", 'The supervisor command has no {model}: put "{model}" where it names the model and set "model"');
+      if (!isValidModel(model)) throw new AppError("INVALID_INPUT", `Not a model name: ${JSON.stringify(raw)} (no spaces, not starting with "-")`);
+      this.opts.config.model = model;
+      if (this.opts.configPath) await saveSupervisorField(this.opts.configPath, "model", model);
+      this.say(`[supervisor] model: ${model}${this.current ? " (applies from the next session)" : ""}`);
+      return this.statusNow();
+    });
   }
 
   /** One look: snapshot, new incidents into the journal and the queue, maybe a session. Public for tests. */
@@ -162,7 +223,9 @@ export class Supervisor {
     await this.reloadConfig(); // rules, limits and tools apply without a restart
     const state = await this.load();
     const fs = await this.fs;
-    const incidents = detect(await this.snapshot(fs), state, this.opts.config.rules);
+    // one check-in per agent at a time: while one waits in the queue or is being looked at, the next minutes add nothing
+    const checking = new Set([...this.queue, ...(this.current?.checkIns ?? [])].filter((i) => i.kind === "check-in").map((i) => `${i.agentId}:${i.taskId}`));
+    const incidents = detect(await this.snapshot(fs), state, this.opts.config.rules).filter((i) => i.kind !== "check-in" || !checking.has(`${i.agentId}:${i.taskId}`));
     for (const i of incidents) {
       state.handled[i.key] = new Date(this.now).toISOString();
       this.queue.push(i);
@@ -198,7 +261,7 @@ export class Supervisor {
     const done = this.session(fs, incidents, model, controller.signal, startedAt).finally(() => {
       this.current = null;
     });
-    this.current = { startedAt: startedAt.toISOString(), incidents: incidents.map((i) => i.key), ...(model ? { model } : {}), controller, done };
+    this.current = { startedAt: startedAt.toISOString(), incidents: incidents.map((i) => i.key), checkIns: incidents.filter((i) => i.kind === "check-in"), ...(model ? { model } : {}), controller, done };
   }
 
   private async session(fs: FileStore, incidents: Incident[], model: string | undefined, signal: AbortSignal, startedAt: Date): Promise<void> {
@@ -225,7 +288,10 @@ export class Supervisor {
     this.say(`[supervisor] session for ${incidents.length} incident(s): ${incidents.map((i) => i.kind).join(", ")}${model ? ` (model ${model})` : ""}`);
     const run = this.opts.run ?? ((a, e, c, sink, sig, ev) => runSession(a, e, c, sink, sig, ev));
     const taskOf = incidents.find((i) => i.taskId)?.taskId;
-    const cwd = dirname(this.opts.networkDir);
+    // its own empty folder, not the project: a CLI started in the project would load the project's CLAUDE.md, hooks and
+    // settings, which are written for the agents (in a live run the critic gate made the supervisor ask for pre-mortems)
+    const cwd = this.opts.cwd ?? join(tmpdir(), "agent-network-supervisor", createHash("sha1").update(this.opts.networkDir).digest("hex").slice(0, 12));
+    await mkdir(cwd, { recursive: true }).catch(() => undefined);
     // the whole session on disk (prompt, every call and result, its text): what it did and why, for later analysis
     const log = await SessionLog.create(this.opts.networkDir).catch((e: Error) => {
       this.say(`[supervisor] cannot write the session log: ${e.message}`);
@@ -288,9 +354,11 @@ export class Supervisor {
   /** The "supervisor" section of the config file as it is now; a broken file keeps the last good one and says so. */
   private async reloadConfig(): Promise<void> {
     if (!this.opts.configPath) return;
+    if (this.editing) return;
+    const before = this.edits;
     try {
       const fresh = (await loadRunnersConfig(this.opts.configPath)).supervisor;
-      if (fresh) Object.assign(this.opts.config, fresh);
+      if (fresh && this.edits === before && !this.editing) Object.assign(this.opts.config, fresh); // a page edit overlapped the read: keep it
       this.configError = null;
     } catch (e) {
       const message = (e as Error).message;
@@ -316,12 +384,13 @@ export class Supervisor {
         ...(r.session || open.some((t) => t.agents.includes(r.id)) ? { task: r.session?.taskId ?? open.find((t) => t.agents.includes(r.id))!.id } : {}),
         session: r.session ? { taskId: r.session.taskId, attempt: r.session.attempt, startedAt: r.session.startedAt } : null,
         log: this.opts.pool.log(r.id).slice(-80),
+        results: this.opts.pool.activity(0, 200, r.id).filter((e) => e.kind === "tool_result").slice(-30).map((e) => ({ at: e.at, ...(e.tool ? { tool: e.tool } : {}), ...(e.isError ? { isError: true } : {}), summary: e.summary })),
         ...(r.session ? { progress: await progressMark(fs, r.session.taskId, r.id, r.cwd ?? undefined).catch(() => "") } : {}),
       })),
     );
     const folders = runners.filter((r) => r.cwd).map((r) => ({ agentId: r.id, cwd: r.cwd! }));
     const processes = folders.length ? testProcesses(await (this.opts.ps ?? ps)(), folders) : [];
-    return { now: this.now, tasks: tasks.map((t) => ({ id: t.id, title: t.title, phase: t.phase, status: t.status, syncRound: t.syncRound, blockedReason: t.blockedReason ?? null })), questions, agents, processes };
+    return { now: this.now, tasks: tasks.map((t) => ({ id: t.id, title: t.title, phase: t.phase, status: t.status, syncRound: t.syncRound, blockedReason: t.blockedReason ?? null, phaseSince: t.phaseHistory?.at(-1)?.at ?? t.updatedAt })), questions, agents, processes };
   }
 
   private async load(): Promise<State> {

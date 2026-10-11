@@ -84,18 +84,18 @@ describe("supervisor tools", () => {
     expect(ov.runners.map((r: any) => r.id)).toEqual(["backend", "reviewer"]);
 
     await call("answer_question", { taskId: task.id, messageId: q.id, answer: "It waits for the reviewer to approve first." });
-    await call("message_agent", { taskId: task.id, to: "reviewer", text: "Please approve or object: backend waits on you." });
+    await call("message_lead", { taskId: task.id, text: "reviewer has not answered backend's proposal: have reviewer approve or object." });
     await call("note", { taskId: task.id, text: "The lead waited on reviewer; nudged it." });
 
     const all = await messages.list(task.id);
     expect(all.find((m) => m.id === q.id)!.readAt).toBeTruthy();
     expect(all.filter((m) => m.from === "operator").map((m) => [m.to, m.content])).toEqual([
-      ["backend", "It waits for the reviewer to approve first."],
-      ["reviewer", "Please approve or object: backend waits on you."],
+      ["backend", "It waits for the reviewer to approve first."], // an answer goes to the one who asked
+      ["backend", expect.stringMatching(/^\[From the operator to you, the lead of task-001: .*pass on to reviewer.*\]\nreviewer has not answered/)], // anything else to the lead
     ]);
     expect((await journal()).map((e) => [e.kind, e.by, e.text.slice(0, 22)])).toEqual([
       ["action", "supervisor", "answered backend's que"],
-      ["action", "supervisor", "message to reviewer: P"],
+      ["action", "supervisor", "message to the lead ba"],
       ["note", "supervisor", "The lead waited on rev"],
     ]);
     expect((await state()).supervisor.recent).toHaveLength(3);
@@ -112,6 +112,53 @@ describe("supervisor tools", () => {
     const done = (await (await post("/api/supervisor/resolve", { id: entry.id })).json()) as any;
     expect(done.entry.resolvedAt).toBeTruthy();
     expect((await state()).supervisor.needsYou).toEqual([]);
+  });
+
+  it("a decision about an agent's question closes the question when it is marked done; a question can also be closed without an answer", async () => {
+    const { task, call, fs, state } = await setup();
+    const messages = new MessageStore(fs);
+    const q1 = await messages.create({ taskId: task.id, from: "backend", to: "operator", type: "QUESTION", content: "May I fix the production migration?" });
+    const q2 = await messages.create({ taskId: task.id, from: "reviewer", to: "operator", type: "QUESTION", content: "Should I wait?" });
+    const entry = await call("escalate", { taskId: task.id, messageId: q1.id, question: "Allow a production fix?", recommendation: "Yes, one changeset." });
+    expect(entry.data).toEqual({ messageId: q1.id });
+    const post = (path: string, body: unknown) => fetch(`${ui!.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await post("/api/supervisor/resolve", { id: entry.id })).status).toBe(200);
+    expect((await state()).openQuestions.map((q: any) => q.messageId)).toEqual([q2.id]); // q1 closed with the decision
+    expect((await post("/api/questions/dismiss", { taskId: task.id, messageId: q2.id })).status).toBe(200);
+    expect((await state()).openQuestions).toEqual([]);
+    expect((await messages.list(task.id)).filter((m) => m.from === "operator")).toEqual([]); // no message to the agents
+    expect((await post("/api/questions/dismiss", { taskId: task.id, messageId: "msg-999" })).status).toBe(400);
+  });
+
+  it("one answer per question: a question answered meanwhile is neither answered twice nor escalated; its open decision closes", async () => {
+    const { task, call, raw, fs, state } = await setup();
+    const messages = new MessageStore(fs);
+    const q = await messages.create({ taskId: task.id, from: "backend", to: "operator", type: "QUESTION", content: "users table?" });
+    const decision = await call("escalate", { taskId: task.id, messageId: q.id, question: "Add the users table?", recommendation: "Yes." });
+    const post = (path: string, body: unknown) => fetch(`${ui!.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await post("/api/questions/answer", { taskId: task.id, messageId: q.id, answer: "Yes, add it." })).status).toBe(201); // you answer on the page
+    expect((await state()).supervisor.needsYou).toEqual([]); // the decision about it no longer waits
+    expect((await state()).supervisor.recent.find((e: any) => e.id === decision.id).resolvedAt).toBeTruthy();
+    expect(await raw("answer_question", { taskId: task.id, messageId: q.id, answer: "Yes." })).toMatchObject({ isError: true, json: { message: expect.stringContaining("answered or closed already") } });
+    expect(await raw("escalate", { taskId: task.id, messageId: q.id, question: "Add it?", recommendation: "Yes." })).toMatchObject({ isError: true, json: { message: expect.stringContaining("answered already") } });
+    expect((await messages.list(task.id)).filter((m) => m.from === "operator")).toHaveLength(1);
+  });
+
+  it("deciding on the page sends the answer: to the agent's question when the decision is about one, else to the lead", async () => {
+    const { task, call, fs, state } = await setup();
+    const messages = new MessageStore(fs);
+    const q = await messages.create({ taskId: task.id, from: "reviewer", to: "operator", type: "QUESTION", content: "May I skip the flaky test?" });
+    const about = await call("escalate", { taskId: task.id, messageId: q.id, question: "Skip it?", recommendation: "No: fix the shared container instead." });
+    const general = await call("escalate", { taskId: task.id, question: "Split the task?", recommendation: "Keep it whole." });
+    const post = (path: string, body: unknown) => fetch(`${ui!.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    const r1 = (await (await post("/api/supervisor/resolve", { id: about.id, answer: "No: fix the shared container instead." })).json()) as any;
+    expect(r1.sent).toMatchObject({ from: "operator", to: "reviewer", replyTo: q.id, content: "No: fix the shared container instead." });
+    const r2 = (await (await post("/api/supervisor/resolve", { id: general.id, answer: "Keep it whole." })).json()) as any;
+    expect(r2.sent).toMatchObject({ from: "operator", to: "backend", content: expect.stringMatching(/the lead of task-001.*\]\nKeep it whole\.$/s) });
+    expect((await state()).openQuestions).toEqual([]);
+    expect((await state()).supervisor.needsYou).toEqual([]);
+    expect((await post("/api/supervisor/resolve", { id: general.id, answer: "again" })).status).toBe(400); // nothing is sent twice
   });
 
   it("agent_log reads the activity feed: tool calls, results with ok/ERROR and duration; the raw log while there is none", async () => {
@@ -151,7 +198,8 @@ describe("supervisor tools", () => {
     ];
     const { client, call, raw, journal } = await setup({ tools, disabled: ["kill_test", "db_terminate"] });
     const names = (await client.listTools()).tools.map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["overview", "message_agent", "list_files", "say"]));
+    expect(names).toEqual(expect.arrayContaining(["overview", "message_lead", "list_files", "say"]));
+    expect(names).not.toContain("message_agent");
     expect(names).not.toContain("kill_test");
     expect(names).not.toContain("db_terminate");
     expect(names).not.toContain("cancel");
