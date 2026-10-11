@@ -16,12 +16,14 @@ export interface ServerOptions {
   freshPhases?: Phase[];
   /** The session was started by a runner: it ends on a BLOCKED task. */
   underRunner?: boolean;
+  /** How long a question to the operator holds the asker before it goes ahead with its own proposal. */
+  operatorTimeoutMs?: number;
 }
 
 export function createServer(service: NetworkService, opts: ServerOptions = {}): McpServer {
   const log = opts.log ?? (() => undefined);
   const server = new McpServer({ name: "agent-network-mcp", version: "0.2.0" }, { instructions: SWARM_INSTRUCTIONS });
-  registerSwarmTools(server, new Swarm(service, log, { defaultWaitMs: opts.waitMs, freshPhases: opts.freshPhases, underRunner: opts.underRunner }));
+  registerSwarmTools(server, new Swarm(service, log, { defaultWaitMs: opts.waitMs, freshPhases: opts.freshPhases, underRunner: opts.underRunner, operatorTimeoutMs: opts.operatorTimeoutMs }));
   if (opts.advanced) registerAdvancedTools(server, service, log);
   return server;
 }

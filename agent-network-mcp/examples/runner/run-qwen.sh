@@ -31,7 +31,7 @@ agent() {
       --approval-mode auto-edit \
       --allowed-tools mcp__agent-network "run_shell_command(./mvnw)" \
         "run_shell_command(git status)" "run_shell_command(git diff)" "run_shell_command(git log)" "run_shell_command(git show)" "run_shell_command(git add)" "run_shell_command(git commit)" "run_shell_command(git merge)" "run_shell_command(git rev-parse)" \
-      --max-session-turns 300 --max-wall-time 1h
+      --max-session-turns 70 --max-wall-time 1h
 }
 
 agent backend "$BACKEND_MODEL" &

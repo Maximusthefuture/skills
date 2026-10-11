@@ -21,6 +21,7 @@ const USAGE = `Usage:
                                 time per phase, sessions, tokens, cost (--runners: price sessions without a CLI cost with its "prices")
   agent-network-mcp task cancel --id <task-001> [--reason <text>] [--network-dir <abs path>]
   agent-network-mcp task unblock --id <task-001> [--rounds 1] [--network-dir <abs path>]   more fix rounds for a BLOCKED task
+  agent-network-mcp task handover --id <task-001> [--network-dir <abs path>]   a BLOCKED task's stuck fix to the lead now
   agent-network-mcp agent list [--network-dir <abs path>]
   agent-network-mcp ui [--port 4777] [--network-dir <abs path>] [--runners runners.json ...]
                         web page on http://127.0.0.1:<port>; read-only, or with --runners: a task form and the
@@ -48,7 +49,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
   if (group === "ui") return runUi(command ? [command, ...rest] : rest, env, out, cwd);
   if (group === "hook") return runHookCli(command, rest, env, out, undefined, cwd);
   if (group === "run") return runAgentRunner(command === undefined ? rest : [command, ...rest], env, out, cwd);
-  const known = (group === "task" && (command === "create" || command === "list" || command === "stats" || command === "cancel" || command === "unblock")) || (group === "agent" && command === "list");
+  const known = (group === "task" && (command === "create" || command === "list" || command === "stats" || command === "cancel" || command === "unblock" || command === "handover")) || (group === "agent" && command === "list");
   if (!known) {
     out(USAGE);
     return group === "help" || group === "--help" ? 0 : 2;
@@ -89,12 +90,17 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       out(JSON.stringify(agents.map((a) => ({ id: a.id, type: a.type, role: a.role ?? null, status: a.status, lastSeenAt: a.lastSeenAt, pid: a.pid ?? null })), null, 2));
       return 0;
     }
-    if (command === "cancel" || command === "unblock") {
+    if (command === "cancel" || command === "unblock" || command === "handover") {
       if (!values.id) {
         out("error: --id is required");
         return 2;
       }
-      const task = command === "cancel" ? await service.cancelTask(values.id, values.reason) : await service.unblockTask(values.id, values.rounds === undefined ? 1 : Number(values.rounds));
+      const task =
+        command === "cancel"
+          ? await service.cancelTask(values.id, values.reason)
+          : command === "handover"
+            ? await service.handOverToLead(values.id)
+            : await service.unblockTask(values.id, values.rounds === undefined ? 1 : Number(values.rounds));
       out(JSON.stringify(task, null, 2));
       return 0;
     }

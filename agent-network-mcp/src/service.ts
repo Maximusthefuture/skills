@@ -54,7 +54,12 @@ export const OPERATOR = "operator";
 export interface ServiceOptions {
   hub?: EventHub;
   log?: (msg: string) => void;
+  /** How long the operator has to decide on a question or a BLOCKED task before the fallback (AGENT_NETWORK_OPERATOR_TIMEOUT_MIN). */
+  operatorTimeoutMs?: number;
 }
+
+/** No answer from the operator in this time: the asker goes ahead with its own proposal, a stuck fix goes to the lead. */
+export const OPERATOR_TIMEOUT_MS = 10 * 60_000;
 
 export interface NewTaskInput {
   title: string;
@@ -76,6 +81,28 @@ export function isReviewOnly(a: Assignment | undefined): boolean {
 }
 
 const CHANGE_DIR = /^openspec\/changes\/[a-z0-9][a-z0-9-]*\/\*\*$/;
+
+/** dependsOn names other agents of the task that change files, without a cycle (nobody in a cycle could ever report). */
+function assertDependencies(assignments: Assignment[]): void {
+  const byId = new Map(assignments.map((a) => [a.agentId, a]));
+  for (const a of assignments) {
+    for (const d of a.dependsOn ?? []) {
+      const target = byId.get(d);
+      if (d === a.agentId) throw new AppError("INVALID_INPUT", `${a.agentId}: dependsOn names itself`);
+      if (!target) throw new AppError("INVALID_INPUT", `${a.agentId}: dependsOn '${d}' is not an agent of this task`);
+      if (isReviewOnly(target)) throw new AppError("INVALID_INPUT", `${a.agentId}: dependsOn '${d}', but ${d} changes no files (review only): there is no code to wait for`);
+    }
+  }
+  const state = new Map<string, "visiting" | "done">();
+  const visit = (id: string, path: string[]): void => {
+    if (state.get(id) === "done") return;
+    if (state.get(id) === "visiting") throw new AppError("INVALID_INPUT", `dependsOn goes in a circle: ${[...path.slice(path.indexOf(id)), id].join(" -> ")}; none of them could ever report`);
+    state.set(id, "visiting");
+    for (const d of byId.get(id)?.dependsOn ?? []) visit(d, [...path, id]);
+    state.set(id, "done");
+  };
+  for (const a of assignments) visit(a.agentId, []);
+}
 
 /** The text an OpenSpec task starts with: where the WHAT is. The operator's own words follow it. */
 export function openspecDescription(change: string, operatorText: string): string {
@@ -109,6 +136,7 @@ export class NetworkService {
   readonly implementations: ImplementationStore;
   readonly syncs: SyncStore;
   readonly grants: GrantStore;
+  private readonly operatorTimeoutMs: number;
   readonly integrations: IntegrationStore;
   readonly subtasks: SubtaskStore;
   readonly phases = new PhaseManager();
@@ -131,6 +159,7 @@ export class NetworkService {
     this.integrations = new IntegrationStore(fs);
     this.subtasks = new SubtaskStore(fs);
     this.hub = opts.hub ?? new EventHub(fs.root, { log: opts.log });
+    this.operatorTimeoutMs = opts.operatorTimeoutMs ?? OPERATOR_TIMEOUT_MS;
   }
 
   static async create(networkDir: string, identity: AgentIdentity, opts: ServiceOptions = {}): Promise<NetworkService> {
@@ -242,8 +271,9 @@ export class NetworkService {
     return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
       const task = await this.tasks.get(taskId);
       if (task.status !== "BLOCKED") throw new AppError("INVALID_INPUT", `Task ${taskId} is ${task.status}, not BLOCKED`);
-      const { blockedReason: _drop, ...rest } = task;
-      await this.tasks.save({ ...rest, status: "ACTIVE", maxFixRounds: this.phases.maxFixRounds(task) + extraRounds });
+      const { blockedReason: _drop, handover: _handover, takeover: _takeover, ...rest } = task;
+      // unblockedAtRound: the fix held back in this round goes ahead even if it was stopped as a stalled fix
+      await this.tasks.save({ ...rest, status: "ACTIVE", maxFixRounds: this.phases.maxFixRounds(task) + extraRounds, unblockedAtRound: task.syncRound });
       await this.emit({ type: "TASK_UNBLOCKED", taskId, sourceAgent: "operator", payload: { extraRounds } });
       return this.advance(taskId);
     });
@@ -271,11 +301,16 @@ export class NetworkService {
       const missing = task.agents.filter((a) => !ids.includes(a));
       if (missing.length) throw new AppError("INVALID_INPUT", `Every task agent needs an assignment; missing: ${missing.join(", ")}`);
 
-      const normalized = input.assignments.map(({ tasks, ...a }) => ({
-        ...a,
-        ...(a.files ? { files: [...new Set(a.files.map((f) => normalizePath(assertRelativeFilePath(f))))] } : {}),
-        ...(task.openspec && tasks !== undefined ? { tasks } : {}), // task numbers mean something only for an OpenSpec task
-      }));
+      const normalized = input.assignments.map(({ tasks, dependsOn, ...a }) => {
+        const deps = [...new Set((dependsOn ?? []).map((d) => assertAgentId(String(d).trim())))];
+        return {
+          ...a,
+          ...(a.files ? { files: [...new Set(a.files.map((f) => normalizePath(assertRelativeFilePath(f))))] } : {}),
+          ...(task.openspec && tasks !== undefined ? { tasks } : {}), // task numbers mean something only for an OpenSpec task
+          ...(deps.length ? { dependsOn: deps } : {}),
+        };
+      });
+      assertDependencies(normalized);
       const assignments = task.openspec ? await this.splitOpenspec(task, normalized) : normalized;
       const overlaps = findOverlaps(assignments);
       if (overlaps.length) {
@@ -557,6 +592,7 @@ export class NetworkService {
           { openSubtasks: open },
         );
       }
+      await this.checkDependencies(task);
       const tasksDone = task.openspec ? await this.checkTasksDone(task, input.tasksDone) : undefined;
       const warnings = await this.checkOwnership(task.id, filesChanged);
       const implementation: Implementation = {
@@ -572,6 +608,25 @@ export class NetworkService {
       await this.emit({ type: "IMPLEMENTATION_COMPLETED", taskId: task.id, sourceAgent: this.me, payload: { agentId: this.me, filesChanged, commits } });
       return { implementation, ...(warnings.length ? { warnings } : {}) };
     });
+  }
+
+  /**
+   * dependsOn: the agent works in parallel, but reports its part only after the agents whose code it calls reported
+   * theirs (READY_FOR_SYNC in this round). The Swarm also checks that their commits are in the agent's branch.
+   */
+  private async checkDependencies(task: Task): Promise<void> {
+    const deps = (await this.agreements.find(task.id))?.assignments.find((a) => a.agentId === this.me)?.dependsOn ?? [];
+    if (!deps.length) return;
+    const impls = await this.implementations.list(task.id);
+    const waiting = deps.filter((d) => !impls.some((i) => i.agentId === d && i.status === "READY_FOR_SYNC"));
+    if (waiting.length) {
+      throw new AppError(
+        "DEPENDENCY_NOT_READY",
+        `Your part depends on ${waiting.join(", ")} (dependsOn in the agreement): complete() is accepted after ${waiting.length > 1 ? "they report their parts" : "it reports its part"} and you ran your work against that code. ` +
+          "Go on with what does not need it, or call wait(): you are woken when they report.",
+        { waitingFor: waiting },
+      );
+    }
   }
 
   /** OpenSpec task: which of its own tasks.md numbers the agent finished (required when it has any). */
@@ -931,10 +986,58 @@ export class NetworkService {
     return task;
   }
 
+  /**
+   * The operator decides. If nobody does by the deadline, the lead takes over the stuck fix for one round (see
+   * escalateIfDue); not when the lead itself has to fix, and not again after a takeover.
+   */
   private async block(task: Task, h: Halt): Promise<Task> {
-    const saved = await this.tasks.save({ ...task, status: "BLOCKED", blockedReason: h.reason });
-    await this.emit({ type: "TASK_BLOCKED", taskId: task.id, payload: { phase: h.phase, reason: h.reason, needsFix: h.needsFix, round: task.syncRound } });
+    const lead = this.phases.integrator(task);
+    const from = h.needsFix.filter((a) => a !== lead);
+    const handover = !task.takeover && from.length && !h.needsFix.includes(lead) ? { dueAt: new Date(Date.now() + this.operatorTimeoutMs).toISOString(), from, lead } : undefined;
+    const saved = await this.tasks.save({ ...task, status: "BLOCKED", blockedReason: h.reason, ...(handover ? { handover } : {}) });
+    await this.emit({ type: "TASK_BLOCKED", taskId: task.id, payload: { phase: h.phase, reason: h.reason, needsFix: h.needsFix, round: task.syncRound, ...(handover ? { handover } : {}) } });
     return saved;
+  }
+
+  /**
+   * Anyone may call it (a runner, the page, a waiting agent): once the operator has let the deadline of a BLOCKED task
+   * pass, the lead takes over the stuck fix. Returns the task when it was handed over, null otherwise.
+   */
+  async escalateIfDue(taskId: string): Promise<Task | null> {
+    const due = (t: Task | null) => !!t && t.status === "BLOCKED" && !!t.handover && Date.parse(t.handover.dueAt) <= Date.now();
+    if (!due(await this.tasks.find(assertTaskId(taskId)))) return null;
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      return due(task) ? this.takeOver(task, "timeout") : null;
+    });
+  }
+
+  /** Operator: give the stuck fix to the lead now instead of waiting for the deadline. */
+  async handOverToLead(taskId: string): Promise<Task> {
+    assertTaskId(taskId);
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      if (task.status !== "BLOCKED" || !task.handover) {
+        throw new AppError("INVALID_INPUT", task.status !== "BLOCKED" ? `Task ${taskId} is ${task.status}, not BLOCKED` : `Task ${taskId} cannot go to the lead: the lead itself has to fix, or it already took over once`);
+      }
+      return this.takeOver(task, "operator");
+    });
+  }
+
+  /** The held-back fix goes to the lead: the stuck agents' files are granted to it, and only it works this round. */
+  private async takeOver(task: Task, by: "operator" | "timeout"): Promise<Task> {
+    const { handover, blockedReason: _drop, ...rest } = task;
+    const { from, lead } = handover!;
+    const agreement = await this.agreements.find(task.id);
+    for (const agent of from) {
+      const files = agreement?.assignments.find((a) => a.agentId === agent)?.files ?? [];
+      if (files.length) await this.grants.create({ taskId: task.id, from: agent, to: lead, files });
+    }
+    const taken: Task = { ...rest, status: "ACTIVE", takeover: { from, round: task.syncRound, by } };
+    const why = by === "timeout" ? "the operator did not decide in time" : "the operator handed it over";
+    const next = await this.applyTransition(taken, { from: task.phase, to: "IMPLEMENT", reason: `${lead} takes over the fix of ${from.join(", ")} (${why})`, needsFix: [lead] }, await this.syncs.list(task.id, task.syncRound));
+    await this.emit({ type: "TASK_HANDED_OVER", taskId: task.id, ...(by === "operator" ? { sourceAgent: OPERATOR } : {}), payload: { from, lead, by } });
+    return next;
   }
 
   private async applyTransition(task: Task, t: Transition, reports: SyncReport[]): Promise<Task> {
@@ -944,7 +1047,7 @@ export class NetworkService {
         const impl = await this.implementations.find(task.id, agentId);
         if (impl) {
           const { completedAt: _drop, ...rest } = impl;
-          await this.implementations.save({ ...rest, status: "IN_PROGRESS" });
+          await this.implementations.save({ ...rest, status: "IN_PROGRESS", commitsBeforeFix: impl.commits });
         }
       }
     }

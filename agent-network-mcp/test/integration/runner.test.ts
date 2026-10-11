@@ -119,6 +119,29 @@ describe("agent runner", () => {
     await p.stop();
   });
 
+  it("a session stopped by its turn limit after progress is a planned end: a fresh one goes on at once; without progress it is a failure", async () => {
+    const s = await setup();
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "turns:3", "--max-turns", "3", "{prompt}"], { maxRestarts: 0, restartDelayMs: 60_000 });
+    const t = await s.newTask("Long work in short sessions");
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "task done");
+    expect(await r.stop()).toBe(0);
+    const runs = s.launches();
+    expect(runs.map((l) => l.attempt)).toEqual([1, 2, 3]);
+    expect(runs[0]!.args.join(" ")).not.toContain("turn limit");
+    expect(runs[1]!.args.join(" ")).toContain("reached its turn limit in the middle of the work");
+    expect(runs[1]!.args.join(" ")).not.toContain("previous one ended");
+    expect(r.lines).toContain(`${t.id}: session 1 reached its turn limit (3 turns) after progress; a fresh session goes on (phase DISCUSS)`);
+    const sessions = await new SessionStore(await FileStore.open(s.networkDir)).list(t.id);
+    expect(sessions.map((x) => [x.exitCode, x.turnLimit ?? false])).toEqual([[1, true], [1, true], [0, false]]);
+
+    const idle = await setup();
+    const p = start(idle.networkDir, [process.execPath, FAKE, idle.log, "turns-idle:0", "--max-turns=3", "{prompt}"], { maxRestarts: 0 });
+    await idle.newTask("Waits out its turns");
+    await until(() => p.lines.some((l) => l.includes("giving up until the task changes")), "give up");
+    expect(idle.launches().map((l) => l.attempt)).toEqual([1]);
+    await p.stop();
+  });
+
   it("restarts an unfinished task with a resume note, gives up after the limit and retries when the task changes", async () => {
     const s = await setup();
     const r = start(s.networkDir, [process.execPath, FAKE, s.log, "0"], { maxRestarts: 1 });
@@ -131,6 +154,19 @@ describe("agent runner", () => {
     await s.messages.create({ taskId: t.id, from: "reviewer", to: "backend", type: "QUESTION", content: "still there?" });
     await until(() => s.launches().length === 3, "retry after a new message");
     expect(s.launches()[2]!.attempt).toBe(1);
+    await r.stop();
+  });
+
+  it("a BLOCKED task whose deadline passed goes to the lead; the runner then starts its session", async () => {
+    const s = await setup();
+    const t = await s.newTask("Stuck fix");
+    await s.tasks.save({ ...t, phase: "SYNC", syncRound: 2, status: "BLOCKED", blockedReason: "stuck", handover: { dueAt: new Date(Date.now() + 300).toISOString(), from: ["reviewer"], lead: "backend" } });
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "1"]);
+    await until(() => r.lines.some((l) => l.includes("backend (the lead) takes over at")), "the deadline in the log");
+    expect(s.launches()).toHaveLength(0); // no model while the operator may still decide
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "the lead's session finished it", 8000);
+    expect(r.lines).toContain(`${t.id}: the operator did not decide in time; backend (the lead) takes over the fix of reviewer`);
+    expect(s.launches().map((l) => l.taskId)).toEqual([t.id]);
     await r.stop();
   });
 

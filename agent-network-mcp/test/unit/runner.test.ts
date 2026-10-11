@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildArgv, DEFAULT_PROMPT, isValidModel, pickTask, renderPrompt, usesModel, withModel } from "../../src/runner.js";
+import { buildArgv, DEFAULT_PROMPT, isValidModel, pickTask, renderPrompt, turnLimitOf, usesModel, withModel } from "../../src/runner.js";
 import type { Task } from "../../src/types.js";
 
 const task = (id: string, status: Task["status"], agents = ["backend", "reviewer"]): Task => ({
@@ -30,6 +30,15 @@ describe("renderPrompt", () => {
     const fresh = renderPrompt(DEFAULT_PROMPT, { agent: "reviewer", taskId: "task-002", title: "Cancel orders", attempt: 2, handoff: "SYNC" });
     expect(fresh).toContain("This is a fresh session for phase SYNC");
     expect(fresh).not.toContain("previous one ended"); // a handoff is not a crash
+  });
+});
+
+describe("turnLimitOf", () => {
+  it("reads --max-turns (Claude Code) and --max-session-turns (Qwen Code), with a space or =", () => {
+    expect(turnLimitOf(["claude", "-p", "{prompt}", "--max-turns", "70"])).toBe(70);
+    expect(turnLimitOf(["qwen", "--max-session-turns=40"])).toBe(40);
+    expect(turnLimitOf(["claude", "--max-turns", "{n}"])).toBeUndefined();
+    expect(turnLimitOf(["claude", "-p"])).toBeUndefined();
   });
 });
 

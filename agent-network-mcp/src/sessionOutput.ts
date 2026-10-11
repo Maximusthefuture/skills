@@ -21,6 +21,8 @@ export interface SessionResult {
   apiMs?: number;
   isError?: boolean;
   model?: string;
+  /** The CLI stopped the session at its turn limit (Claude Code: result subtype error_max_turns). */
+  stopReason?: "max_turns";
 }
 
 /**
@@ -113,6 +115,7 @@ export class SessionOutput {
           ...(typeof ev.duration_api_ms === "number" ? { apiMs: ev.duration_api_ms } : {}),
           ...(typeof ev.is_error === "boolean" ? { isError: ev.is_error } : {}),
           ...(models.length ? { model: models.join(", ") } : {}),
+          ...(ev.subtype === "error_max_turns" ? { stopReason: "max_turns" as const } : {}),
         };
         const text = typeof ev.result === "string" ? ev.result.trim() : "";
         const tokens = usage ? ` · tokens ${usage.total} (in ${usage.input}, out ${usage.output})` : "";

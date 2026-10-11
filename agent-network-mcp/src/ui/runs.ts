@@ -26,8 +26,11 @@ export interface RunView {
   startedAt: string;
   endedAt: string | null;
   durationMs: number;
-  /** running: open right now; ok: exit 0; stopped: ended by a signal (Stop button, Ctrl+C); failed: any other exit code. */
-  status: "running" | "ok" | "failed" | "stopped";
+  /**
+   * running: open right now; ok: exit 0; turns: stopped at its turn limit after progress (a planned end, a fresh session
+   * went on); stopped: ended by a signal (Stop button, Ctrl+C); failed: any other exit code.
+   */
+  status: "running" | "ok" | "turns" | "failed" | "stopped";
   exitCode: number | null;
   usage: TokenUsage | null;
   costUsd: number | null;
@@ -65,7 +68,7 @@ export async function listRuns(fs: FileStore, tasks: Task[], prices?: Prices): P
         startedAt: s.startedAt,
         endedAt: s.endedAt,
         durationMs: s.durationMs,
-        status: s.exitCode === 0 ? "ok" : s.exitCode === SIGNAL_EXIT ? "stopped" : "failed",
+        status: s.exitCode === 0 ? "ok" : s.turnLimit ? "turns" : s.exitCode === SIGNAL_EXIT ? "stopped" : "failed",
         exitCode: s.exitCode,
         usage: s.usage ?? null,
         costUsd: cost.usd ?? null,

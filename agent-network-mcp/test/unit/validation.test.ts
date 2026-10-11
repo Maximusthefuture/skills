@@ -57,6 +57,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...env, AGENT_NETWORK_WAIT_MS: "10" })).toThrow(/AGENT_NETWORK_WAIT_MS/);
     expect(() => loadConfig({ ...env, AGENT_NETWORK_WAIT_MS: "999999" })).toThrow(/AGENT_NETWORK_WAIT_MS/);
   });
+  it("reads how long a question to the operator holds the asker", () => {
+    expect(loadConfig({ ...env, AGENT_NETWORK_OPERATOR_TIMEOUT_MIN: "15" }).operatorTimeoutMs).toBe(900_000);
+    expect(loadConfig(env)).not.toHaveProperty("operatorTimeoutMs"); // the default, 10 min
+    expect(() => loadConfig({ ...env, AGENT_NETWORK_OPERATOR_TIMEOUT_MIN: "0" })).toThrow(/AGENT_NETWORK_OPERATOR_TIMEOUT_MIN/);
+    expect(() => loadConfig({ ...env, AGENT_NETWORK_OPERATOR_TIMEOUT_MIN: "1.5" })).toThrow(/AGENT_NETWORK_OPERATOR_TIMEOUT_MIN/);
+  });
   it("normalizes NETWORK_DIR", () => {
     expect(loadConfig({ ...env, NETWORK_DIR: "/tmp/p/x/../.agent-network" }).networkDir).toBe("/tmp/p/.agent-network");
   });

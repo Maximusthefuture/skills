@@ -63,13 +63,13 @@ describe("subtasks", () => {
 
     let r = await s.backend.subtasks({ add: ["Add currency column", "Validate currency", "Controller test"] });
     expect(r).toMatchObject({ ok: true, action: "SUBTASKS_UPDATED", progress: "0/3 done", nextAction: "implement" });
-    expect((r.subtasks as { id: string }[]).map((i) => i.id)).toEqual(["s1", "s2", "s3"]);
+    expect((r.openSubtasks as { id: string }[]).map((i) => i.id)).toEqual(["s1", "s2", "s3"]); // the reply lists only the open steps
 
     await s.backend.subtasks({ start: "s1" });
     r = await s.backend.subtasks({ done: ["s1"], start: "s2" });
     expect(r.progress).toBe("1/3 done, s2 in progress");
     r = await s.backend.subtasks({ start: "s3" }); // only one step is in progress
-    expect((r.subtasks as { id: string; status: string }[]).filter((i) => i.status === "DOING").map((i) => i.id)).toEqual(["s3"]);
+    expect((r.openSubtasks as { id: string; status: string }[]).map((i) => [i.id, i.status])).toEqual([["s2", "TODO"], ["s3", "DOING"]]);
 
     const other = await s.reviewer.context();
     expect(other.otherAgents).toEqual([expect.objectContaining({ id: "backend", subtasks: "1/3 done, s3 in progress" })]);

@@ -3,7 +3,9 @@
 // argv: <log file> <attempt from which it finishes the task; 0 = never; "all" = every ACTIVE task, like a session that
 // goes on to a follow-up by itself; "handoff:N" = the first session moves the task into SYNC and is told to hand it over
 // (writes the server's handoff marker), sessions from attempt N finish it (0 = never); "block:N" = the first session
-// leaves the task BLOCKED, sessions from attempt N finish it> [prompt and other args...]
+// leaves the task BLOCKED, sessions from attempt N finish it; "turns:N" = sessions before attempt N tick a subtask and stop
+// at the turn limit (stream-json result error_max_turns), from attempt N they finish it; "turns-idle:N" = the same
+// without touching anything (no progress)> [prompt and other args...]
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -36,7 +38,17 @@ if (finishArg.startsWith("block:") && attempt === 1) {
   writeFileSync(path, JSON.stringify({ ...task, status: "BLOCKED", blockedReason: "fix-round limit", updatedAt: new Date().toISOString() }));
   process.exit(0);
 }
-const finishOn = Number(finishArg.replace(/^(handoff|block):/, ""));
+if (/^turns(-idle)?:/.test(finishArg) && attempt < Number(finishArg.split(":")[1]) || finishArg === "turns-idle:0") {
+  if (!finishArg.startsWith("turns-idle")) {
+    const dir = join(NETWORK_DIR, "tasks", taskId, "subtasks");
+    mkdirSync(dir, { recursive: true });
+    const items = Array.from({ length: attempt }, (_, i) => ({ id: `s${i + 1}`, title: `step ${i + 1}`, status: "DONE", updatedAt: new Date().toISOString() }));
+    writeFileSync(join(dir, `${AGENT_ID}.json`), JSON.stringify({ taskId, agentId: AGENT_ID, items, nextSeq: attempt + 1 }));
+  }
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 3, usage: { input_tokens: 10, output_tokens: 1 } }) + "\n");
+  process.exit(1);
+}
+const finishOn = Number(finishArg.replace(/^(handoff|block|turns|turns-idle):/, ""));
 if (finishOn > 0 && attempt >= finishOn) {
   finish(taskId);
   process.exit(0);

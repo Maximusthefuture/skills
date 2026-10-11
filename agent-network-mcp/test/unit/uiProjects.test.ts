@@ -69,6 +69,11 @@ describe("queue and runs", () => {
     expect(all.map((r) => r.seq)).toEqual([4, 3, 2, 1, 5]); // the list itself: newest start first
     expect(all.find((r) => r.seq === 4)).toMatchObject({ alsoFinished: [{ id: t2.id, title: "follow-up", status: "ACTIVE" }] });
     expect(all.find((r) => r.seq === 5)).toMatchObject({ numTurns: 9 });
+
+    // stopped at its turn limit after progress: a planned end, not a failure
+    await p.sessions.create({ ...base, agentId: "a", startedAt: "2026-10-10T14:00:00Z", endedAt: "2026-10-10T14:01:00Z", exitCode: 1, numTurns: 70, turnLimit: true });
+    const latest = (await listRuns(await FileStore.open(p.networkDir), await p.operator.tasks.list()))[0]!;
+    expect([latest.status, latest.exitCode]).toEqual(["turns", 1]);
   });
 });
 
@@ -146,6 +151,40 @@ describe("several projects on one page", () => {
     const task = ((await (await fetch(`${ui.url}/api/state`)).json()) as any).tasks[0];
     expect([task.messages.length, task.messagesTotal, task.messages[0].content, task.messages.at(-1).content]).toEqual([50, 55, "m6", "m55"]);
     expect(task.eventsTotal).toBeGreaterThan(task.events.length - 1);
+  });
+
+  it("unblocks a BLOCKED task with more fix rounds; not in read-only mode, not an active task", async () => {
+    const shop = await project("shop");
+    const blog = await project("blog");
+    const t = await shop.operator.createTaskAsOperator({ title: "t", description: "d", agents: ["a", "b"], maxFixRounds: 2 });
+    const b = await blog.operator.createTaskAsOperator({ title: "t", description: "d", agents: ["a", "b"] });
+    const pool = new RunnerPool(shop.networkDir, [{ id: "a", command: ["x"] }], { run: () => Promise.resolve(0) });
+    ui = await startUiServer([{ networkDir: shop.networkDir, runners: pool }, { networkDir: blog.networkDir }], { port: 0 });
+    const unblock = (proj: string, id: string, body: unknown) =>
+      fetch(`${ui!.url}/api/tasks/${id}/unblock?project=${proj}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    expect((await unblock("shop", t.id, {})).status).toBe(400); // ACTIVE, not BLOCKED
+    await shop.operator.tasks.save({ ...(await shop.operator.tasks.get(t.id)), status: "BLOCKED", blockedReason: "limit" });
+    expect((await unblock("shop", t.id, { rounds: "many" })).status).toBe(400);
+    const res = await unblock("shop", t.id, { rounds: 2 });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).task).toMatchObject({ status: "ACTIVE", maxFixRounds: 4 });
+    expect((await shop.operator.tasks.get(t.id)).blockedReason).toBeUndefined();
+
+    await blog.operator.tasks.save({ ...(await blog.operator.tasks.get(b.id)), status: "BLOCKED", blockedReason: "limit" });
+    expect((await unblock("blog", b.id, {})).status).toBe(405);
+
+    // the stuck fix to the lead now; then cancel
+    const post = (id: string, what: string) => fetch(`${ui!.url}/api/tasks/${id}/${what}?project=shop`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const due = { dueAt: new Date(Date.now() + 600_000).toISOString(), from: ["b"], lead: "a" };
+    await shop.operator.tasks.save({ ...(await shop.operator.tasks.get(t.id)), phase: "SYNC", syncRound: 2, status: "BLOCKED", blockedReason: "stuck", handover: due });
+    const state = (await (await fetch(`${ui.url}/api/state?project=shop`)).json()) as any;
+    expect(state.tasks[0].handover).toMatchObject({ from: ["b"], lead: "a" });
+    const handed = await post(t.id, "handover");
+    expect(handed.status).toBe(200);
+    expect(((await handed.json()) as any).task).toMatchObject({ status: "ACTIVE", phase: "IMPLEMENT", takeover: { from: ["b"], by: "operator" } });
+    expect((await post(t.id, "handover")).status).toBe(400); // not BLOCKED any more
+    expect(((await (await post(t.id, "cancel")).json()) as any).task.status).toBe("CANCELLED");
   });
 
   it("refuses two projects with the same network", async () => {

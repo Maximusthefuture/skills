@@ -43,6 +43,15 @@ export interface Task {
   maxFixRounds?: number;
   /** Agents whose work the next/current SYNC round reviews: the agents that just fixed. Absent = everyone. */
   reviewScope?: string[];
+  /** The SYNC round in which the operator unblocked the task: that round's stalled fix does not block it again. */
+  unblockedAtRound?: number;
+  /**
+   * BLOCKED with a fallback: unless the operator decides by dueAt, the lead takes over the fix of `from` for one round
+   * (their findings, with their files granted to it). Absent when the lead itself has to fix, and after a takeover.
+   */
+  handover?: { dueAt: string; from: string[]; lead: string };
+  /** The lead took over the fix of these agents in this round; if the task fails again, it stays BLOCKED for the operator. */
+  takeover?: { from: string[]; round: number; by: "operator" | "timeout" };
   /** Legacy (tasks created before commits became optional); ignored. */
   requireCommits?: boolean;
   /** Build/test command the integrator runs on the merged result, e.g. "mvn -q verify". */
@@ -104,6 +113,12 @@ export interface Assignment {
   files?: string[];
   /** OpenSpec task: the tasks.md numbers this agent implements. Every open task has exactly one agent. */
   tasks?: string[];
+  /**
+   * Agents whose new code this agent's work calls (e.g. the tester's API tests call the developer's endpoint). It works
+   * in parallel, but its complete() in IMPLEMENT is accepted only after they reported their part and it merged their
+   * commits: the tests run against the real code before the review, not against a guess.
+   */
+  dependsOn?: string[];
 }
 
 /** The owner of some files lets another agent change them. */
@@ -142,6 +157,8 @@ export interface Implementation {
   completedAt?: string;
   /** OpenSpec task: the numbers of the agent's tasks it reports done. */
   tasksDone?: string[];
+  /** The commits it had reported when a review sent it back to fix: a fix that adds none delivered nothing new. */
+  commitsBeforeFix?: string[];
 }
 
 export type SyncStatus = "PASS" | "NEEDS_FIX";
@@ -214,6 +231,7 @@ export const EVENT_TYPES = [
   "TASK_CANCELLED",
   "TASK_BLOCKED",
   "TASK_UNBLOCKED",
+  "TASK_HANDED_OVER",
   "OPENSPEC_ARCHIVED",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];

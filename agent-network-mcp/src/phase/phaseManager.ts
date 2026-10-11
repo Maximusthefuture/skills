@@ -103,7 +103,7 @@ export class PhaseManager {
         const reported = (id: string) => s.syncReports.some((r) => r.agentId === id);
         if (!this.reviewers(task).every(reported)) return null;
         const failed = s.syncReports.filter((r) => r.status === "NEEDS_FIX");
-        if (failed.length > 0) return this.fixOrHalt(task, "NEEDS_FIX reported in sync review", failed.map((r) => r.findings));
+        if (failed.length > 0) return this.fixOrHalt(task, "NEEDS_FIX reported in sync review", failed.map((r) => r.findings), s.implementations);
         return { from: "SYNC", to: "INTEGRATE", reason: "all reviews passed" };
       }
       case "INTEGRATE": {
@@ -129,13 +129,50 @@ export class PhaseManager {
     };
   }
 
-  private fixOrHalt(task: Task, reason: string, findings: SyncFinding[][]): Transition | Halt {
+  private fixOrHalt(task: Task, reason: string, findings: SyncFinding[][], implementations: Implementation[] = []): Transition | Halt {
     const needsFix = this.fixTargets(task, findings);
+    if (task.takeover) {
+      return {
+        halt: true,
+        phase: task.phase,
+        needsFix,
+        reason: `${reason} after ${this.integrator(task)} (the lead) took over the fix of ${task.takeover.from.join(", ")}: the lead could not resolve it either`,
+      };
+    }
     const max = this.maxFixRounds(task);
     if (task.syncRound > max) {
       return { halt: true, phase: task.phase, needsFix, reason: `${reason}, but the limit of ${max} fix round(s) is used up` };
     }
+    const stalled = this.stalledFixers(task, needsFix, implementations);
+    if (stalled.length) {
+      return {
+        halt: true,
+        phase: task.phase,
+        needsFix,
+        reason:
+          `${reason} again for ${stalled.join(", ")}, which delivered nothing in the last fix round (no new commits, no changed files): ` +
+          "another round would not change that. Unblock for one more try, or cancel the task",
+      };
+    }
     return { from: task.phase, to: "IMPLEMENT", reason, needsFix };
+  }
+
+  /**
+   * After a fix round: agents who had to fix, still have to fix, and brought nothing new (no commit beyond the ones they
+   * had reported before the round; without commits, no changed file). The same problem stands, so instead of burning the
+   * next rounds the task goes to the operator. Not again in the round the operator unblocked.
+   */
+  private stalledFixers(task: Task, needsFix: string[], implementations: Implementation[]): string[] {
+    if (task.syncRound < 2 || task.unblockedAtRound === task.syncRound) return [];
+    const fixedLastRound = this.reviewees(task);
+    return needsFix.filter((agent) => {
+      if (!fixedLastRound.includes(agent)) return false;
+      const impl = implementations.find((i) => i.agentId === agent);
+      if (!impl) return false;
+      const before = impl.commitsBeforeFix ?? [];
+      const usesCommits = before.length > 0 || impl.commits.length > 0;
+      return usesCommits ? impl.commits.every((c) => before.includes(c)) : impl.filesChanged.length === 0;
+    });
   }
 
   /**

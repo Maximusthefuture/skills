@@ -19,6 +19,8 @@ export interface Config {
   freshPhases?: Phase[];
   /** AGENT_NETWORK_RUNNER=1: the session was started by a runner. */
   underRunner?: boolean;
+  /** AGENT_NETWORK_OPERATOR_TIMEOUT_MIN: how long a question to the operator holds the asker (default 10 min). */
+  operatorTimeoutMs?: number;
 }
 
 /** Identity and network location come only from the process environment, never from tool input. */
@@ -51,7 +53,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, cwd: string = p
     }
   }
   const freshPhases = parseFreshPhases(env.AGENT_NETWORK_FRESH_PHASES, "AGENT_NETWORK_FRESH_PHASES");
+  let operatorTimeoutMs: number | undefined;
+  if (env.AGENT_NETWORK_OPERATOR_TIMEOUT_MIN) {
+    const min = Number(env.AGENT_NETWORK_OPERATOR_TIMEOUT_MIN);
+    if (!Number.isInteger(min) || min < 1 || min > 1440) throw new AppError("INVALID_CONFIG", "AGENT_NETWORK_OPERATOR_TIMEOUT_MIN must be an integer 1..1440 (minutes)");
+    operatorTimeoutMs = min * 60_000;
+  }
   const identity: AgentIdentity = { id: candidates[0]!, type: env.AGENT_TYPE || "unknown" };
   if (env.AGENT_ROLE) identity.role = env.AGENT_ROLE;
-  return { identity, candidates, networkDir: resolved, ...(detected ? { networkDirDetected: true as const } : {}), ...(waitMs ? { waitMs } : {}), ...(freshPhases.length ? { freshPhases } : {}), ...(env.AGENT_NETWORK_RUNNER === "1" ? { underRunner: true } : {}) };
+  return { identity, candidates, networkDir: resolved, ...(detected ? { networkDirDetected: true as const } : {}), ...(waitMs ? { waitMs } : {}), ...(freshPhases.length ? { freshPhases } : {}), ...(env.AGENT_NETWORK_RUNNER === "1" ? { underRunner: true } : {}), ...(operatorTimeoutMs ? { operatorTimeoutMs } : {}) };
 }

@@ -73,7 +73,7 @@ const slug = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g,
 /**
  * GET / (page), GET /api/projects, and per project (?project=<id>, default: the first one): GET /api/state, /api/runs,
  * /api/openspec/changes, /api/runners/<id>/log; with runners also POST /api/tasks, /api/runners/<id>/start|stop|instructions|model,
- * /api/questions/answer, /api/openspec/archive. Bound to loopback; foreign Host headers are refused, and state-changing
+ * /api/questions/answer, /api/openspec/archive, /api/tasks/<id>/unblock|handover|cancel. Bound to loopback; foreign Host headers are refused, and state-changing
  * requests must be same-origin JSON (a page on another site cannot create tasks for the agents).
  */
 export async function startUiServer(target: string | UiProject[], opts: UiOptions = {}): Promise<UiServer> {
@@ -216,6 +216,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       if (path === "/api/projects") return json(200, { projects: await Promise.all(projects.map(summary)) });
       if (path === "/api/openspec/changes") return json(200, { projectDir: p.projectDir, changes: await listChanges(p.projectDir) });
       if (path === "/api/state") {
+        // the page is open: a BLOCKED task whose deadline passed goes to its lead even with no runner around
+        if (p.operator) for (const t of await p.operator.tasks.list()) if (t.status === "BLOCKED" && t.handover) await p.operator.escalateIfDue(t.id).catch(() => null);
         const pricing = (await p.prices?.()) ?? {};
         return json(200, {
           ...(await buildUiState(p.fs, undefined, pricing)),
@@ -257,6 +259,17 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
       });
       return json(201, { task });
+    }
+    const blocked = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel)$/.exec(path);
+    if (blocked) {
+      const id = decodeURIComponent(blocked[1]!);
+      if (blocked[2] === "handover") return json(200, { task: await operator.handOverToLead(id) });
+      if (blocked[2] === "cancel") {
+        const reason = (body as { reason?: unknown }).reason;
+        return json(200, { task: await operator.cancelTask(id, typeof reason === "string" && reason.trim() ? reason : "cancelled on the page") });
+      }
+      const rounds = (body as { rounds?: unknown }).rounds;
+      return json(200, { task: await operator.unblockTask(id, rounds === undefined ? 1 : Number(rounds)) });
     }
     if (path === "/api/openspec/archive") {
       return json(200, await operator.archiveOpenspec({ taskId: String((body as { taskId?: unknown }).taskId ?? "") }, opts.openspecExec));

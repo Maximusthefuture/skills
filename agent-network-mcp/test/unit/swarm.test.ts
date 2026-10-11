@@ -171,6 +171,33 @@ describe("swarm_context", () => {
   });
 });
 
+describe("replies repeat only what changed", () => {
+  it("a big part the agent has seen in this phase becomes (unchanged); a change, swarm_context or a new phase shows it again", async () => {
+    const { s, task } = await setup();
+    await task();
+    await s.backend.context();
+    await s.backend.propose({ summary: "split", assignments });
+    expect((await s.reviewer.context()).agreement).toMatchObject({ summary: "split" }); // swarm_context shows everything
+
+    const sent = await s.reviewer.sendMessage({ to: "backend", message: "looks fine" });
+    expect(sent.agreement).toBe("(unchanged)");
+    expect(sent.unchanged).toContain("swarm_context shows them again");
+    expect(sent.pendingMessages).toEqual([]); // messages and decisions are never left out
+
+    await s.backend.propose({ summary: "split v2", assignments });
+    const changed = await s.reviewer.sendMessage({ to: "backend", message: "v2 then" });
+    expect(changed.agreement).toMatchObject({ summary: "split v2" });
+    expect(changed.assignment).toBe("(unchanged)"); // the reviewer's own part is the same in v2
+    expect((await s.reviewer.context()).agreement).toMatchObject({ summary: "split v2" });
+
+    await s.reviewer.complete({});
+    const impl = await s.backend.complete({}); // the phase moves on: the IMPLEMENT view is new to the agent
+    expect(impl).toMatchObject({ phaseChanged: { to: "IMPLEMENT" }, assignment: { responsibility: "REST API" }, ownership: { yourFiles: ["src/main/**"] } });
+    const again = await s.backend.sendMessage({ to: "reviewer", message: "starting" });
+    expect([again.assignment, again.ownership, again.agreement]).toEqual(["(unchanged)", "(unchanged)", "(unchanged)"]);
+  });
+});
+
 describe("NEEDS_FIX loop", () => {
   it("only the agent named in relatedAgent has to fix; fixRequests explain what", async () => {
     const { s, task } = await setup();
@@ -834,6 +861,101 @@ describe("SYNC on an older copy of the reviewee's work", () => {
     const current = await s.reviewer.context();
     expect(current.teamImplementations).toEqual([expect.not.objectContaining({ notInYourBranch: expect.anything() })]);
     expect(current.hint).not.toContain("lacks");
+  });
+});
+
+describe("dependsOn: work that calls another agent's new code", () => {
+  const split = (testerDeps?: string[]) => [
+    { agentId: "backend", responsibility: "API", files: ["src/main/**"] },
+    { agentId: "tester", responsibility: "API tests", files: ["src/test/**"], ...(testerDeps ? { dependsOn: testerDeps } : {}) },
+    { agentId: "reviewer", responsibility: "review", files: [] },
+  ];
+
+  it("propose refuses an unknown agent, itself, a review-only agent and a cycle", async () => {
+    const { s, task } = await setup(["backend", "tester", "reviewer"]);
+    await task();
+    await s.backend.context();
+    const refused = async (assignments: unknown[], text: string) =>
+      expect(await failure(s.backend, s.backend.propose({ summary: "s", assignments: assignments as never }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining(text) });
+    await refused(split(["frontend"]), "dependsOn 'frontend' is not an agent of this task");
+    await refused(split(["tester"]), "tester: dependsOn names itself");
+    await refused(split(["reviewer"]), "reviewer changes no files (review only)");
+    const cycle = split(["backend"]);
+    cycle[0] = { ...cycle[0]!, dependsOn: ["tester"] } as (typeof cycle)[0];
+    await refused(cycle, "dependsOn goes in a circle: backend -> tester -> backend");
+    const ok = await s.backend.propose({ summary: "s", assignments: split(["backend", "backend"]) });
+    expect((ok.agreement as { assignments: { dependsOn?: string[] }[] }).assignments[1]!.dependsOn).toEqual(["backend"]);
+  });
+
+  it("the dependent agent writes in parallel, waits for the other's report before complete, then goes on", async () => {
+    const { s: all, task } = await setup(["backend", "tester", "reviewer"]);
+    const s = { ...all, tester: all.tester! };
+    await task();
+    await s.backend.context();
+    await s.backend.propose({ summary: "s", assignments: split(["backend"]), interfaces: ["POST /orders, header X-Customer-Id -> 201"] });
+    for (const a of [s.tester, s.reviewer, s.backend]) {
+      await a.context(); // an agent approves only the version it has seen
+      await a.complete({});
+    }
+
+    const start = await s.tester.context();
+    expect(start).toMatchObject({ nextAction: "implement", dependsOn: [{ agentId: "backend", reported: false }] });
+    expect(start.hint).toContain("Your work calls the new code of backend (dependsOn): write it now from agreement.interfaces");
+
+    const early = await failure(s.tester, s.tester.complete({ result: "tests" }));
+    expect(early).toMatchObject({ error: "DEPENDENCY_NOT_READY", waitingFor: ["backend"], nextAction: "wait" });
+    const parked = await s.tester.context();
+    expect(parked).toMatchObject({ nextAction: "wait", waitingOn: ["backend"] });
+    expect(parked.allowedActions).not.toContain("complete");
+
+    const woke = s.tester.wait({ timeoutMs: 5000 });
+    await s.backend.complete({ result: "api", filesChanged: ["src/main/Api.java"] });
+    expect(await woke).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "implement" });
+    expect((await s.tester.context()).hint).toContain("backend reported and your branch has that work: run your work against it before complete()");
+    expect((await s.tester.complete({ result: "tests green against the API" })).action).toBe("IMPLEMENTATION_COMPLETED");
+  });
+
+  it("in separate worktrees the dependent agent has to merge the other's commits before complete", async () => {
+    const repo = await tmpDir();
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.email", "t@example.com");
+    git(repo, "config", "user.name", "t");
+    writeFileSync(join(repo, "README.md"), "demo");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "init");
+    const wt = { backend: `${repo}-backend`, tester: `${repo}-tester` };
+    git(repo, "worktree", "add", "-q", wt.backend, "-b", "swarm-backend");
+    git(repo, "worktree", "add", "-q", wt.tester, "-b", "swarm-tester");
+    const commit = (cwd: string, file: string) => {
+      writeFileSync(join(cwd, file), file);
+      git(cwd, "add", file);
+      git(cwd, "commit", "-q", "-m", file);
+      return git(cwd, "rev-parse", "HEAD");
+    };
+    const dir = join(repo, ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const service = (id: string) => NetworkService.create(dir, { id, type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }) });
+    const backend = new Swarm(await service("backend"), undefined, { workdir: wt.backend });
+    const tester = new Swarm(await service("tester"), undefined, { workdir: wt.tester });
+    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "tester"] });
+    await backend.context();
+    await backend.propose({ summary: "s", assignments: split(["backend"]).slice(0, 2) });
+    await tester.context();
+    await tester.complete({});
+    await backend.complete({});
+
+    const api = commit(wt.backend, "Api.java");
+    await backend.complete({ result: "api", filesChanged: ["src/main/Api.java"], commits: [api] });
+    const test = commit(wt.tester, "ApiTest.java");
+    const ctx = await tester.context();
+    expect(ctx.dependsOn).toEqual([{ agentId: "backend", reported: true, commits: [api], notInYourBranch: [api] }]);
+    expect(ctx.hint).toContain(`backend reported: git merge ${api} into your branch`);
+    expect(await failure(tester, tester.complete({ result: "tests", commits: [test] }))).toMatchObject({ error: "DEPENDENCY_NOT_MERGED", notInYourBranch: { backend: [api] } });
+
+    git(wt.tester, "merge", "-q", "--no-edit", api);
+    const merged = git(wt.tester, "rev-parse", "HEAD");
+    expect((await tester.complete({ result: "tests green against the API", commits: [merged] })).action).toBe("IMPLEMENTATION_COMPLETED");
   });
 });
 

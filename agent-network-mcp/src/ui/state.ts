@@ -136,12 +136,16 @@ function operatorQuestions(messages: Message[]) {
 }
 
 function pickTask(t: Task) {
-  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed } = t;
+  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover } = t;
   return {
     id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
     parentTaskId: parentTaskId ?? null, baseCommit: baseCommit ?? null,
     followUpBudget: maxFollowUps ? { max: maxFollowUps, used: followUpsUsed ?? 0 } : null,
+    /** BLOCKED: unless the operator decides by dueAt, the lead takes over the stuck fix. */
+    handover: status === "BLOCKED" ? (handover ?? null) : null,
+    /** The lead took over the fix of these agents (from that round on, a failure is final). */
+    takeover: takeover ?? null,
     /** When the task entered its current phase. */
     phaseSince: t.phaseHistory?.at(-1)?.at ?? t.updatedAt,
   };

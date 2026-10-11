@@ -24,6 +24,10 @@ nextAction:
   With an OpenSpec change (`openspec` in `swarm_context`) every assignment also gets `tasks`: the `tasks.md` numbers that
   agent implements; every open task goes to exactly one agent, the change folder stays with the lead. In IMPLEMENT report
   your finished numbers with `complete({result, filesChanged, tasksDone: [...]})`; the lead ticks them in `tasks.md` when it integrates.
+  Write the exact contracts into `interfaces` (method, path, headers, body, status codes). An agent whose work calls another
+  agent's NEW code (e.g. API tests against an endpoint being built) gets `dependsOn: [<that agent>]`: it still works in parallel,
+  but its `complete()` is accepted only after that agent reported its part and the dependent merged its commits
+  (`DEPENDENCY_NOT_READY` / `DEPENDENCY_NOT_MERGED` otherwise).
 - `approve` (DISCUSS): read `agreement` (assignments and each agent's files); `complete()` approves it. If you disagree, `send_message` or `propose` a replacement.
 - `implement` (IMPLEMENT): work ONLY on your own assignment and change only your own files (`ownership.yourFiles`) or files granted to you. Reviewing the other agents' code is for SYNC, not now. Report blockers with `send_message`. When finished
   call `complete({result, filesChanged})`. Working on your own git branch (a separate worktree)? Commit your files first and pass
@@ -52,8 +56,9 @@ nextAction:
   Work that is left but does not block the task (`followUps.notes`: WARNING/INFO findings of the reviews, things noticed while merging) may
   become new tasks when `followUps.remaining` > 0: add `followUps: [{title, description, agents?}]` to the PASS call. Each description must be
   concrete; the agents start them when this task is DONE. Never invent work; everything else goes into `result`.
-- `wait`: nothing for you to do right now. Call `wait()`. This includes a task with status `BLOCKED` (the fix-round limit is used up;
-  the operator decides). A session started by a runner gets `done` on a `BLOCKED` task instead: end it, the runner waits.
+- `wait`: nothing for you to do right now. Call `wait()`. This includes a task with status `BLOCKED` (the fix-round limit is used up,
+  or a fix brought nothing new; the operator decides; if nobody decides in time, the lead gets `fix` for the stuck agents' findings,
+  with their files granted to it for that round). A session started by a runner gets `done` on a `BLOCKED` task instead: end it, the runner waits.
   With no task, `swarm_context` also allows `create_task` (see below).
 - `done`: the task is complete, or (with `handoff`) the task entered a phase that a fresh session does: end your session now.
 
@@ -82,7 +87,9 @@ Rules:
   (placeholders like "...", no feature, no files), do NOT guess and do NOT propose an agreement: ask the user what to build and
   wait for the answer before `propose`/`complete`. In an interactive session ask in your own chat; in a headless session
   (started by a runner: nobody reads your chat) ask with `send_message({to: "operator", message: <question>})` and `wait()`:
-  the operator answers on the network page and the answer arrives in `pendingMessages`.
+  the operator answers on the network page and the answer arrives in `pendingMessages`. Name the option you would take
+  in the question: with no answer in 10 minutes the server tells you to go ahead with it; do so and tell the other agents
+  (`send_message`) and your `result`. A later answer still arrives in `pendingMessages`.
 - Anything only a human can decide (requirements, scope, an irreversible action) goes to the user the same way.
 - Never assume the phase; use `swarm_context`.
 - Only perform actions from `allowedActions`.

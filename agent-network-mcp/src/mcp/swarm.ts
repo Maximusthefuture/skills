@@ -3,7 +3,7 @@ import { containsCommit, readGitContext } from "../git.js";
 import { phaseEpoch } from "../handoff.js";
 import { changePath, readChange, type ChangeInfo } from "../openspec.js";
 import { normalizePath, ownersOf } from "../ownership.js";
-import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, isReviewOnly, type NetworkService } from "../service.js";
+import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, OPERATOR_TIMEOUT_MS, isReviewOnly, type NetworkService } from "../service.js";
 import type { Agent, Agreement, FollowUpRequest, GitContext, Implementation, IntegrationReport, Message, Phase, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
 
 /** What the agent should do next, computed by the server so the agent never reasons about the state machine. */
@@ -39,6 +39,8 @@ interface Snapshot {
   subtasks: SubtaskList[];
   /** Questions this agent asked the operator that are not answered yet. */
   myQuestions: Message[];
+  /** When this agent last wrote to another agent (after an unanswered question: did it tell the team it went ahead?). */
+  myLastMessageAt?: string;
   /** INTEGRATE only: what the follow-up budget of the task chain still allows. */
   followUpBudget?: { max: number; used: number; remaining: number };
   /** The phase this session hands over to a fresh one, if any (see handoff.ts). */
@@ -49,6 +51,10 @@ interface Snapshot {
   ownBranch?: string | null;
   /** SYNC: reviewee -> its reported commits that this session's branch does not contain (its copy of their files is older). */
   missingCommits?: Record<string, string[]>;
+  /** IMPLEMENT: an agent this one depends on (dependsOn) and has reported -> its commits this session's branch lacks. */
+  dependencyCommits?: Record<string, string[]>;
+  /** IMPLEMENT: this session tried to complete before its dependencies reported; it waits for them instead of trying again. */
+  dependencyParked?: boolean;
 }
 
 /** "2/5 done, s3 in progress" */
@@ -65,6 +71,11 @@ type RawFinding = Omit<SyncFinding, "severity"> & { severity: string };
 
 
 const seq = (m: Message): number => Number(m.id.slice(4));
+
+/** Big parts of the context that change rarely: after the agent has seen one, replies say "(unchanged)" until it changes. */
+const SECTIONS = ["openspec", "agreement", "assignment", "ownership", "subtasks", "teamImplementations", "fixedFindings", "fixRequests", "followUps"] as const;
+const UNCHANGED = "(unchanged)";
+const UNCHANGED_NOTE = "Parts marked (unchanged) are as in an earlier response of this session; swarm_context shows them again.";
 
 /**
  * A FILE_REQUEST stays open until the owner writes back to the requester (a grant or any reply, e.g. a refusal).
@@ -94,12 +105,21 @@ export interface SwarmOptions {
   workdir?: string;
   /** Started by a runner (AGENT_NETWORK_RUNNER=1): on a BLOCKED task the session ends instead of waiting; the runner waits without a model. */
   underRunner?: boolean;
+  /** How long a question to the operator blocks the asker (AGENT_NETWORK_OPERATOR_TIMEOUT_MIN); then it goes ahead with its own proposal. */
+  operatorTimeoutMs?: number;
 }
+
+/** While an agent waits for the operator, wait() looks at the clock this often, so it learns in time that the question timed out. */
+const OPERATOR_POLL_MS = 30_000;
 
 export class Swarm {
   private registered?: Promise<unknown>;
   private shownMessages: { taskId: string; id: string }[] = [];
   private shownAgreement = new Map<string, number>();
+  /** "taskId:round" where complete() was refused because a dependency (dependsOn) had not reported yet. */
+  private parkedOnDependency = new Set<string>();
+  /** "taskId:section" -> the section as this session last saw it (see reply()). */
+  private shownSections = new Map<string, string>();
   /** Tasks whose description this session has already shown (it stays in the agent's context). */
   private shownDescription = new Set<string>();
   /** taskId -> phaseHistory length when this session first saw the task; later phases are new to it. */
@@ -112,6 +132,7 @@ export class Swarm {
   /** Git context of the working folder, read once per session. */
   private workGit?: Promise<GitContext | null>;
   readonly defaultWaitMs: number;
+  private readonly operatorTimeoutMs: number;
 
   constructor(
     private readonly service: NetworkService,
@@ -122,6 +143,7 @@ export class Swarm {
     this.freshPhases = opts.freshPhases ?? [];
     this.workdir = opts.workdir ?? process.cwd();
     this.underRunner = opts.underRunner ?? false;
+    this.operatorTimeoutMs = opts.operatorTimeoutMs ?? OPERATOR_TIMEOUT_MS;
   }
 
   private get me(): string {
@@ -133,7 +155,7 @@ export class Swarm {
   /** Safe to call at any time: read-only (it does not mark messages as read). */
   async context(input: { full?: boolean } = {}): Promise<SwarmContext> {
     await this.begin(false);
-    return this.contextNow(input.full === true);
+    return this.reply(await this.contextNow(input.full === true), true);
   }
 
   /**
@@ -160,7 +182,7 @@ export class Swarm {
       throw new AppError("AGENT_NOT_REGISTERED", `Not registered (not started yet or misspelled): ${unknown.join(", ")}. Use only registered agents.`, known);
     }
     const task = await this.service.createTask({ title: input.title, description: input.description!, agents: [this.me, ...others], verifyCommand: input.verifyCommand });
-    return { ...(await this.contextNow()), ok: true, action: "TASK_CREATED", taskId: task.id } as SwarmContext;
+    return { ...this.reply(await this.contextNow()), ok: true, action: "TASK_CREATED", taskId: task.id } as SwarmContext;
   }
 
   /** The agent's own checklist for its part. Compact answer: it is called after every step. */
@@ -174,7 +196,7 @@ export class Swarm {
     return {
       ok: true,
       action: "SUBTASKS_UPDATED",
-      subtasks: list.items.map((i) => ({ id: i.id, title: i.title, status: i.status, ...(i.note ? { note: i.note } : {}) })),
+      ...(open.length ? { openSubtasks: open.map((i) => ({ id: i.id, title: i.title, status: i.status })) } : {}),
       progress: progress(list) ?? "no subtasks",
       ...(snap.unread.length ? { unreadMessages: snap.unread.length } : {}),
       nextAction: d.nextAction,
@@ -197,8 +219,8 @@ export class Swarm {
       if (input.requestFiles?.length || input.grantFiles?.length) throw invalid("The operator owns no files: requestFiles/grantFiles go to agents. Ask the operator a plain question.");
       const asked = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "QUESTION", content: input.message });
       return {
-        ...(await this.contextNow()), ok: true, action: "QUESTION_SENT", messageId: asked.id,
-        note: "The operator (a human) answers on the network page; the answer arrives in pendingMessages. If you cannot go on without it, call wait(); otherwise continue with the work that does not depend on it.",
+        ...this.reply(await this.contextNow()), ok: true, action: "QUESTION_SENT", messageId: asked.id,
+        note: `The operator (a human) answers on the network page; the answer arrives in pendingMessages. If you cannot go on without it, call wait(); otherwise continue with the work that does not depend on it. No answer in ${Math.round(this.operatorTimeoutMs / 60_000)} min: go ahead with the option you proposed and say so.`,
       } as SwarmContext;
     }
     if (!others.includes(input.to)) {
@@ -208,7 +230,7 @@ export class Swarm {
 
     if (input.grantFiles?.length) {
       const granted = await this.service.grantFiles({ taskId: task.id, to: input.to, files: input.grantFiles, message: input.message });
-      return { ...(await this.contextNow()), ok: true, action: "FILES_GRANTED", messageId: granted.message.id, granted: granted.files } as SwarmContext;
+      return { ...this.reply(await this.contextNow()), ok: true, action: "FILES_GRANTED", messageId: granted.message.id, granted: granted.files } as SwarmContext;
     }
 
     let type: "INFORMATION" | "FILE_REQUEST" = "INFORMATION";
@@ -225,7 +247,7 @@ export class Swarm {
       type = "FILE_REQUEST";
     }
     const sent = await this.service.sendMessage({ taskId: task.id, to: input.to, type, content: input.message, ...(files ? { files } : {}) });
-    return { ...(await this.contextNow()), ok: true, action: type === "FILE_REQUEST" ? "FILES_REQUESTED" : "MESSAGE_SENT", messageId: sent.id,
+    return { ...this.reply(await this.contextNow()), ok: true, action: type === "FILE_REQUEST" ? "FILES_REQUESTED" : "MESSAGE_SENT", messageId: sent.id,
       ...(files ? { requested: files, note: `Asked ${input.to} for permission to CHANGE these files (reading needs no permission). Continue with your own work; the answer arrives in pendingMessages. Do not edit them before the grant.` } : {}) } as SwarmContext;
   }
 
@@ -253,7 +275,7 @@ export class Swarm {
       decisions: input.decisions,
       interfaces: input.interfaces,
     });
-    return { ...(await this.contextNow()), ok: true, action: "AGREEMENT_PROPOSED", agreementVersion: res.agreement.version } as SwarmContext;
+    return { ...this.reply(await this.contextNow()), ok: true, action: "AGREEMENT_PROPOSED", agreementVersion: res.agreement.version } as SwarmContext;
   }
 
   async complete(input: { result?: string; filesChanged?: string[]; commits?: string[]; tasksDone?: string[]; status?: string; findings?: RawFinding[]; followUps?: FollowUpRequest[] }): Promise<SwarmContext> {
@@ -279,7 +301,18 @@ export class Swarm {
         if (!existing) await this.service.startImplementation(task.id);
         const unreported = input.commits?.length ? undefined : await this.unreportedWork(task, existing?.commits ?? []);
         const commits = unreported?.head ? [unreported.head] : input.commits;
-        const done = await this.service.completeImplementation({ taskId: task.id, summary: input.result, filesChanged: input.filesChanged, commits, tasksDone: input.tasksDone });
+        const absent = Object.entries(await this.dependencyCommits(await this.service.agreements.find(task.id), await this.service.implementations.list(task.id)));
+        if (absent.length) {
+          throw new AppError(
+            "DEPENDENCY_NOT_MERGED",
+            `${absent.map(([a]) => a).join(", ")} reported, but your branch does not have that work yet: git merge ${absent.flatMap(([, c]) => c).join(" ")}, run your work against their code, fix what calls it wrongly, then complete() again.`,
+            { notInYourBranch: Object.fromEntries(absent) },
+          );
+        }
+        const done = await this.service.completeImplementation({ taskId: task.id, summary: input.result, filesChanged: input.filesChanged, commits, tasksDone: input.tasksDone }).catch((e: unknown) => {
+          if (isAppError(e) && e.code === "DEPENDENCY_NOT_READY") this.parkedOnDependency.add(`${task.id}:${task.syncRound}`); // wait for them, do not retry
+          throw e;
+        });
         warnings = [...(done.warnings ?? []), ...(unreported ? [unreported.note] : [])];
         action = "IMPLEMENTATION_COMPLETED";
         break;
@@ -309,7 +342,7 @@ export class Swarm {
       case "DONE":
         throw new AppError("INVALID_PHASE", "The task is already DONE; there is nothing to complete.");
     }
-    const after = await this.contextNow();
+    const after = this.reply(await this.contextNow());
     const phaseChanged = (after.task as { phase: string } | null)?.phase !== task.phase ? { from: task.phase, to: (after.task as { phase: string }).phase } : undefined;
     return { ...after, ok: true, action, ...(phaseChanged ? { phaseChanged } : {}), ...(warnings?.length ? { warnings } : {}), ...(followUpsCreated ? { followUpsCreated } : {}) } as SwarmContext;
   }
@@ -332,23 +365,51 @@ export class Swarm {
     const deadline = Date.now() + Math.min(Math.max(input.timeoutMs ?? this.defaultWaitMs, 0), MAX_WAIT_MS);
     let entry: string | undefined;
     for (;;) {
+      const current = await this.currentTask();
+      if (current?.status === "BLOCKED" && current.handover) await this.service.escalateIfDue(current.id).catch(() => null); // nobody decided in time
       const ctx = await this.contextNow();
       const signature = this.signature(ctx);
       entry ??= signature;
-      if ((ctx.pendingMessages as unknown[]).length > 0) return { ...ctx, status: "MESSAGES" } as SwarmContext;
-      if (ctx.nextAction === "done") return { ...ctx, status: "DONE" } as SwarmContext;
-      if (ctx.nextAction !== "wait") return { ...ctx, status: "ACTION_REQUIRED" } as SwarmContext;
-      if (signature !== entry) return { ...ctx, status: "UPDATED" } as SwarmContext; // new task or phase change the agent should know about
+      if ((ctx.pendingMessages as unknown[]).length > 0) return { ...this.reply(ctx), status: "MESSAGES" } as SwarmContext;
+      if (ctx.nextAction === "done") return { ...this.reply(ctx), status: "DONE" } as SwarmContext;
+      if (ctx.nextAction !== "wait") return { ...this.reply(ctx), status: "ACTION_REQUIRED" } as SwarmContext;
+      if (signature !== entry) return { ...this.reply(ctx), status: "UPDATED" } as SwarmContext; // new task or phase change the agent should know about
       const left = deadline - Date.now();
       if (left <= 0 || signal?.aborted) return this.compact(ctx, "TIMEOUT");
       // Consumes at most one event; the loop re-reads the (filesystem) state to decide whether it matters.
-      await this.service.waitForEvent({ timeoutMs: left }, signal);
+      // Waiting for the operator: look at the clock now and then, a question that timed out frees the agent.
+      const operator = (ctx.waitingOn as string[] | undefined)?.includes(OPERATOR);
+      await this.service.waitForEvent({ timeoutMs: operator ? Math.min(left, OPERATOR_POLL_MS, this.operatorTimeoutMs) : left }, signal);
     }
   }
 
   private signature(ctx: SwarmContext): string {
     const t = ctx.task as { id: string; phase: string; syncRound: number; status: string } | null;
     return t ? `${t.id}:${t.phase}:${t.syncRound}:${t.status}` : "none";
+  }
+
+  /**
+   * What goes back to the agent. Every response stays in its context and is read again on every later turn, so a big
+   * part it has already seen in this phase (the agreement, the OpenSpec task list, its ownership...) and that did not
+   * change becomes "(unchanged)" instead of being repeated in each reply. swarm_context (fresh = true) always shows
+   * everything of the phase; what it showed counts as seen.
+   */
+  private reply(ctx: SwarmContext, fresh = false): SwarmContext {
+    const task = ctx.task as { id: string; phase: string; syncRound?: number } | null;
+    if (!task) return ctx;
+    const out: Record<string, unknown> = { ...ctx };
+    let same = false;
+    for (const key of SECTIONS) {
+      if (!(key in out)) continue;
+      const seen = `${task.id}:${task.phase}:${task.syncRound ?? 0}:${key}`; // a new phase or round shows everything once again
+      const json = JSON.stringify(out[key]);
+      if (!fresh && this.shownSections.get(seen) === json) {
+        out[key] = UNCHANGED;
+        same = true;
+      } else this.shownSections.set(seen, json);
+    }
+    if (same) out.unchanged = UNCHANGED_NOTE;
+    return out as SwarmContext;
   }
 
   /** Nothing changed while waiting: repeat only what the agent needs to call wait() again, not the whole context. */
@@ -444,11 +505,15 @@ export class Swarm {
       openToMe: open.filter((m) => m.to === this.me),
       openFromMe: open.filter((m) => m.from === this.me),
       myQuestions: messages.filter((m) => m.from === this.me && m.to === OPERATOR && !m.readAt),
+      myLastMessageAt: messages.filter((m) => m.from === this.me && m.to !== OPERATOR).at(-1)?.createdAt,
       ...(task.phase === "INTEGRATE" ? { followUpBudget: await this.service.followUpBudget(task) } : {}),
       handoff: await this.handoffPhase(task),
       ...(task.phase === "SYNC" && task.syncRound > 1 ? { fixedFindings: await this.fixedFindings(task) } : {}),
       ...(task.phase === "IMPLEMENT" ? { ownBranch: await this.ownBranch(task) } : {}),
       ...(task.phase === "SYNC" ? { missingCommits: await this.missingCommits(task, impls) } : {}),
+      ...(task.phase === "IMPLEMENT"
+        ? { dependencyCommits: await this.dependencyCommits(agreement, impls), dependencyParked: this.parkedOnDependency.has(`${task.id}:${task.syncRound}`) }
+        : {}),
       ...(task.openspec && task.phase !== "DONE" ? await this.readOpenspec(task.openspec.change) : {}),
     };
   }
@@ -495,9 +560,19 @@ export class Swarm {
    * and tests an older copy of their files (e.g. one it merged in an earlier round) and reports fixed problems again.
    */
   private async missingCommits(task: Task, impls: Implementation[]): Promise<Record<string, string[]>> {
+    return this.commitsNotHere(impls, this.service.phases.reviewees(task).filter((a) => a !== this.me));
+  }
+
+  /** IMPLEMENT: the commits of the agents this one depends on (dependsOn) that have reported, missing from its branch. */
+  private async dependencyCommits(agreement: Agreement | null, impls: Implementation[]): Promise<Record<string, string[]>> {
+    const deps = agreement?.assignments.find((a) => a.agentId === this.me)?.dependsOn ?? [];
+    return deps.length ? this.commitsNotHere(impls.filter((i) => i.status === "READY_FOR_SYNC"), deps) : {};
+  }
+
+  /** agent -> its reported commits that this session's branch does not contain (empty when git cannot tell). */
+  private async commitsNotHere(impls: Implementation[], targets: string[]): Promise<Record<string, string[]>> {
     this.workGit ??= readGitContext(this.workdir).catch(() => null);
     if (!(await this.workGit)) return {};
-    const targets = this.service.phases.reviewees(task).filter((a) => a !== this.me);
     const missing: Record<string, string[]> = {};
     for (const i of impls) {
       if (!targets.includes(i.agentId)) continue;
@@ -620,11 +695,13 @@ export class Swarm {
 
     const mine = impls.find((i) => i.agentId === this.me) ?? null;
     // after a failed review or integration the round's reports explain what to fix
+    // the lead took over this round's fix of the stuck agents: their findings are its own
+    const takenOver = task.takeover && task.takeover.round === task.syncRound && phases.integrator(task) === this.me ? task.takeover.from : [];
     const fixRequests =
       phase === "IMPLEMENT" && task.syncRound > 0
         ? [...reports, ...integrations]
             .filter((r) => r.status === "NEEDS_FIX")
-            .flatMap((r) => r.findings.map((f) => ({ ...f, reportedBy: r.agentId, forYou: !f.relatedAgent || f.relatedAgent === this.me })))
+            .flatMap((r) => r.findings.map((f) => ({ ...f, reportedBy: r.agentId, forYou: !f.relatedAgent || f.relatedAgent === this.me || takenOver.includes(f.relatedAgent) })))
         : [];
     const integration = integrations.at(-1);
     const nonEmpty = <T>(key: string, list: T[]) => (list.length ? { [key]: list } : {});
@@ -667,6 +744,15 @@ export class Swarm {
       ...(snap.myQuestions.length ? { questionsToOperator: snap.myQuestions.map((m) => ({ messageId: m.id, question: m.content })) } : {}),
       ...(openFromMe.length ? { yourOpenRequests: openFromMe.map((m) => ({ messageId: m.id, to: m.to, files: m.files ?? [] })) } : {}),
       ...(show(["IMPLEMENT"]) ? await this.ownershipView(task.id) : {}),
+      ...(show(["IMPLEMENT"]) && myAssignment?.dependsOn?.length
+        ? {
+            dependsOn: myAssignment.dependsOn.map((id) => {
+              const i = impls.find((x) => x.agentId === id);
+              const reported = i?.status === "READY_FOR_SYNC";
+              return { agentId: id, reported, ...(reported ? nonEmpty("commits", i.commits) : {}), ...nonEmpty("notInYourBranch", snap.dependencyCommits?.[id] ?? []) };
+            }),
+          }
+        : {}),
       ...(show(["IMPLEMENT"]) && mySubtasks.length ? { subtasks: mySubtasks.map((i) => ({ id: i.id, title: i.title, status: i.status, ...(i.note ? { note: i.note } : {}) })) } : {}),
       ...(mine && (full || phase === "IMPLEMENT") ? { implementation: full ? { status: mine.status, summary: mine.summary, filesChanged: mine.filesChanged, commits: mine.commits, ...nonEmpty("tasksDone", mine.tasksDone ?? []) } : { status: mine.status } } : {}),
       ...(show(["SYNC", "INTEGRATE"])
@@ -741,14 +827,27 @@ export class Swarm {
       };
     }
     let d = core;
-    const asked = s.myQuestions[0];
+    // a question to the operator holds the asker for a while; with no answer it goes ahead with its own proposal and says so
+    const dueAt = (m: Message) => Date.parse(m.createdAt) + this.operatorTimeoutMs;
+    const minutes = Math.round(this.operatorTimeoutMs / 60_000);
+    const asked = s.myQuestions.find((m) => dueAt(m) > Date.now());
+    const timedOut = s.myQuestions.find((m) => dueAt(m) <= Date.now());
     if (asked && s.task.phase !== "DONE") {
       const waitingOn = [...new Set([...core.waitingOn, OPERATOR])];
       const what = `Your question to the operator (${asked.id}) has no answer yet.`;
+      const left = `If none comes within ${minutes} min of asking, go ahead with the option you proposed in it.`;
       d =
         core.nextAction === "propose" || core.nextAction === "approve"
-          ? { nextAction: "wait", allowedActions: [...new Set(["wait", ...core.allowedActions])], hint: `${what} Call wait(): the answer arrives in pendingMessages; propose or approve after it.`, waitingOn }
+          ? { nextAction: "wait", allowedActions: [...new Set(["wait", ...core.allowedActions])], hint: `${what} Call wait(): the answer arrives in pendingMessages; propose or approve after it. ${left}`, waitingOn }
           : { ...core, hint: `${what} Continue with what does not depend on it. ${core.hint}`, waitingOn };
+    } else if (timedOut && s.task.phase !== "DONE" && !(s.myLastMessageAt && Date.parse(s.myLastMessageAt) >= dueAt(timedOut))) {
+      d = {
+        ...core,
+        hint:
+          `The operator has not answered your question ${timedOut.id} for ${minutes} min: go ahead with the option you proposed in it (none proposed: the safest one) and say so, ` +
+          `send_message to the other agents ("no answer from the operator on ${timedOut.id} in ${minutes} min, I go ahead with <option>") and in your result. ` +
+          `If the answer still comes, it arrives in pendingMessages. ${core.hint}`,
+      };
     }
     const example = this.example(s.task, d.nextAction);
     return example ? { ...d, exampleCall: example } : d;
@@ -783,7 +882,7 @@ export class Swarm {
             ? `This task implements the OpenSpec change ${spec}/ ('openspec'): read its proposal.md, design.md and specs/, then split it without redesigning: every open task of tasks.md goes to exactly one agent (assignments[].tasks: ["1.1", ...]) together with the files those tasks change; ${spec}/ stays with you, the lead. If the design has to change, ask the operator. `
             : "";
           return this.me === lead
-            ? done("propose", base, `${split}Agree with the others who changes which files (send_message), then propose(): one assignment per agent, every file with ONE owner; an agent with nothing of its own to change gets files: [] (review only).`, [...task.agents])
+            ? done("propose", base, `${split}Agree with the others who changes which files (send_message), then propose(): one assignment per agent, every file with ONE owner; an agent with nothing of its own to change gets files: [] (review only). Write the exact contracts into interfaces (method, path, headers, body, status codes); an agent whose work calls another agent's new code (e.g. API tests) gets dependsOn: [that agent].`, [...task.agents])
             : done("wait", base, `Tell ${lead} which ${spec ? "tasks of tasks.md and which " : ""}files you will take, or that you only review (files: []), then wait() for the proposal.`, [...task.agents]);
         }
         const pending = agreement.assignments.map((a) => a.agentId).filter((id) => !agreement.approvedBy.includes(id));
@@ -794,14 +893,34 @@ export class Swarm {
       }
       case "IMPLEMENT": {
         const pending = task.agents.filter((id) => !impls.some((i) => i.agentId === id && i.status === "READY_FOR_SYNC"));
+        const takeover = task.takeover?.round === task.syncRound ? task.takeover : undefined;
         if (mine?.status === "READY_FOR_SYNC") {
-          return done("wait", ["send_message", "wait"], `Your part is ready. Waiting for: ${pending.join(", ")}.`, pending);
+          const taken = takeover?.from.includes(this.me) ? `${lead} (the lead) took over your fix this round. ` : "";
+          return done("wait", ["send_message", "wait"], `${taken}Your part is ready. Waiting for: ${pending.join(", ")}.`, pending);
         }
         const myAssignment = agreement?.assignments.find((a) => a.agentId === this.me);
         if (task.syncRound === 0 && isReviewOnly(myAssignment)) {
           return done("implement", ["send_message", "complete", "wait"], 'Your assignment has no files: review only, you change nothing in this task. Mark your part ready now with complete({result: "review only: nothing to change"}); you review in SYNC.', pending);
         }
-        const base = task.baseCommit ? `Follow-up of ${task.parentTaskId}: in your own git branch, first git merge ${task.baseCommit}. ` : "";
+        const deps = myAssignment?.dependsOn ?? [];
+        const depsWaiting = deps.filter((d) => !impls.some((i) => i.agentId === d && i.status === "READY_FOR_SYNC"));
+        if (depsWaiting.length && s.dependencyParked) {
+          return done(
+            "wait",
+            ["send_message", "subtasks", "wait"],
+            `Your part waits for ${depsWaiting.join(", ")} (dependsOn): call wait(), you are woken when ${depsWaiting.length > 1 ? "they report" : "it reports"}. Then merge their commits, run your work against their code and complete().`,
+            depsWaiting,
+          );
+        }
+        const toMerge = Object.entries(s.dependencyCommits ?? {});
+        const dep = depsWaiting.length
+          ? `Your work calls the new code of ${depsWaiting.join(", ")} (dependsOn): write it now from agreement.interfaces and the code as it is (read the controllers and request/response classes; never guess a path, header or field). complete() is accepted after ${depsWaiting.length > 1 ? "they report" : "it reports"} and you ran your work against that code. `
+          : toMerge.length
+            ? `${toMerge.map(([a]) => a).join(", ")} reported: git merge ${toMerge.flatMap(([, c]) => c).join(" ")} into your branch, run your work against their code and fix what calls it wrongly before complete(). `
+            : deps.length
+              ? `${deps.join(", ")} reported and your branch has that work: run your work against it before complete(). `
+              : "";
+        const base = (task.baseCommit ? `Follow-up of ${task.parentTaskId}: in your own git branch, first git merge ${task.baseCommit}. ` : "") + dep;
         const steps = s.subtasks.find((l) => l.agentId === this.me)?.items ?? [];
         const open = steps.filter((i) => i.status === "TODO" || i.status === "DOING");
         const plan = open.length
@@ -817,8 +936,13 @@ export class Swarm {
           ? `Your OpenSpec tasks: ${specTasks.join(", ")} ('openspec.yourTasks'): implement exactly these, each scenario of their specs as a test; ${spec}/ (tasks.md included) belongs to the lead. `
           : "";
         const finish = `Then complete({result, filesChanged${specTasks.length ? ", tasksDone: [<the numbers of your tasks you finished>]" : ""}}).`;
+        const takeOver =
+          takeover && this.me === lead
+            ? `${takeover.by === "timeout" ? "The operator did not decide in time" : "The operator handed it to you"}: you take over the fix of ${takeover.from.join(", ")} this round. ` +
+              `Their findings are in fixRequests (forYou), their files are granted to you (ownership.grantedToYou). If you cannot fix it either, say why in result: the task then goes to the operator. `
+            : "";
         return task.syncRound > 0
-          ? done("fix", ["send_message", "subtasks", "complete", "wait"], `${base}Fix what 'fixRequests' (forYou) name. ${plan}${commit}${finish}`, pending)
+          ? done("fix", ["send_message", "subtasks", "complete", "wait"], `${takeOver}${base}Fix what 'fixRequests' (forYou) name. ${plan}${commit}${finish}`, pending)
           : done("implement", ["send_message", "subtasks", "complete", "wait"], `${base}${yourSpec}Implement your assignment in your own files (reading any file needs no permission; to change another agent's file ask its owner with send_message requestFiles). ${plan}${commit}${finish}`, pending);
       }
       case "SYNC": {

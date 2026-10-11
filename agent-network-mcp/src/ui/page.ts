@@ -59,6 +59,7 @@ button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:
 .note{font-size:13px}.note.err{color:var(--bad)}.note.ok{color:var(--ok)}
 .banner{padding:10px 14px;margin-bottom:14px;border:1px solid var(--line);border-left:3px solid var(--bad);background:var(--card)}
 .openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}
+.blocked{margin-top:6px;padding:6px 10px;border-left:3px solid var(--bad);background:var(--bg)}.blocked .checks{margin:6px 0 4px}
 pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px;margin:6px 0 0;font:11px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word}pre.log.err{color:var(--bad)}
 .stats{display:flex;flex-wrap:wrap;gap:4px 12px;margin:6px 0;font-size:12px;color:var(--muted)}.stats b{color:var(--text);font-weight:600}
 .q{border:1px solid var(--qline);border-left:3px solid var(--warn);background:var(--qbg)}.q .who{font-weight:600}.q textarea{min-height:60px;margin-top:8px}.q .row2{display:flex;gap:8px;align-items:center;margin-top:6px}
@@ -278,6 +279,26 @@ function renderOpenspec(t){
   const st=archiveState.get(key);if(st&&(st.output||st.error))box.append(el("pre","log"+(st.error?" err":""),st.error||st.output));
   return box;
 }
+const unblockState=new Map();
+function renderBlocked(t){
+  const box=el("div","blocked");box.append(badge("BLOCKED")," "+(t.blockedReason||"лимит раундов исправлений исчерпан"));
+  if(!controlMode){box.append(el("span","muted"," — нужен оператор: task unblock / task cancel"));return box}
+  const key=route.project+"/"+t.id;const st=unblockState.get(key)||{};
+  const act=async(what,body,question)=>{if(!confirm(question))return;unblockState.set(key,{pending:true});render();
+    try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/"+what,body);unblockState.delete(key)}catch(e){unblockState.set(key,{error:e.message})}await tick()};
+  const h=t.handover;
+  if(h)box.append(el("div","","Если вы не решите до "+time(h.dueAt)+", исправление "+h.from.join(", ")+" возьмёт lead "+h.lead+": один раунд, с их находками и файлами. Не справится и он — задача останется BLOCKED."));
+  const r=el("div","checks");r.append(el("span","muted",st.pending?"выполняю…":"Ещё раундов исправлений:"));
+  [1,2,3].forEach(n=>{const b=el("button","ghost","+"+n);b.type="button";b.disabled=!!st.pending;
+    b.onclick=()=>act("unblock",{rounds:n},t.id+": дать ещё "+n+" раунд(а) исправлений? Задача вернётся в работу, отложенное исправление начнётся сразу.");r.append(b)});
+  if(h){const b=el("button","ghost","Отдать lead'у сейчас");b.type="button";b.disabled=!!st.pending;
+    b.onclick=()=>act("handover",{},t.id+": "+h.lead+" (lead) берёт исправление "+h.from.join(", ")+" сейчас, их файлы на этот раунд переходят к нему?");r.append(b)}
+  const c=el("button","ghost","Отменить задачу");c.type="button";c.disabled=!!st.pending;
+  c.onclick=()=>act("cancel",{reason:"cancelled on the page"},t.id+": отменить задачу? Агенты перейдут к следующей.");r.append(c);
+  box.append(r);if(st.error)box.append(el("pre","log err",st.error));
+  box.append(el("div","muted","Раунд — ещё один цикл исправлений и ревью (IMPLEMENT → SYNC)."));
+  return box;
+}
 function renderStats(t){
   const box=el("div","");const st=t.stats;
   if(!st){box.append(el("div","stats","статистика: нет данных (задача создана до учёта времени)"));return box}
@@ -303,7 +324,8 @@ function renderTask(t){
   if(chain.length)hd.append(el("div","muted",chain.join(" · ")));
   if(t.openspec)hd.append(renderOpenspec(t));
   hd.append(renderStats(t));
-  if(t.status==="BLOCKED"){const b=el("div","");b.append(badge("BLOCKED")," "+(t.blockedReason||"")+" — нужен оператор: task unblock / task cancel");hd.append(b)}
+  if(t.status==="BLOCKED")hd.append(renderBlocked(t));
+  if(t.takeover&&t.status!=="BLOCKED")hd.append(el("div","muted","Lead взял исправление "+t.takeover.from.join(", ")+" в раунде "+t.takeover.round+" ("+(t.takeover.by==="timeout"?"оператор не ответил вовремя":"передал оператор")+")."));
   c.append(hd);
   const steps=el("div","steps");const idx=PHASES.indexOf(t.phase);
   PHASES.forEach((p,i)=>steps.append(el("div","step"+(i<idx?" past":i===idx?" now":""),p+(p==="SYNC"&&t.syncRound&&idx>=2?" #"+t.syncRound:""))));
@@ -313,7 +335,7 @@ function renderTask(t){
   for(const id of t.agents){
     const r=el("tr");r.append(td(id));
     const as=t.agreement&&t.agreement.assignments.find(a=>a.agentId===id);const ap=t.agreement&&t.agreement.approvedBy.includes(id);
-    const c1=el("td");c1.append(el("span","",as?as.responsibility:"—"));if(as&&as.files&&as.files.length)c1.append(el("div","muted mono","файлы: "+as.files.join(", ")));if(t.agreement&&as)c1.append(" ",el("span","badge "+(ap?"PASS":"WAITING"),ap?"одобрил":"не одобрил"));r.append(c1);
+    const c1=el("td");c1.append(el("span","",as?as.responsibility:"—"));if(as&&as.files&&as.files.length)c1.append(el("div","muted mono","файлы: "+as.files.join(", ")));if(as&&as.dependsOn&&as.dependsOn.length)c1.append(el("div","muted","сдаёт после: "+as.dependsOn.join(", ")+" (dependsOn)"));if(t.agreement&&as)c1.append(" ",el("span","badge "+(ap?"PASS":"WAITING"),ap?"одобрил":"не одобрил"));r.append(c1);
     const subs=(t.subtasks&&t.subtasks[id])||[];const live=subs.filter(x=>x.status!=="DROPPED");
     const c2=el("td","sub");if(!subs.length)c2.append(el("span","muted","—"));else{const doing=subs.find(x=>x.status==="DOING");
       c2.append(el("div","",live.filter(x=>x.status==="DONE").length+"/"+live.length+(doing?" · ▶ "+doing.id:"")));
@@ -389,7 +411,7 @@ $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev
 function fillSelect(id,label,values,fmt){const sel=$(id);const keep=sel.value;const sig=values.join("|");if(sel.dataset.sig===sig)return;sel.dataset.sig=sig;
   sel.replaceChildren(new Option(label,""),...values.map(v=>new Option(fmt?fmt(v):v,v)));if(values.includes(keep))sel.value=keep}
 ["f-agent","f-task","f-model","f-status","e-task","e-type"].forEach(id=>$(id).addEventListener("change",render));
-const STATUS={running:"идёт",ok:"ок",stopped:"остановлена",failed:"ошибка"};
+const STATUS={running:"идёт",ok:"ок",turns:"лимит ходов",stopped:"остановлена",failed:"ошибка"};
 const expandedRuns=new Set();
 const runKey=r=>r.id?r.taskId+"/"+r.id:"live/"+r.agentId;
 function renderRuns(){
@@ -400,7 +422,7 @@ function renderRuns(){
   const t=$("runs");t.replaceChildren(head(["","Сессия","Статус","Агент","Модель","Задача","Начало","Длит.","Токены","Стоимость"]));
   list.forEach(r=>{const key=runKey(r);const open=expandedRuns.has(key);
     const tr=el("tr","click"+(open?" sel":""));tr.onclick=()=>{if(expandedRuns.has(key))expandedRuns.delete(key);else expandedRuns.add(key);renderRuns()};
-    const st=el("td","nw");st.append(dot({running:"acc",ok:"ok",failed:"bad"}[r.status]||""),r.status==="failed"?"exit "+r.exitCode:STATUS[r.status]);
+    const st=el("td","nw");st.append(dot({running:"acc",ok:"ok",turns:"ok",failed:"bad"}[r.status]||""),r.status==="failed"?"exit "+r.exitCode:STATUS[r.status]);
     const task=el("td","mono nw",r.taskId+(r.alsoFinished.length?" +"+r.alsoFinished.length:""));task.title=[r.taskTitle,...r.alsoFinished.map(x=>x.title)].join(", ");
     tr.append(td(open?"▾":"▸","muted"),td(r.seq?"С-"+r.seq:"—","mono nw"),st,td(r.agentId),td(r.model||"—","mono"),task,td(ago(r.startedAt),"muted nw"),td(fmtMs(r.durationMs),"mono nw"),
       td(r.usage?fmtTok(r.usage.total):r.status==="running"?"—":"нет данных",r.usage?"mono":"muted"),td(r.costUsd!==null?fmtUsd(r.costUsd,r.costEstimated):r.usage?"нет цены":"—",r.costUsd!==null?"mono nw":"muted"));
@@ -422,7 +444,7 @@ function runDetail(r){
   const u=r.usage;
   line("токены",u?"всего "+fmtTok(u.total)+" · вход "+fmtTok(u.input)+(u.cacheRead||u.cacheCreation?" (из кэша "+fmtTok(u.cacheRead)+", запись в кэш "+fmtTok(u.cacheCreation)+")":"")+" · выход "+fmtTok(u.output):r.status==="running"?"будут известны, когда сессия закончится":"нет: CLI не сообщил их (сессию остановили до конца или CLI без JSON-вывода)");
   line("стоимость",r.costUsd!==null?(r.costEstimated?fmtUsd(r.costUsd,true)+" по вашей цене для "+r.model+" (prices в runners.json)":fmtUsd(r.costUsd,false)+" — сообщил CLI"):u?"нет цены для "+(r.model||"модели")+": добавьте её в \"prices\" в runners.json":"—");
-  line("завершение",r.status==="running"?"сессия идёт":r.status==="ok"?"код выхода 0":r.status==="stopped"?"остановлена сигналом (кнопка «Стоп» или Ctrl+C)":"ошибка: код выхода "+r.exitCode);
+  line("завершение",r.status==="running"?"сессия идёт":r.status==="ok"?"код выхода 0":r.status==="turns"?"упёрлась в лимит ходов, успев продвинуться: плановый конец, работу продолжила свежая сессия (exit "+r.exitCode+")":r.status==="stopped"?"остановлена сигналом (кнопка «Стоп» или Ctrl+C)":"ошибка: код выхода "+r.exitCode);
   if(r.recordPath)line("запись",el("span","mono",r.recordPath));
   return d;
 }

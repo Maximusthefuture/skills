@@ -2,11 +2,14 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isHandedOver } from "./handoff.js";
+import { NetworkService } from "./service.js";
 import { SessionOutput, type SessionResult } from "./sessionOutput.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore, defaultIsProcessAlive } from "./stores/agentStore.js";
 import { MessageStore } from "./stores/messageStore.js";
+import { EventStore } from "./stores/eventStore.js";
 import { SessionStore } from "./stores/sessionStore.js";
+import { SubtaskStore } from "./stores/subtaskStore.js";
 import { TaskStore } from "./stores/taskStore.js";
 import type { Phase, Task } from "./types.js";
 
@@ -23,7 +26,8 @@ export const DEFAULT_PROMPT =
   "Work through the agent-network MCP tools and the project files: call swarm_context first, then do what nextAction says " +
   "and read nextAction in every response; when it is wait, call wait(). End your turn only when nextAction is done. " +
   "Nobody reads your replies in this session: if something only a human can decide is unclear (scope, requirements), ask with " +
-  'send_message({to: "operator", message: <question>}) and call wait() for the answer; never invent the scope.{resume}';
+  'send_message({to: "operator", message: <question and the option you would take>}) and call wait() for the answer; ' +
+  "with no answer in 10 minutes go ahead with that option and tell the other agents. Never invent the scope.{resume}";
 
 const RESUME =
   " This is session {attempt} for this task: the previous one ended before the task was done. " +
@@ -33,6 +37,11 @@ const HANDOFF =
   " This is a fresh session for phase {phase}: the previous session handed the task over when the phase changed. " +
   "You have not seen the earlier discussion, on purpose: work from swarm_context (the task and the agreement) and the code, not from what the others say they did.";
 
+const TURN_LIMIT =
+  " The previous session for this task reached its turn limit in the middle of the work: sessions are kept short on purpose, " +
+  "because the whole context is read again on every turn. Call swarm_context (your 'subtasks' show what is done and what is in progress), " +
+  "run git status and git diff to see changes that are not committed yet, and go on from there without redoing finished steps.";
+
 export interface PromptVars {
   agent: string;
   taskId: string;
@@ -40,10 +49,18 @@ export interface PromptVars {
   attempt: number;
   /** The previous session ended because the task entered this phase (see handoff.ts). */
   handoff?: Phase;
+  /** The previous session ended at its turn limit after making progress. */
+  afterTurnLimit?: boolean;
 }
 
 export function renderPrompt(template: string, v: PromptVars): string {
-  const resume = v.handoff ? HANDOFF.replaceAll("{phase}", v.handoff) : v.attempt > 1 ? RESUME.replaceAll("{attempt}", String(v.attempt)) : "";
+  const resume = v.handoff
+    ? HANDOFF.replaceAll("{phase}", v.handoff)
+    : v.afterTurnLimit
+      ? TURN_LIMIT
+      : v.attempt > 1
+        ? RESUME.replaceAll("{attempt}", String(v.attempt))
+        : "";
   return template
     .replaceAll("{resume}", resume)
     .replaceAll("{agent}", v.agent)
@@ -77,6 +94,17 @@ export function withModel(command: string[], model: string | undefined): string[
 /** A model name as it goes into the argv: no spaces, and it cannot be taken for a flag. */
 export function isValidModel(model: unknown): model is string {
   return typeof model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(model);
+}
+
+/** The turn limit the command gives the CLI: `--max-turns 70` (Claude Code) or `--max-session-turns 70` (Qwen Code). */
+export function turnLimitOf(command: string[]): number | undefined {
+  for (let i = 0; i < command.length; i++) {
+    const m = /^--max(?:-session)?-turns(?:=(\d+))?$/.exec(command[i]!);
+    if (!m) continue;
+    const n = Number(m[1] ?? command[i + 1]);
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+  return undefined;
 }
 
 /** Used for {systemPrompt} when the system prompt file cannot be read: the CLI must not get an empty system prompt. */
@@ -218,6 +246,9 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
   const agents = new AgentStore(fs);
   const messages = new MessageStore(fs);
   const sessions = new SessionStore(fs);
+  const subtasks = new SubtaskStore(fs);
+  const events = new EventStore(fs);
+  const turnLimit = turnLimitOf(opts.command);
 
   const attempts = new Map<string, number>();
   const freshPhases = opts.freshPhases ?? [];
@@ -225,12 +256,19 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
   const plannedEnds = new Map<string, number>();
   /** taskId -> the phase the next session takes over after a handoff. */
   const handedTo = new Map<string, Phase>();
+  /** Tasks whose last session ended at its turn limit after making progress: the next one is told to go on from there. */
+  const turnLimited = new Set<string>();
   /** taskId -> state signature when the runner gave up; retried as soon as the state changes. */
   const gaveUp = new Map<string, string>();
   let note = "";
   const say = (line: string): void => {
     if (line !== note) log(line);
     note = line;
+  };
+  /** What the agent has done on the task: its checklist and the events it caused (messages, proposals, reports). */
+  const progressMark = async (taskId: string): Promise<string> => {
+    const [list, evs] = await Promise.all([subtasks.get(taskId, agent), events.list(taskId)]);
+    return JSON.stringify([list.items.map((i) => `${i.id}:${i.status}`), evs.filter((e) => e.event.sourceAgent === agent).length]);
   };
   /** Phase/status changes and new messages for the agent: a reason to try a given-up task again. */
   const signature = async (t: Task): Promise<string> => {
@@ -247,7 +285,22 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       continue;
     }
     if (task.status === "BLOCKED") {
-      say(`${task.id} is BLOCKED (${task.blockedReason ?? "fix-round limit"}); waiting for the operator`);
+      const handover = task.handover;
+      if (handover && Date.parse(handover.dueAt) <= Date.now()) {
+        // the operator let the deadline pass: the lead takes over the stuck fix (any runner of the task may do it, once)
+        const service = await NetworkService.create(networkDir, { id: agent, type: "runner" });
+        try {
+          if (await service.escalateIfDue(task.id)) log(`${task.id}: the operator did not decide in time; ${handover.lead} (the lead) takes over the fix of ${handover.from.join(", ")}`);
+        } catch (e) {
+          log(`${task.id}: cannot hand the fix over to the lead: ${(e as Error).message}`);
+          await sleep(pollMs, signal);
+        } finally {
+          service.close();
+        }
+        continue;
+      }
+      const lead = handover ? `; ${handover.lead} (the lead) takes over at ${new Date(handover.dueAt).toLocaleTimeString()} unless the operator decides` : "";
+      say(`${task.id} is BLOCKED (${task.blockedReason ?? "fix-round limit"}); waiting for the operator${lead}`);
       await sleep(pollMs, signal);
       continue;
     }
@@ -280,7 +333,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     attempts.set(task.id, attempt);
     const handoff = handedTo.get(task.id);
     handedTo.delete(task.id);
-    const vars = { agent, taskId: task.id, title: task.title, attempt, ...(handoff ? { handoff } : {}) };
+    const afterTurnLimit = turnLimited.delete(task.id);
+    const vars = { agent, taskId: task.id, title: task.title, attempt, ...(handoff ? { handoff } : {}), ...(afterTurnLimit ? { afterTurnLimit } : {}) };
     const template = (opts.promptFile ? await readText(opts.promptFile, "prompt file", log) : undefined) ?? opts.promptTemplate ?? DEFAULT_PROMPT;
     const instructions = opts.instructionsFile ? await readText(opts.instructionsFile, "instructions file", log) : undefined;
     const prompt = withInstructions(renderPrompt(template, vars), instructions, vars);
@@ -288,7 +342,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt), AGENT_NETWORK_RUNNER: "1",
       ...(freshPhases.length ? { AGENT_NETWORK_FRESH_PHASES: freshPhases.join(",") } : {}),
     };
-    say(`${task.id}: starting session ${attempt} (phase ${task.phase}${handoff ? ", fresh after a handoff" : ""}${model ? `, model ${model}` : ""})`);
+    say(`${task.id}: starting session ${attempt} (phase ${task.phase}${handoff ? ", fresh after a handoff" : afterTurnLimit ? ", going on after the turn limit" : ""}${model ? `, model ${model}` : ""})`);
+    const progressBefore = await progressMark(task.id).catch(() => "");
     const finishedBefore = new Set((await tasks.listForAgent(agent)).filter(isFinished).map((t) => t.id));
     const sink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
     const startedAt = new Date();
@@ -299,6 +354,9 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal);
     const endedAt = new Date();
     opts.onSession?.(null);
+    // a session stopped by its turn limit after doing something is a planned end (short sessions keep the context small)
+    const hitTurnLimit = result?.stopReason === "max_turns" || (turnLimit !== undefined && (result?.numTurns ?? 0) >= turnLimit);
+    const plannedTurnLimit = hitTurnLimit && (await progressMark(task.id).catch(() => progressBefore)) !== progressBefore;
     // a session may go on to the next task by itself (e.g. a follow-up): its time and tokens are counted for this task
     const alsoTasks = (await tasks.listForAgent(agent)).filter((t) => isFinished(t) && t.id !== task.id && !finishedBefore.has(t.id));
     await sessions
@@ -310,6 +368,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
         ...(result?.numTurns !== undefined ? { numTurns: result.numTurns } : {}),
         ...(result?.model || model ? { model: result?.model ?? model } : {}), // what the CLI reported, else what it was asked for
         ...(alsoTasks.length ? { alsoFinished: alsoTasks.map((t) => t.id) } : {}),
+        ...(plannedTurnLimit ? { turnLimit: true as const } : {}),
       })
       .catch((e: Error) => log(`cannot record the session: ${e.message}`));
     if (signal?.aborted) break;
@@ -335,6 +394,12 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
       handedTo.set(task.id, after.phase);
       say(`${task.id}: handoff to a fresh session for ${after.phase} (session exit ${code})`);
+      continue;
+    }
+    if (plannedTurnLimit) {
+      plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
+      turnLimited.add(task.id);
+      say(`${task.id}: session ${attempt} reached its turn limit (${result?.numTurns ?? turnLimit} turns) after progress; a fresh session goes on (phase ${after.phase})`);
       continue;
     }
     if (attempt - (plannedEnds.get(task.id) ?? 0) > maxRestarts) {

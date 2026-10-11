@@ -124,6 +124,28 @@ describe("PhaseManager.evaluate", () => {
     expect(pm.evaluate(snap({ task: task("SYNC", 4), syncReports: failing }))).toMatchObject({ halt: true }); // default limit 3
   });
 
+  it("a fix round that brought nothing new for an agent that still has to fix halts at once, not after maxFixRounds", () => {
+    const fixer = (extra: Partial<Implementation>): Implementation => ({ ...impl("backend", "READY_FOR_SYNC"), ...extra });
+    const round2 = (implementations: Implementation[], extra: Partial<Task> = {}) =>
+      pm.evaluate(snap({ task: task("SYNC", 2, { reviewScope: ["backend"], ...extra }), implementations, syncReports: [report("reviewer", "NEEDS_FIX", "backend")] }));
+
+    const same = round2([fixer({ commits: ["a1"], commitsBeforeFix: ["a1"] })]);
+    expect(same).toMatchObject({ halt: true, needsFix: ["backend"], reason: expect.stringContaining("again for backend, which delivered nothing in the last fix round") });
+    expect(round2([fixer({ commits: [], commitsBeforeFix: ["a1"] })])).toMatchObject({ halt: true }); // reported no commits at all
+    expect(round2([fixer({ filesChanged: [], commits: [] })])).toMatchObject({ halt: true }); // no git: no changed file
+    expect(round2([fixer({ commits: ["a1", "b2"], commitsBeforeFix: ["a1"] })])).toMatchObject({ to: "IMPLEMENT" }); // tried: another round
+    expect(round2([fixer({ filesChanged: ["src/A.java"], commits: [] })])).toMatchObject({ to: "IMPLEMENT" });
+    expect(round2([fixer({ commits: ["a1"], commitsBeforeFix: ["a1"] })], { unblockedAtRound: 2 })).toMatchObject({ to: "IMPLEMENT" }); // the operator said: once more
+    // the first review has nothing to compare with
+    expect(pm.evaluate(snap({ task: task("SYNC", 1), implementations: [fixer({})], syncReports: [report("backend", "PASS"), report("reviewer", "NEEDS_FIX", "backend")] }))).toMatchObject({ to: "IMPLEMENT" });
+  });
+
+  it("after the lead took over a stuck fix, another NEEDS_FIX halts for the operator", () => {
+    const t = task("SYNC", 3, { reviewScope: ["backend"], takeover: { from: ["reviewer"], round: 2, by: "timeout" } });
+    expect(pm.evaluate(snap({ task: t, syncReports: [report("reviewer", "NEEDS_FIX", "backend")] }))).toMatchObject({ halt: true, reason: expect.stringContaining("the lead could not resolve it either") });
+    expect(pm.evaluate(snap({ task: t, syncReports: [report("reviewer", "PASS")] }))).toMatchObject({ to: "INTEGRATE" });
+  });
+
   it("a BLOCKED task never transitions", () => {
     expect(pm.evaluate(snap({ task: task("SYNC", 1, { status: "BLOCKED" }), syncReports: [report("backend", "PASS"), report("reviewer", "PASS")] }))).toBeNull();
   });

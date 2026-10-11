@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EventHub } from "../../src/events/eventHub.js";
+import { Swarm } from "../../src/mcp/swarm.js";
 import { NetworkService } from "../../src/service.js";
 import { tmpDir } from "../helpers/tmp.js";
 
@@ -358,6 +359,106 @@ describe("fix-round limit", () => {
     await s.backend.submitSync({ taskId, status: "PASS" }).catch(() => undefined); // not a reviewer after round 1
     return s.reviewer.submitSync({ taskId, status: "NEEDS_FIX", findings: [{ severity: "ERROR", description: "still broken", relatedAgent: "backend" }] });
   }
+
+  it("a fix round that brings nothing new blocks the task at once; after unblock the same round goes on", async () => {
+    const { s, dir } = await network();
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] }); // 3 rounds
+    await s.backend.proposeAgreement({ taskId: task.id, summary: "s", assignments: [{ agentId: "backend", responsibility: "a" }, { agentId: "reviewer", responsibility: "b" }] });
+    await s.backend.approveAgreement({ taskId: task.id });
+    await s.reviewer.approveAgreement({ taskId: task.id });
+    for (const a of [s.backend, s.reviewer]) {
+      await a.startImplementation(task.id);
+      await a.completeImplementation({ taskId: task.id, summary: "x", commits: ["aaaaaaa"] });
+    }
+    expect((await failingRound(s, task.id)).phase).toBe("IMPLEMENT");
+    expect((await s.backend.implementations.find(task.id, "backend"))?.commitsBeforeFix).toEqual(["aaaaaaa"]);
+    await s.backend.completeImplementation({ taskId: task.id, summary: "fixed?", commits: ["aaaaaaa"] }); // the same commit again
+    await failingRound(s, task.id);
+    expect(await s.backend.getTask(task.id)).toMatchObject({ status: "BLOCKED", syncRound: 2, blockedReason: expect.stringContaining("delivered nothing in the last fix round") });
+
+    const resumed = await operator.unblockTask(task.id);
+    expect(resumed).toMatchObject({ status: "ACTIVE", phase: "IMPLEMENT", reviewScope: ["backend"], unblockedAtRound: 2 });
+  });
+
+  it("a stuck fix waits for the operator, then goes to the lead for one round; if the lead fails too, the task stays BLOCKED", async () => {
+    const run = async (operatorTimeoutMs: number) => {
+      const dir = join(await tmpDir(), ".agent-network");
+      const svc = (id: string) => NetworkService.create(dir, { id, type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }), operatorTimeoutMs });
+      const [operator, backend, tester] = [await svc("operator"), await svc("backend"), await svc("tester")];
+      for (const a of [backend, tester]) await a.registerAgent();
+      const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "tester"] });
+      await backend.proposeAgreement({ taskId: task.id, summary: "s", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/main/**"] }, { agentId: "tester", responsibility: "tests", files: ["src/test/**"] }] });
+      await backend.approveAgreement({ taskId: task.id });
+      await tester.approveAgreement({ taskId: task.id });
+      for (const [a, c] of [[backend, "aaaaaaa"], [tester, "bbbbbbb"]] as const) {
+        await a.startImplementation(task.id);
+        await a.completeImplementation({ taskId: task.id, summary: "x", commits: [c] });
+      }
+      const brokenTests = [{ severity: "ERROR" as const, description: "tests call /api/orders, the API is /orders", relatedAgent: "tester" }];
+      await tester.submitSync({ taskId: task.id, status: "PASS" });
+      await backend.submitSync({ taskId: task.id, status: "NEEDS_FIX", findings: brokenTests }); // round 1: tester fixes
+      await tester.completeImplementation({ taskId: task.id, summary: "fixed?", commits: ["bbbbbbb"] }); // nothing new
+      await backend.submitSync({ taskId: task.id, status: "NEEDS_FIX", findings: brokenTests }); // round 2: stuck
+      return { operator, backend, tester, task };
+    };
+
+    const { operator, backend, tester, task } = await run(60_000);
+    const blocked = await operator.tasks.get(task.id);
+    expect(blocked).toMatchObject({ status: "BLOCKED", handover: { from: ["tester"], lead: "backend" } });
+    expect(Date.parse(blocked.handover!.dueAt) - Date.now()).toBeGreaterThan(50_000);
+    expect(await backend.escalateIfDue(task.id)).toBeNull(); // not yet
+
+    const taken = await operator.handOverToLead(task.id);
+    expect(taken).toMatchObject({ status: "ACTIVE", phase: "IMPLEMENT", reviewScope: ["backend"], takeover: { from: ["tester"], round: 2, by: "operator" } });
+    expect(taken.handover).toBeUndefined();
+    expect(await backend.grants.list(task.id)).toEqual([expect.objectContaining({ from: "tester", to: "backend", files: ["src/test/**"] })]);
+    expect([(await backend.implementations.find(task.id, "backend"))!.status, (await backend.implementations.find(task.id, "tester"))!.status]).toEqual(["IN_PROGRESS", "READY_FOR_SYNC"]);
+    await expect(operator.handOverToLead(task.id)).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+    const lead = new Swarm(backend); // what the lead sees in its takeover round
+    const ctx = await lead.context();
+    expect(ctx).toMatchObject({ nextAction: "fix", fixRequests: [expect.objectContaining({ relatedAgent: "tester", forYou: true })] });
+    expect(ctx.hint).toContain("The operator handed it to you: you take over the fix of tester this round");
+    expect((await new Swarm(tester).context()).hint).toContain("backend (the lead) took over your fix this round");
+
+    await backend.completeImplementation({ taskId: task.id, summary: "fixed the tests", filesChanged: ["src/test/OrdersIT.java"], commits: ["ccccccc"] });
+    await tester.submitSync({ taskId: task.id, status: "NEEDS_FIX", findings: [{ severity: "ERROR", description: "still 404", relatedAgent: "backend" }] });
+    const final = await operator.tasks.get(task.id);
+    expect(final).toMatchObject({ status: "BLOCKED", blockedReason: expect.stringContaining("the lead could not resolve it either") });
+    expect(final.handover).toBeUndefined(); // no second takeover: the operator decides
+    expect((await operator.unblockTask(task.id)).takeover).toBeUndefined();
+
+    // nobody decides in time: the first process that looks hands it over
+    const late = await run(0);
+    const byTimeout = await late.tester.escalateIfDue(late.task.id);
+    expect(byTimeout).toMatchObject({ status: "ACTIVE", phase: "IMPLEMENT", takeover: { by: "timeout" } });
+    expect((await late.operator.events.list(late.task.id)).map((e) => e.event.type)).toContain("TASK_HANDED_OVER");
+  });
+
+  it("a stuck lead gets no handover: the task waits for the operator", async () => {
+    const dir = join(await tmpDir(), ".agent-network");
+    const svc = (id: string) => NetworkService.create(dir, { id, type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }) });
+    const [operator, backend, tester] = [await svc("operator"), await svc("backend"), await svc("tester")];
+    for (const a of [backend, tester]) await a.registerAgent();
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "tester"] });
+    await backend.proposeAgreement({ taskId: task.id, summary: "s", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/main/**"] }, { agentId: "tester", responsibility: "tests", files: ["src/test/**"] }] });
+    await backend.approveAgreement({ taskId: task.id });
+    await tester.approveAgreement({ taskId: task.id });
+    for (const a of [backend, tester]) {
+      await a.startImplementation(task.id);
+      await a.completeImplementation({ taskId: task.id, summary: "x", commits: ["aaaaaaa"] });
+    }
+    const broken = [{ severity: "ERROR" as const, description: "500 on POST", relatedAgent: "backend" }];
+    await backend.submitSync({ taskId: task.id, status: "PASS" });
+    await tester.submitSync({ taskId: task.id, status: "NEEDS_FIX", findings: broken });
+    await backend.completeImplementation({ taskId: task.id, summary: "fixed?", commits: ["aaaaaaa"] });
+    await tester.submitSync({ taskId: task.id, status: "NEEDS_FIX", findings: broken });
+    const blocked = await operator.tasks.get(task.id);
+    expect(blocked.status).toBe("BLOCKED");
+    expect(blocked.handover).toBeUndefined();
+    await expect(operator.handOverToLead(task.id)).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
 
   it("blocks the task when reviews still fail after maxFixRounds; the operator unblocks or cancels it", async () => {
     const { s, dir } = await network();

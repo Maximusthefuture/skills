@@ -17,7 +17,7 @@ agent() {
   local id=$1 model=$2
   node "$AN/dist/index.js" run --agent "$id" --model "$model" --network-dir "$NETWORK_DIR" --cwd "$PROJECT-$id" \
     --system-prompt-file "$AN/examples/runner/swarm-system-prompt.md" -- \
-    claude -p "{prompt}" --output-format stream-json --verbose --tools Read,Write,Edit,Glob,Grep,Bash,Skill --system-prompt "{systemPrompt}" --model "{model}" --max-turns 200 \
+    claude -p "{prompt}" --output-format stream-json --verbose --tools Read,Write,Edit,Glob,Grep,Bash,Skill --system-prompt "{systemPrompt}" --model "{model}" --max-turns 70 \
       --mcp-config "$MCP" --strict-mcp-config --settings "$SETTINGS" \
       --permission-mode acceptEdits \
       --allowedTools mcp__agent-network Read Write Edit Glob Grep "Bash(./mvnw:*)" \

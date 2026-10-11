@@ -66,6 +66,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
             responsibility: z.string().describe("What this agent implements"),
             files: z.array(z.string()).describe("Files or globs this agent will change, e.g. ['src/main/java/A.java', 'src/test/**']. Must not overlap with other agents. [] for an agent that changes nothing and only reviews the others' work (never invent a file for it)"),
             tasks: z.array(z.string()).optional().describe("Only when the task has an OpenSpec change ('openspec' in swarm_context): the tasks.md numbers this agent implements, e.g. ['1.1', '1.2']. Every open task goes to exactly one agent; [] = review only"),
+            dependsOn: z.array(z.string()).optional().describe("Agents whose NEW code this agent's work calls, e.g. ['backend'] for a tester whose API tests call the endpoint backend builds. It still works in parallel, but its complete() is accepted only after they report their part and it ran its work against their code. Omit when it needs nobody's new code"),
           }),
         )
         .describe("One entry for EVERY agent of the task, including yourself"),

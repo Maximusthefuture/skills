@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { EventHub } from "../../src/events/eventHub.js";
-import { Swarm } from "../../src/mcp/swarm.js";
+import { Swarm, type SwarmOptions } from "../../src/mcp/swarm.js";
 import { NetworkService } from "../../src/service.js";
 import { RunnerPool } from "../../src/ui/runners.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
@@ -13,12 +13,12 @@ afterEach(async () => {
   ui = undefined;
 });
 
-async function setup() {
+async function setup(opts: SwarmOptions = {}) {
   const dir = join(await tmpDir(), ".agent-network");
   const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
   const svc = async (id: string) => NetworkService.create(dir, { id, type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }) });
-  const backend = new Swarm(await svc("backend"));
-  const reviewer = new Swarm(await svc("reviewer"));
+  const backend = new Swarm(await svc("backend"), undefined, opts);
+  const reviewer = new Swarm(await svc("reviewer"), undefined, opts);
   const task = await operator.createTaskAsOperator({ title: "Vague", description: "do the thing", agents: ["backend", "reviewer"] });
   return { dir, operator, backend, reviewer, task };
 }
@@ -50,6 +50,29 @@ describe("questions to the operator", () => {
     const after = await backend.context(); // the question is answered: back to work
     expect(after.nextAction).toBe("propose");
     expect(after.questionsToOperator).toBeUndefined();
+  });
+
+  it("with no answer in time the asker goes ahead with its own proposal and says so; the operator can still answer", async () => {
+    const { operator, backend, task } = await setup({ operatorTimeoutMs: 300 });
+    const asked = await backend.sendMessage({ to: "operator", message: "Scope A or B? I would take A." });
+    expect(asked).toMatchObject({ nextAction: "wait", waitingOn: expect.arrayContaining(["operator"]) });
+    expect(asked.hint).toContain("If none comes within 0 min of asking, go ahead with the option you proposed in it.");
+    expect(asked.note).toContain("go ahead with the option you proposed and say so");
+
+    const started = Date.now();
+    const woke = await backend.wait({ timeoutMs: 5000 }); // the clock frees the agent, no event needed
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(woke).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "propose" });
+    expect(woke.hint).toContain(`The operator has not answered your question ${asked.messageId}`);
+    expect(woke.hint).toContain("say so, send_message to the other agents");
+
+    await backend.sendMessage({ to: "reviewer", message: "No answer from the operator on the scope, I go ahead with A." });
+    const said = await backend.context();
+    expect(said.hint).not.toContain("has not answered"); // told the team: the reminder is gone
+    expect(said.questionsToOperator).toHaveLength(1); // still open on the page
+
+    await operator.answerQuestion({ taskId: task.id, messageId: asked.messageId as string, answer: "B, sorry." });
+    expect((await backend.context()).pendingMessages).toEqual([expect.objectContaining({ from: "operator", content: "B, sorry." })]);
   });
 
   it("outside DISCUSS a question does not stop the work, it only says the answer is pending", async () => {

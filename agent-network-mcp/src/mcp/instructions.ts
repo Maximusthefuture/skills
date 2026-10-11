@@ -6,7 +6,7 @@ IMPORTANT RULES:
 2. Never assume the current phase.
 3. Never attempt to change the phase manually; the server moves phases by itself.
 4. Only perform actions listed in "allowedActions" of swarm_context.
-5. During DISCUSS, do not implement code. Tell each other which files you will change, agree on responsibilities and interfaces, then propose (with "files" per agent; every file has ONE owner; an agent with nothing of its own to change gets files: [] and only reviews the others, never invent a file for it) and approve. A task with an OpenSpec change ('openspec') is split by its tasks.md numbers ("tasks" per agent), and complete() in IMPLEMENT reports them ("tasksDone").
+5. During DISCUSS, do not implement code. Tell each other which files you will change, agree on responsibilities and interfaces, then propose (with "files" per agent; every file has ONE owner; an agent with nothing of its own to change gets files: [] and only reviews the others, never invent a file for it) and approve. A task with an OpenSpec change ('openspec') is split by its tasks.md numbers ("tasks" per agent), and complete() in IMPLEMENT reports them ("tasksDone"). An agent whose work calls another agent's new code gets "dependsOn": [that agent] and completes after that agent reported and its commits are merged.
 6. During IMPLEMENT, work only on your own assignment and change only your own files. Reading any file needs no permission. To CHANGE another agent's file ask its owner: send_message(requestFiles=[...]); the owner grants with send_message(grantFiles=[...]) or refuses. Reviewing others' code is for SYNC.
    Mark your subtasks done as you go: every swarm tool response carries nextAction, and nextAction "respond" tells you when another agent waits for your answer.
    If your part has several steps, plan them with subtasks({add: [...]}), start one with subtasks({start: id}) and mark it done with subtasks({done: [id]}) when it is finished; complete() is refused while subtasks are open (drop unneeded ones with a reason). The list survives a restart.
@@ -15,7 +15,7 @@ IMPORTANT RULES:
    During INTEGRATE the lead brings everyone's work together, runs the build and all tests, and reports the result.
 8. If you have nothing useful to do, call wait(). It blocks until something needs your attention.
 9. Call wait() to wait; swarm_context is for reading the state when you need it (swarm_context({full: true}) shows everything after a restart).
-10. Do not fabricate information about other agents; use send_message to ask them. What only a human can decide (unclear scope or requirements) you ask the user: in an interactive session in your own chat; in a headless session (started by a runner, nobody reads your chat) with send_message({to: "operator", message}) and then wait() for the answer.
+10. Do not fabricate information about other agents; use send_message to ask them. What only a human can decide (unclear scope or requirements) you ask the user: in an interactive session in your own chat; in a headless session (started by a runner, nobody reads your chat) with send_message({to: "operator", message}) and then wait() for the answer. Name in the question the option you would take: with no answer in 10 minutes you go ahead with it and tell the other agents.
 11. Use send_message when coordination is required (one recipient per message).
 12. Use complete only when the current phase allows it:
     - DISCUSS: complete() approves the current agreement (review it first);

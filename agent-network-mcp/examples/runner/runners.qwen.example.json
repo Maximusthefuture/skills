@@ -3,6 +3,7 @@
     "Example for `agent-network-mcp ui --runners runners.json`: three Qwen Code agents on a project in git, one worktree each.",
     "Copy it (e.g. to agent-network-mcp/runners.json, which is gitignored) and replace every /abs/path with your paths.",
     "Worktrees: cd /abs/path/project && git worktree add ../project-backend -b swarm-backend && git worktree add ../project-reviewer -b swarm-reviewer && git worktree add ../project-tester -b swarm-tester",
+    "--max-session-turns 70: short sessions on purpose. Every turn reads the whole context again, so one 200-turn session costs several times more than three of 70. A session that reaches the limit after doing something is a planned end, not a failure: the runner starts a fresh one at once and tells it to go on from git status and its subtasks.",
     "networkDir is shared by all agents; relative paths here (promptFile) are resolved against this file's folder.",
     "qwen does not expand ${AGENT_ID} in --mcp-config but passes its environment to MCP servers: the runner sets AGENT_ID and NETWORK_DIR.",
     "Prompt first, right after qwen: --allowed-tools takes several values and would swallow it.",
@@ -56,7 +57,7 @@
       "run_shell_command(git rev-parse)",
       "run_shell_command(./mvnw)",
       "--max-session-turns",
-      "300",
+      "70",
       "--max-wall-time",
       "1h"
     ],
