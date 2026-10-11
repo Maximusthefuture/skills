@@ -115,7 +115,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .compose .urgent{display:flex;gap:10px;align-items:flex-start;margin-top:10px;padding:8px 12px;border:1px solid var(--qline);border-radius:8px;background:var(--qbg);font-size:12px;color:var(--muted);cursor:pointer}.compose .urgent input{width:18px;height:18px;margin:1px 0 0;flex:none;accent-color:var(--warn);cursor:pointer}.compose .urgent b{color:var(--warn);font-size:13px;margin-right:2px}.compose .urgent.on{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn) inset}
 button.warnbtn{background:var(--warn);border-color:var(--warn);color:#fff}
 #schedules{margin-bottom:14px}.srow{display:grid;grid-template-columns:auto minmax(0,1.6fr) 110px minmax(0,1fr) minmax(0,1.3fr) auto;gap:12px;align-items:center;padding:9px 14px;border-top:1px solid var(--line);font-size:13px}
-.srow input{width:auto;margin:0}.srow .nm b{display:block}.srow .nm span,.srow .sub2{font-size:12px;color:var(--muted)}.srow .cr{font:12px var(--mono)}.srow .last.err{color:var(--bad)}.srow .last.skip{color:var(--warn)}.srow button{padding:4px 12px;white-space:nowrap}.srow.off .nm,.srow.off .cr{opacity:.55}
+.srow input{width:auto;margin:0}.srow .nm b{display:block}.srow .nm span,.srow .sub2{font-size:12px;color:var(--muted)}.srow .cr{font:12px var(--mono)}.srow .last.err{color:var(--bad)}.srow .last.skip{color:var(--warn)}.srow button{padding:4px 12px;white-space:nowrap}.srow.off .nm,.srow.off .cr{opacity:.55}.ph button.small{white-space:nowrap;flex:none}.sacts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.sform{margin:10px 14px}.spad{padding:10px 14px}.note.bad{color:var(--bad)}
 @media (max-width:820px){.srow{grid-template-columns:auto minmax(0,1fr) auto}.srow .cr,.srow .nx,.srow .last{grid-column:2}}
 .compose{margin:6px 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}.compose.open{border-color:var(--accent)}
 .compose .hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.compose .hd button{padding:4px 12px}.compose .hd .muted{font-size:12px}
@@ -698,10 +698,44 @@ function scrollBox(details,kind){const box=el("div","scroll");box.dataset.scroll
 const openDetails=new Set();
 /** Tasks the page creates on a cron (runners.json "schedules"): on/off, when next, what the last run did, run now. */
 const schedState=new Map();
+// the schedule form: built once when opened and kept as it is while the list refreshes (what you typed stays)
+let schedForm=null;
+function openScheduleForm(x){
+  const s=S;const ids=s.control?s.control.runners.map(r=>r.id):[];const c=x?x.config:{enabled:true,agents:ids.slice(0,2)};
+  const f=document.createElement("form");f.className="card sform";f.noValidate=true;
+  const field=(label,name,value,attrs)=>{const l=el("label","",label);const i=document.createElement(attrs&&attrs.tag||"input");i.name=name;if(value!==undefined&&value!==null)i.value=String(value);Object.entries(attrs||{}).forEach(([k,v])=>{if(k!=="tag")i.setAttribute(k,v)});l.append(i);return l};
+  f.append(el("b","",x?"Расписание "+x.id:"Новое расписание"));
+  const r1=el("div","row");r1.append(field("id (латиница, цифры, -)","id",c.id,{placeholder:"nightly-flaky-tests",required:""}),field("cron (местное время)","cron",c.cron||"0 3 * * 1-5",{placeholder:"0 3 * * 1-5 или @daily"}));f.append(r1);
+  const prev=el("div","note","");f.append(prev);
+  f.append(field("Название задачи ({date}, {time} подставятся)","title",c.title,{placeholder:"Flaky tests {date}"}),field("Описание — что сделать, кто что делает","description",c.description,{tag:"textarea"}));
+  const ag=el("div","row");const lead=document.createElement("select");lead.name="lead";ids.forEach(id=>lead.append(new Option(id,id)));if(c.agents&&c.agents[0])lead.value=c.agents[0];
+  const ll=el("label","","Lead (интегрирует)");ll.append(lead);const ol=el("label","","Остальные агенты");const others=el("div","checks");ol.append(others);
+  const drawOthers=()=>{const keep=new Set([...others.querySelectorAll("input:checked")].map(i=>i.value));const first=!others.children.length;others.replaceChildren();
+    ids.forEach(id=>{const l=el("label","");l.style.display="inline-flex";l.style.gap="4px";const i=document.createElement("input");i.type="checkbox";i.value=id;i.checked=id!==lead.value&&(first?(c.agents||[]).slice(1).includes(id):keep.has(id));i.disabled=id===lead.value;l.append(i,id);others.append(l)})};
+  lead.onchange=drawOthers;drawOthers();ag.append(ll,ol);f.append(ag);
+  const r2=el("div","row");r2.append(field("Сборка и тесты (verifyCommand)","verifyCommand",c.verifyCommand,{placeholder:"./mvnw -q verify"}),field("Раундов исправлений","maxFixRounds",c.maxFixRounds,{type:"number",min:"0",max:"20",placeholder:"3"}),field("Лимит стоимости, $","maxCostUsd",c.maxCostUsd,{type:"number",min:"0",step:"0.5",placeholder:s.control&&s.control.maxTaskCostUsd?"по умолчанию $"+s.control.maxTaskCostUsd:"без лимита"}));f.append(r2);
+  const en=el("label","");en.style.display="inline-flex";en.style.gap="6px";const ei=document.createElement("input");ei.type="checkbox";ei.name="enabled";ei.checked=c.enabled!==false;en.append(ei,"включено");
+  const note=el("span","note","");const save=el("button","",x?"Сохранить":"Добавить");save.type="submit";const cancel=el("button","ghost","Отмена");cancel.type="button";
+  cancel.onclick=()=>{schedForm=null;$("schedules").dataset.sig="";render()};
+  const bar=el("div","checks");bar.append(en,save,cancel,note);f.append(bar);
+  let timer=null;const preview=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const v=f.elements.namedItem("cron").value.trim();if(!v){prev.textContent="";return}
+    try{const r=await fetch(q("/api/schedules/preview?cron="+encodeURIComponent(v)),{cache:"no-store"});const j=await r.json();prev.className="note"+(r.ok?"":" bad");
+      prev.textContent=r.ok?(j.next.length?"ближайшие запуски: "+j.next.map(t=>new Date(t).toLocaleString([],{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})).join(" · "):"не наступит никогда"):j.message}catch(e){prev.textContent=e.message}},250)};
+  f.elements.namedItem("cron").addEventListener("input",preview);preview();
+  f.onsubmit=async ev=>{ev.preventDefault();const v=n=>f.elements.namedItem(n).value;
+    const num=n=>v(n)===""?null:Number(v(n));
+    const schedule={...(x?x.config:{}),id:v("id").trim(),cron:v("cron").trim(),title:v("title"),description:v("description"),agents:[lead.value,...[...others.querySelectorAll("input:checked")].map(i=>i.value)],
+      verifyCommand:v("verifyCommand"),maxFixRounds:num("maxFixRounds"),maxCostUsd:num("maxCostUsd"),enabled:ei.checked};
+    save.disabled=true;note.className="note";note.textContent="сохраняю…";
+    try{await post(x?"/api/schedules/"+encodeURIComponent(x.id)+"/update":"/api/schedules",{schedule});schedForm=null;$("schedules").dataset.sig="";await tick()}
+    catch(e){note.className="note bad";note.textContent=e.message;save.disabled=false}};
+  schedForm={el:f,id:x?x.id:null};$("schedules").dataset.sig="";render();setTimeout(()=>f.elements.namedItem(x?"title":"id").focus(),0);
+}
 function renderSchedules(s){
-  const box=$("schedules");const list=s.schedules||[];box.hidden=!list.length;if(!list.length){box.replaceChildren();return}
-  const sig=JSON.stringify(list)+"|"+Math.floor(Date.now()/60000)+"|"+JSON.stringify([...schedState])+"|"+!!s.control;if(box.dataset.sig===sig)return;box.dataset.sig=sig;
-  const ph=el("div","ph","По расписанию");ph.append(el("span","end","cron из runners.json · задача не ставится, пока предыдущая из того же расписания открыта"));
+  const box=$("schedules");const list=s.schedules||[];box.hidden=!list.length&&!(s.control&&s.schedules);if(box.hidden){box.replaceChildren();return}
+  const sig=JSON.stringify(list)+"|"+Math.floor(Date.now()/60000)+"|"+JSON.stringify([...schedState])+"|"+!!s.control+"|"+(schedForm?schedForm.id||"new":"");if(box.dataset.sig===sig)return;box.dataset.sig=sig;
+  const ph=el("div","ph","По расписанию");ph.append(el("span","end","задача не ставится, пока предыдущая из того же расписания открыта"));
+  if(s.control&&!schedForm){const add=el("button","ghost small","+ Расписание");add.type="button";add.onclick=()=>openScheduleForm(null);ph.append(add)}
   const rows=list.map(x=>{const r=el("div","srow"+(x.enabled?"":" off"));
     const sw=document.createElement("input");sw.type="checkbox";sw.checked=x.enabled;sw.disabled=!s.control;sw.title=x.enabled?"выключить":"включить";
     sw.onchange=async()=>{sw.disabled=true;try{await post("/api/schedules/"+encodeURIComponent(x.id)+"/enabled",{enabled:sw.checked});await tick()}catch(e){alert(e.message);sw.checked=!sw.checked;sw.disabled=false}};
@@ -713,8 +747,13 @@ function renderSchedules(s){
     const b=el("button","ghost",st&&st.pending?"Ставлю…":"Запустить сейчас");b.type="button";b.disabled=!s.control||!!(st&&st.pending);b.title=x.openTask?"пропустится: "+x.openTask+" ещё открыта":"поставить задачу сейчас";
     b.onclick=async()=>{schedState.set(x.id,{pending:true});render();
       try{const j=await post("/api/schedules/"+encodeURIComponent(x.id)+"/run",{});schedState.set(x.id,{note:j.run.taskId?"создана "+j.run.taskId:j.run.skipped?"пропуск: "+j.run.skipped:"ошибка: "+j.run.error})}catch(e){schedState.set(x.id,{note:"ошибка: "+e.message})}await tick()};
-    r.append(sw,nm,el("div","cr",x.cron),nx,last,b);return r});
-  box.replaceChildren(ph,...rows)}
+    const acts=el("div","sacts");acts.append(b);
+    if(s.control){const ed=el("button","ghost","Изменить");ed.type="button";ed.disabled=!!schedForm;ed.onclick=()=>openScheduleForm(x);
+      const del=el("button","ghost","Удалить");del.type="button";del.disabled=!!schedForm;
+      del.onclick=async()=>{if(!confirm("Удалить расписание "+x.id+" из runners.json? Уже созданные им задачи останутся."))return;try{await post("/api/schedules/"+encodeURIComponent(x.id)+"/delete",{});box.dataset.sig="";await tick()}catch(e){alert(e.message)}};acts.append(ed,del)}
+    r.append(sw,nm,el("div","cr",x.cron),nx,last,acts);return r});
+  const empty=!list.length?[el("div","muted spad","Расписаний нет. «+ Расписание» — задача по cron: например, каждую ночь искать и чинить нестабильные тесты.")]:[];
+  box.replaceChildren(ph,...(schedForm?[schedForm.el]:[]),...empty,...rows)}
 function scheduleOf(t){for(const x of (S.schedules||[]))if(x.runs.some(r=>r.taskId===t.id))return x.id;return null}
 function renderTasks(){
   renderSchedules(S);

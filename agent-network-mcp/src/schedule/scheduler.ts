@@ -1,7 +1,7 @@
 import { AppError } from "../errors.js";
 import { NetworkService } from "../service.js";
 import { FileStore } from "../storage/fileStore.js";
-import { loadRunnersConfig, saveScheduleEnabled, type ScheduleConfig } from "../ui/runners.js";
+import { loadRunnersConfig, saveSchedule, saveScheduleEnabled, type ScheduleConfig } from "../ui/runners.js";
 import { nextRun, parseCron } from "./cron.js";
 
 /** One schedule's history: <network>/schedules/state.json. */
@@ -20,6 +20,8 @@ export interface ScheduleView {
   id: string;
   cron: string;
   title: string;
+  /** As written in the config (the page's edit form). */
+  config: ScheduleConfig;
   agents: string[];
   openspec: string | null;
   enabled: boolean;
@@ -121,6 +123,26 @@ export class Scheduler {
     return this.status();
   }
 
+  /**
+   * The page's schedule form: add, change (previousId) or remove one schedule in runners.json; applies at once. A changed
+   * cron counts from now on (no run is made up); a renamed schedule keeps its history.
+   */
+  async save(change: { schedule?: Record<string, unknown>; previousId?: string; removeId?: string }, agentIds: string[]): Promise<ScheduleView[]> {
+    if (!this.opts.configPath) throw new AppError("INVALID_INPUT", "Schedules are kept in runners.json: start the page with a runners config");
+    const schedules = await saveSchedule(this.opts.configPath, agentIds, change);
+    const state = await this.load();
+    const newId = typeof change.schedule?.id === "string" ? change.schedule.id.trim() : undefined;
+    if (change.previousId && newId && newId !== change.previousId && state[change.previousId]) {
+      state[newId] = state[change.previousId]!;
+      delete state[change.previousId];
+      await this.save_();
+    }
+    for (const id of [change.previousId, change.removeId, newId]) if (id) this.next.delete(id);
+    this.opts.schedules = schedules;
+    this.opts.log?.(`[schedules] ${change.removeId ? `${change.removeId}: removed` : `${newId}: ${change.previousId ? "changed" : "added"}`} on the page`);
+    return this.status();
+  }
+
   async status(): Promise<ScheduleView[]> {
     const state = await this.load();
     const tasks = await (await this.operator).tasks.list();
@@ -130,7 +152,7 @@ export class Scheduler {
       const open = last?.taskId ? tasks.find((t) => t.id === last.taskId && (t.status === "ACTIVE" || t.status === "BLOCKED")) : undefined;
       const at = s.enabled ? this.dueAt(s) : null;
       return {
-        id: s.id, cron: s.cron, title: s.title || s.openspec || s.id, agents: s.agents, openspec: s.openspec ?? null, enabled: s.enabled,
+        id: s.id, cron: s.cron, title: s.title || s.openspec || s.id, config: s, agents: s.agents, openspec: s.openspec ?? null, enabled: s.enabled,
         nextRunAt: at === null ? null : new Date(at).toISOString(), runs: runs.slice(0, 10), openTask: open?.id ?? null,
       };
     });
@@ -180,7 +202,7 @@ export class Scheduler {
     }
     runs.unshift(run);
     runs.splice(30);
-    await this.save();
+    await this.save_();
     this.opts.log?.(`[schedules] ${s.id}${manual ? " (run now)" : ""}: ${run.taskId ? `created ${run.taskId}` : run.skipped ? `skipped: ${run.skipped}` : `failed: ${run.error}`}`);
     return run;
   }
@@ -205,7 +227,7 @@ export class Scheduler {
     return this.state;
   }
 
-  private async save(): Promise<void> {
+  private async save_(): Promise<void> {
     if (this.state) await (await this.fs).writeJson(["schedules", "state.json"], this.state);
   }
 }

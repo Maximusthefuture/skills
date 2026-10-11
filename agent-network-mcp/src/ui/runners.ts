@@ -262,6 +262,46 @@ function parseSchedules(raw: unknown, file: string, agentIds: string[]): Schedul
   return out;
 }
 
+const SCHEDULE_FIELDS = ["id", "cron", "title", "description", "agents", "openspec", "verifyCommand", "maxFixRounds", "maxFollowUps", "maxCostUsd", "enabled"] as const;
+
+/**
+ * Add, replace or remove one schedule in the JSON config (the page's schedule form), keeping everything else. The new
+ * list is checked exactly as at start (agents of this config, cron, limits) before anything is written.
+ * `previousId`: the schedule being edited (its id may change); without it the id must be new.
+ */
+export async function saveSchedule(configPath: string, agentIds: string[], change: { schedule?: Record<string, unknown>; previousId?: string; removeId?: string }): Promise<ScheduleConfig[]> {
+  const raw = JSON.parse(await readFile(configPath, "utf8")) as { schedules?: Record<string, unknown>[] };
+  let list = [...(raw.schedules ?? [])];
+  if (change.removeId !== undefined) {
+    if (!list.some((s) => s.id === change.removeId)) throw new AppError("INVALID_INPUT", `No schedule "${change.removeId}"`);
+    list = list.filter((s) => s.id !== change.removeId);
+  } else {
+    const given = change.schedule ?? {};
+    // only the known fields; empty ones are left out (the defaults apply)
+    const clean: Record<string, unknown> = {};
+    for (const k of SCHEDULE_FIELDS) {
+      const v = given[k];
+      if (v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length && k !== "agents")) continue;
+      clean[k] = typeof v === "string" ? v.trim() : v;
+    }
+    const at = change.previousId === undefined ? -1 : list.findIndex((s) => s.id === change.previousId);
+    if (change.previousId !== undefined && at < 0) throw new AppError("INVALID_INPUT", `No schedule "${change.previousId}"`);
+    if (list.some((s, i) => s.id === clean.id && i !== at)) throw new AppError("INVALID_INPUT", `A schedule "${String(clean.id)}" exists already: pick another id`);
+    if (at >= 0) list[at] = clean;
+    else list.push(clean);
+  }
+  let parsed: ScheduleConfig[];
+  try {
+    parsed = parseSchedules(list, "schedule", agentIds);
+  } catch (e) {
+    throw new AppError("INVALID_INPUT", (e as Error).message.replace(/^schedule: schedules\[\d+\]\s*/, ""));
+  }
+  if (list.length) raw.schedules = list;
+  else delete raw.schedules;
+  await writeConfig(configPath, raw);
+  return parsed;
+}
+
 /** Switch one schedule on or off in the JSON config, keeping everything else. */
 export async function saveScheduleEnabled(configPath: string, id: string, enabled: boolean): Promise<void> {
   const raw = JSON.parse(await readFile(configPath, "utf8")) as { schedules?: Record<string, unknown>[] };

@@ -19,6 +19,7 @@ import { formatSessionLog, readSessionLog } from "../supervisor/sessionLog.js";
 import type { Supervisor } from "../supervisor/supervisor.js";
 import type { Scheduler } from "../schedule/scheduler.js";
 import { buildUiState } from "./state.js";
+import { nextRun, parseCron } from "../schedule/cron.js";
 import { branchDiff, fileDiff, removeWorktrees, type MergeResult } from "../worktrees.js";
 
 export interface UiServer {
@@ -307,6 +308,18 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         if (file !== null) return json(200, await fileDiff(range.project, range.base, head, range.mode, file));
         return json(200, { ...(await branchDiff(range.project, range.base, head, range.mode)), branch: range.branch, merged: range.merged });
       }
+      if (path === "/api/schedules/preview") {
+        // the form shows when a cron would run before it is saved
+        try {
+          const cron = parseCron(url.searchParams.get("cron") ?? "");
+          const next: string[] = [];
+          let at: Date | null = new Date();
+          while (next.length < 3 && (at = nextRun(cron, at))) next.push(at.toISOString());
+          return json(200, { next });
+        } catch (e) {
+          return json(400, { error: "INVALID_INPUT", message: (e as Error).message });
+        }
+      }
       if (path === "/api/runs") {
         const pricing = (await p.prices?.()) ?? {};
         return json(200, { runs: await runsOf(p, pricing), pricesError: pricing.error ?? null });
@@ -427,10 +440,16 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       await acted(answer.taskId, `answered ${answer.to}'s question ${answer.replyTo}: ${answer.content}`);
       return json(201, { answer });
     }
-    const sched = /^\/api\/schedules\/([^/]+)\/(run|enabled)$/.exec(path);
+    if (path === "/api/schedules") {
+      if (!p.scheduler) return text(404, "no scheduler: start the page with a runners config");
+      return json(201, { schedules: await p.scheduler.save({ schedule: (body as { schedule?: Record<string, unknown> }).schedule ?? {} }, pool.ids()) });
+    }
+    const sched = /^\/api\/schedules\/([^/]+)\/(run|enabled|update|delete)$/.exec(path);
     if (sched) {
       if (!p.scheduler) return text(404, 'no schedules: add a "schedules" section to runners.json');
       const id = decodeURIComponent(sched[1]!);
+      if (sched[2] === "update") return json(200, { schedules: await p.scheduler.save({ schedule: (body as { schedule?: Record<string, unknown> }).schedule ?? {}, previousId: id }, pool.ids()) });
+      if (sched[2] === "delete") return json(200, { schedules: await p.scheduler.save({ removeId: id }, pool.ids()) });
       if (sched[2] === "run") return json(200, { run: await p.scheduler.runNow(id), schedules: await p.scheduler.status() });
       return json(200, { schedules: await p.scheduler.setEnabled(id, (body as { enabled?: unknown }).enabled !== false) });
     }

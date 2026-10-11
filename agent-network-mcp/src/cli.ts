@@ -248,9 +248,10 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         runners && config?.supervisor
           ? new Supervisor({ networkDir: dir, config: config.supervisor, pool: runners, ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(prices ? { prices } : {}) })
           : undefined;
+      // always with runners: schedules can be added on the page, and they apply without a restart
       const scheduler =
-        runners && config?.schedules?.length
-          ? new Scheduler({ networkDir: dir, schedules: config.schedules, ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(config.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}), log: (line) => out(line) })
+        runners && config
+          ? new Scheduler({ networkDir: dir, schedules: config.schedules ?? [], ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(config.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}), log: (line) => out(line) })
           : undefined;
       return {
         networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}),
@@ -267,7 +268,8 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
       out(`runners${where}: ${config.agents.map((a) => a.id).join(", ")}${auto.length ? `; started: ${auto.join(", ")}` : "; none started (autostart: false)"}`);
       if (scheduler) {
         scheduler.start();
-        out(`schedules${where}: ${config.schedules!.map((s) => `${s.id} (${s.cron}${s.enabled ? "" : ", off"})`).join(", ")}`);
+        const list = config.schedules ?? [];
+        out(`schedules${where}: ${list.length ? list.map((s) => `${s.id} (${s.cron}${s.enabled ? "" : ", off"})`).join(", ") : "none yet (add them on the Tasks tab)"}`);
       }
       if (supervisor) {
         supervisor.attach(ui.url, projectId);

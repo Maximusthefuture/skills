@@ -139,3 +139,47 @@ describe("schedules in runners.json", () => {
     await refused({ ...ok }, "must be a list");
   });
 });
+
+describe("schedules from the page", () => {
+  it("adds, changes (a renamed one keeps its history) and removes schedules in runners.json, checked like at start", async () => {
+    const { configPath, scheduler } = await setup();
+    const agents = ["backend", "reviewer"];
+    await scheduler.runNow("nightly-flaky");
+    const added = await scheduler.save({ schedule: { id: "weekly", cron: "@weekly", title: "Deps {date}", description: "", agents, maxCostUsd: 2, verifyCommand: "", maxFixRounds: null } }, agents);
+    expect(added.map((s) => s.id)).toEqual(["nightly-flaky", "weekly"]);
+    let file = JSON.parse(await readFile(configPath, "utf8"));
+    expect(file.schedules[1]).toEqual({ id: "weekly", cron: "@weekly", title: "Deps {date}", agents, maxCostUsd: 2 }); // empty fields left out
+
+    await expect(scheduler.save({ schedule: { id: "weekly", cron: "@daily", title: "x", agents } }, agents)).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("exists already") });
+    await expect(scheduler.save({ schedule: { id: "bad", cron: "0 3 * *", title: "x", agents } }, agents)).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("5 fields") });
+    await expect(scheduler.save({ schedule: { id: "bad", cron: "@daily", title: "x", agents: ["tester"] } }, agents)).rejects.toMatchObject({ message: expect.stringContaining("tester are not agents") });
+
+    const renamed = await scheduler.save({ schedule: { id: "nightly", cron: "0 4 * * *", title: "Flaky {date}", agents }, previousId: "nightly-flaky" }, agents);
+    expect(renamed.find((s) => s.id === "nightly")).toMatchObject({ cron: "0 4 * * *", runs: [{ taskId: "task-001", manual: true }], nextRunAt: at(2026, 10, 12, 4, 0).toISOString() });
+    const removed = await scheduler.save({ removeId: "weekly" }, agents);
+    expect(removed.map((s) => s.id)).toEqual(["nightly"]);
+    await scheduler.save({ removeId: "nightly" }, agents);
+    file = JSON.parse(await readFile(configPath, "utf8"));
+    expect(file.schedules).toBeUndefined();
+    expect(await scheduler.status()).toEqual([]);
+  });
+
+  it("the page: create, update, delete, cron preview", async () => {
+    const { networkDir, config, scheduler } = await setup();
+    ui = await startUiServer([{ networkDir, runners: new RunnerPool(networkDir, config.agents), scheduler }], { port: 0 });
+    const post = async (path: string, body: unknown) => {
+      const r = await fetch(`${ui!.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      return { status: r.status, body: (await r.json()) as any };
+    };
+    const created = await post("/api/schedules", { schedule: { id: "daily", cron: "@daily", title: "t", agents: ["reviewer", "backend"] } });
+    expect(created.status).toBe(201);
+    expect(created.body.schedules.map((s: any) => s.id)).toEqual(["nightly-flaky", "daily"]);
+    expect((await post("/api/schedules/daily/update", { schedule: { id: "daily", cron: "nope", title: "t", agents: ["backend"] } })).body).toMatchObject({ error: "INVALID_INPUT" });
+    expect((await post("/api/schedules/daily/delete", {})).body.schedules.map((s: any) => s.id)).toEqual(["nightly-flaky"]);
+    const preview = (await (await fetch(`${ui.url}/api/schedules/preview?cron=${encodeURIComponent("*/5 * * * *")}`)).json()) as any;
+    expect(preview.next).toHaveLength(3);
+    const bad = await fetch(`${ui.url}/api/schedules/preview?cron=61%20*%20*%20*%20*`);
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as any).message).toContain("outside 0-59");
+  });
+});
