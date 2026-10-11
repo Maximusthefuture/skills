@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { RunnerOptions } from "../../src/runner.js";
-import { loadRunnersConfig, parsePrices, RunnerPool, watchPrices } from "../../src/ui/runners.js";
+import { loadRunnersConfig, PACKAGE_DIR, parsePrices, RunnerPool, watchPrices } from "../../src/ui/runners.js";
 import { NetworkService } from "../../src/service.js";
 import { FileStore } from "../../src/storage/fileStore.js";
 import { SessionStore } from "../../src/stores/sessionStore.js";
@@ -50,8 +50,20 @@ describe("runners config", () => {
     expect(qwen.agents[0]!.promptFile).toBe(join(EXAMPLES, "qwen-prompt.md"));
     expect(qwen.agents[1]!.instructionsFile).toBe(join(EXAMPLES, "instructions", "reviewer.md"));
 
-    const claude = await loadRunnersConfig(join(EXAMPLES, "runners.claude.example.json"));
-    expect(claude.agents.map((a) => a.id)).toEqual(["backend", "reviewer", "tester"]);
+    // no paths to fill in: the project comes from where ui starts, the package folder from {agentNetworkMcp}
+    const claude = await loadRunnersConfig(join(EXAMPLES, "runners.claude.example.json"), { projectDir: "/abs/path/project" });
+    expect(claude.networkDir).toBe("/abs/path/project/.agent-network");
+    expect(claude.agents.map((a) => [a.id, a.cwd, a.worktree?.branch])).toEqual([
+      ["backend", "/abs/path/project-backend", "swarm-backend"],
+      ["reviewer", "/abs/path/project-reviewer", "swarm-reviewer"],
+      ["tester", "/abs/path/project-tester", "swarm-tester"],
+    ]);
+    const claudeArgs = JSON.stringify([claude.agents[0]!.command, claude.supervisor!.command]);
+    expect(claudeArgs).not.toMatch(/\/abs\/path|\{agentNetworkMcp\}/);
+    const inline = (cmd: string[], flag: string) => JSON.parse(cmd[cmd.indexOf(flag) + 1]!);
+    expect(inline(claude.agents[0]!.command, "--mcp-config").mcpServers["agent-network"]).toEqual({ command: "node", args: [join(PACKAGE_DIR, "dist", "index.js")], env: { AGENT_ID: "${AGENT_ID}", AGENT_TYPE: "claude", NETWORK_DIR: "${NETWORK_DIR}" } });
+    expect(inline(claude.agents[0]!.command, "--settings").hooks.Stop[0].hooks[0].command).toBe(`node ${join(PACKAGE_DIR, "dist", "index.js")} hook stop`);
+    expect(inline(claude.supervisor!.command, "--mcp-config").mcpServers.supervisor.args).toEqual([join(PACKAGE_DIR, "dist", "index.js"), "supervisor-mcp"]);
     expect(claude.agents[0]!.command.slice(0, 3)).toEqual(["claude", "-p", "{prompt}"]);
     expect(qwen.agents.map((a) => a.model)).toEqual(["qwen/qwen3.5-9b", "qwen/qwen3.5-9b", "qwen/qwen3.5-9b"]); // {model} in the command
     expect(qwen.prices).toEqual({ "qwen/qwen3.5-9b": { input: 0, output: 0 }, "qwen/qwen3-coder-30b": { input: 0, output: 0 } });
@@ -59,9 +71,9 @@ describe("runners config", () => {
 
     // the supervisor: Claude on sonnet, Qwen on a model from LM Studio; read-only file tools, its own MCP server, example tools
     expect(claude.supervisor).toMatchObject({ model: "sonnet", models: ["haiku", "sonnet", "opus"], promptFile: join(EXAMPLES, "supervisor-prompt.md"), systemPromptFile: join(EXAMPLES, "supervisor-system-prompt.md"), maxSessionsPerHour: 6, budgetUsd: 5, autostart: true, disabledTools: [] });
-    expect(claude.supervisor!.command).toEqual(expect.arrayContaining(["--tools", "Read,Grep,Glob", "--allowedTools", "mcp__supervisor", "/abs/path/agent-network-mcp/examples/runner/supervisor-mcp.json"]));
+    expect(claude.supervisor!.command).toEqual(expect.arrayContaining(["--tools", "Read,Grep,Glob", "--allowedTools", "mcp__supervisor"]));
     expect(claude.supervisor!.tools.map((t) => t.name)).toEqual(["surefire_failures", "agent_git_log", "testcontainers"]);
-    expect(qwen.supervisor).toMatchObject({ model: "qwen/qwen3-coder-30b", rules: { questionAfterSec: 60, stallMin: 15, repeatCount: 3, testMin: 10 } });
+    expect(qwen.supervisor).toMatchObject({ model: "qwen/qwen3.5-9b", rules: { questionAfterSec: 60, stallMin: 15, repeatCount: 3, testMin: 10 } });
     expect(qwen.supervisor!.command.slice(0, 2)).toEqual(["qwen", "{prompt}"]);
     expect(qwen.supervisor!.command).toEqual(expect.arrayContaining(["run_shell_command", "write_file", "edit", "--allowed-tools", "mcp__supervisor"]));
     expect(qwen.prices!["qwen/qwen3-coder-30b"]).toEqual({ input: 0, output: 0 }); // its budget is counted with these

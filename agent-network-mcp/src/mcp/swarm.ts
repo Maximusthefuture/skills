@@ -1,3 +1,4 @@
+import { buildTools, DEFAULT_BUILD_TIMEOUT_MIN, parseBuildCommand, runBuild } from "../build.js";
 import { AppError, isAppError } from "../errors.js";
 import { containsCommit, readGitContext } from "../git.js";
 import { phaseEpoch } from "../handoff.js";
@@ -93,7 +94,7 @@ function invalid(message: string, details?: Record<string, unknown>): AppError {
 }
 
 /**
- * The agent-facing layer: seven operations (context, create_task, send_message, propose, subtasks, complete, wait) on top of
+ * The agent-facing layer: eight operations (context, create_task, send_message, propose, subtasks, complete, build, wait) on top of
  * NetworkService. The "current task" is the oldest ACTIVE task of this agent, so no tool takes a taskId.
  */
 export interface SwarmOptions {
@@ -107,6 +108,8 @@ export interface SwarmOptions {
   underRunner?: boolean;
   /** How long a question to the operator blocks the asker (AGENT_NETWORK_OPERATOR_TIMEOUT_MIN); then it goes ahead with its own proposal. */
   operatorTimeoutMs?: number;
+  /** The commands build() may start (default: BUILD_TOOLS plus AGENT_NETWORK_BUILD_TOOLS). */
+  buildTools?: string[];
 }
 
 /** While an agent waits for the operator, wait() looks at the clock this often, so it learns in time that the question timed out. */
@@ -133,6 +136,7 @@ export class Swarm {
   private workGit?: Promise<GitContext | null>;
   readonly defaultWaitMs: number;
   private readonly operatorTimeoutMs: number;
+  private readonly buildTools: string[];
 
   constructor(
     private readonly service: NetworkService,
@@ -144,6 +148,7 @@ export class Swarm {
     this.workdir = opts.workdir ?? process.cwd();
     this.underRunner = opts.underRunner ?? false;
     this.operatorTimeoutMs = opts.operatorTimeoutMs ?? OPERATOR_TIMEOUT_MS;
+    this.buildTools = opts.buildTools ?? buildTools();
   }
 
   private get me(): string {
@@ -183,6 +188,32 @@ export class Swarm {
     }
     const task = await this.service.createTask({ title: input.title, description: input.description!, agents: [this.me, ...others], verifyCommand: input.verifyCommand });
     return { ...this.reply(await this.contextNow()), ok: true, action: "TASK_CREATED", taskId: task.id } as SwarmContext;
+  }
+
+  /**
+   * Runs the build or tests in the agent's folder and answers with the outcome and what failed, not the whole output
+   * (that goes to a log file the agent can grep). Default command: the task's verifyCommand.
+   */
+  async build(input: { command?: string; timeoutMin?: number }, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const task = await this.currentTask();
+    const open = task && (task.status === "ACTIVE" || task.status === "BLOCKED") ? task : null;
+    const command = input.command?.trim() || open?.verifyCommand;
+    if (!command) {
+      throw invalid("No command: the task has no verifyCommand. Pass the build or test command, e.g. build({command: \"./mvnw -q verify\"}) or build({command: \"npm test\"}).");
+    }
+    const { argv, dropped } = parseBuildCommand(command, this.buildTools);
+    const minutes = input.timeoutMin ?? DEFAULT_BUILD_TIMEOUT_MIN;
+    if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 180) throw invalid("timeoutMin must be 1..180");
+    const run = await runBuild({ cwd: this.workdir, argv, timeoutMs: minutes * 60_000, ...(signal ? { signal } : {}) });
+    await this.service
+      .recordBuild(open?.id ?? null, { command: argv.join(" "), ok: run.ok, exitCode: run.exitCode, timedOut: run.timedOut, durationMs: run.durationMs, logPath: run.logPath, ...(run.tests ? { tests: run.tests } : {}) })
+      .catch((e: Error) => this.log(`build event not recorded: ${e.message}`));
+    return {
+      status: run.timedOut ? "TIMEOUT" : run.ok ? "PASS" : "FAIL",
+      summary: run.summary,
+      log: run.logPath,
+      ...(dropped ? { note: `"${dropped}" was dropped: build shortens the output itself` } : {}),
+    };
   }
 
   /** The agent's own checklist for its part. Compact answer: it is called after every step. */
@@ -974,7 +1005,7 @@ export class Swarm {
       case "INTEGRATE": {
         const lead = phases.integrator(task);
         if (this.me !== lead) return done("wait", ["send_message", "wait"], `${lead} is integrating. Waiting for: ${lead}.`, [lead]);
-        const verify = task.verifyCommand ? `\`${task.verifyCommand}\`` : "the build and all tests";
+        const verify = task.verifyCommand ? `\`${task.verifyCommand}\` (build() runs it)` : "the build and all tests (with the build tool)";
         const left = s.followUpBudget?.remaining ?? 0;
         const followUps = left ? ` With PASS, left-over work ('followUps.notes', things you noticed) can become up to ${left} follow-up task(s): followUps: [{title, description}], each concrete.` : "";
         return done(

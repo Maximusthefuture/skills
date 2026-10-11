@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { costGuard } from "./costLimit.js";
 import { AppError } from "./errors.js";
 import { parseFreshPhases } from "./handoff.js";
 import { runHookCli } from "./hook.js";
@@ -20,12 +21,12 @@ import { ensureWorktrees, gitRoot } from "./worktrees.js";
 
 const USAGE = `Usage:
   agent-network-mcp task create --title <t> --agents <a,b[,c]> [--description <d>] [--verify <build/test command>]
-                                [--max-fix-rounds 3] [--follow-ups 0] [--openspec <change>] [--network-dir <abs path>]
+                                [--max-fix-rounds 3] [--follow-ups 0] [--max-cost <usd>] [--openspec <change>] [--network-dir <abs path>]
   agent-network-mcp task list [--network-dir <abs path>]
   agent-network-mcp task stats [--id <task-001>] [--runners runners.json] [--network-dir <abs path>]
                                 time per phase, sessions, tokens, cost (--runners: price sessions without a CLI cost with its "prices")
   agent-network-mcp task cancel --id <task-001> [--reason <text>] [--network-dir <abs path>]
-  agent-network-mcp task unblock --id <task-001> [--rounds 1] [--network-dir <abs path>]   more fix rounds for a BLOCKED task
+  agent-network-mcp task unblock --id <task-001> [--rounds 1 | --usd 5] [--network-dir <abs path>]   more fix rounds (or, over its cost limit, more money) for a BLOCKED task
   agent-network-mcp task handover --id <task-001> [--network-dir <abs path>]   a BLOCKED task's stuck fix to the lead now
   agent-network-mcp agent list [--network-dir <abs path>]
   agent-network-mcp supervisor journal [--task <task-001>] [--since 24h|30m|7d|<date>] [--kind action,needs-you] [--json] [--network-dir <abs path>]
@@ -80,6 +81,8 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       openspec: { type: "string" },
       runners: { type: "string" },
       rounds: { type: "string" },
+      usd: { type: "string" },
+      "max-cost": { type: "string" },
       "network-dir": { type: "string" },
     },
   });
@@ -111,7 +114,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
           ? await service.cancelTask(values.id, values.reason)
           : command === "handover"
             ? await service.handOverToLead(values.id)
-            : await service.unblockTask(values.id, values.rounds === undefined ? 1 : Number(values.rounds));
+            : await service.unblockTask(values.id, values.rounds === undefined ? 1 : Number(values.rounds), values.usd === undefined ? undefined : Number(values.usd));
       out(JSON.stringify(task, null, 2));
       return 0;
     }
@@ -140,6 +143,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
             ...(t.blockedReason ? { blockedReason: t.blockedReason } : {}),
             ...(t.parentTaskId ? { parentTaskId: t.parentTaskId } : {}),
             ...(t.maxFollowUps ? { followUps: `${t.followUpsUsed ?? 0}/${t.maxFollowUps} used` } : {}),
+            ...(t.maxCostUsd !== undefined ? { maxCostUsd: t.maxCostUsd } : {}),
           })),
           null,
           2,
@@ -159,6 +163,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       ...(values["max-fix-rounds"] !== undefined ? { maxFixRounds: Number(values["max-fix-rounds"]) } : {}),
       ...(values.verify ? { verifyCommand: values.verify } : {}),
       ...(values["follow-ups"] !== undefined ? { maxFollowUps: Number(values["follow-ups"]) } : {}),
+      ...(values["max-cost"] !== undefined ? { maxCostUsd: Number(values["max-cost"]) } : {}),
     });
     out(JSON.stringify(task, null, 2));
     return 0;
@@ -214,18 +219,23 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
   }
   try {
     const specs = projects.map(({ dir, config }) => {
-      const runners = config ? new RunnerPool(dir, config.agents, config.path ? { configPath: config.path } : {}) : undefined;
       const prices = config?.path ? watchPrices(config.path) : undefined;
+      // after every agent session: a task over its cost limit (maxCostUsd) is BLOCKED for the operator
+      const onSessionEnd = config ? costGuard({ networkDir: dir, ...(prices ? { prices } : {}), log: (line) => out(line) }) : undefined;
+      const runners = config ? new RunnerPool(dir, config.agents, { ...(config.path ? { configPath: config.path } : {}), ...(onSessionEnd ? { onSessionEnd } : {}) }) : undefined;
       // the supervisor watches this project's runners; it acts through the page, so it is attached once the page is up
       const supervisor =
         runners && config?.supervisor
-          ? new Supervisor({ networkDir: dir, config: config.supervisor, pool: runners, ...(config.path ? { configPath: config.path } : {}), ...(prices ? { prices } : {}) })
+          ? new Supervisor({ networkDir: dir, config: config.supervisor, pool: runners, ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(prices ? { prices } : {}) })
           : undefined;
       const scheduler =
         runners && config?.schedules?.length
-          ? new Scheduler({ networkDir: dir, schedules: config.schedules, ...(config.path ? { configPath: config.path } : {}), log: (line) => out(line) })
+          ? new Scheduler({ networkDir: dir, schedules: config.schedules, ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(config.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}), log: (line) => out(line) })
           : undefined;
-      return { networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}) };
+      return {
+        networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}),
+        ...(config?.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}),
+      };
     });
     const ui = await startUiServer(specs, { port });
     out(`Agent Network UI: ${ui.url}  (${projects.length === 1 ? `network: ${projects[0]!.dir}` : `projects: ${projects.map((p) => basename(dirname(p.dir))).join(", ")}`})  Ctrl+C to stop`);

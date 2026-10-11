@@ -128,7 +128,7 @@ export function createSupervisorServer(o: SupervisorServerOptions): McpServer {
 
   tool("message_lead", "Tell the lead of a task what you found and what to do; the lead acts on it and passes on to the agents it concerns (it gets it as a message from the operator, also while busy). Name the agent it is about in the text.", { taskId: z.string(), text: z.string() }, async ({ taskId, text }) => (await api("POST", `/api/tasks/${encodeURIComponent(taskId)}/message`, { text })).message);
 
-  tool("unblock", "Give a BLOCKED task more fix rounds (1..3) when another try is likely to work.", { taskId: z.string(), rounds: z.number().int().min(1).max(3).optional() }, async ({ taskId, rounds }) => {
+  tool("unblock", "Give a BLOCKED task more fix rounds (1..3) when another try is likely to work. Not for a task blocked by its cost limit (blockedReason \"cost limit ...\"): money is the operator's call, escalate it.", { taskId: z.string(), rounds: z.number().int().min(1).max(3).optional() }, async ({ taskId, rounds }) => {
     const t = (await api("POST", `/api/tasks/${encodeURIComponent(taskId)}/unblock`, { rounds: rounds ?? 1 })).task as Json;
     return { id: t.id, phase: t.phase, status: t.status, maxFixRounds: t.maxFixRounds };
   });

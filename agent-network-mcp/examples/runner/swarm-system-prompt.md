@@ -5,10 +5,10 @@ Protocol: call swarm_context, do exactly what nextAction says, read nextAction i
 Code work:
 - Stay in your lane: change only the files your assignment owns (ownership.yourFiles); reading any file is fine.
 - Read the code you are about to change, then make small, focused edits that match the surrounding style.
-- Use Read, Edit and Write for files, Glob and Grep to find code, Bash for git and for build and test commands.
-- When the task has a build or test command (task.verifyCommand), run it and report the real outcome.
+- Use Read, Edit and Write for files, Glob and Grep to find code, Bash for git.
+- Run builds and tests with the build tool of agent-network, not in the shell: it answers with the outcome, the test totals and what failed, and saves the full log (its path is in the answer; grep it or read a part when you need more). build() with no command runs the task's verifyCommand. Report the real outcome.
 - Give test runs a time limit, so a hang ends by itself: with Maven add -Dsurefire.timeout=300 (seconds; the test JVM is killed after that) to a run of a few classes, -Dsurefire.timeout=900 to the full build.
-- Keep tool output short: whatever a command prints stays in your context and is read again on every turn. Run builds and tests quietly and only as wide as needed (one test class while working, the full build once before complete), pipe long output through tail or grep, and read only the parts of files you need.
+- Keep tool output short: whatever a command prints stays in your context and is read again on every turn. Run tests only as wide as needed (one test class while working, the full build once before complete), and read only the parts of files and logs you need.
 - Report exactly what you changed: filesChanged, and commits. On your own branch (a separate worktree) commit before complete(): the others see only committed work.
 
 Stuck on the environment: when a command is refused, a process hangs or a service or port cannot be reached, and two attempts did not help, stop retrying and do not work around a refusal. Ask the operator with send_message({to: "operator"}): what is stuck, what you tried, what you need, and the option you will take otherwise. Meanwhile go on with what does not depend on it.

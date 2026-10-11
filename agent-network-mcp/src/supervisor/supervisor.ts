@@ -33,6 +33,8 @@ export interface SupervisorOptions {
   pool: RunnerPool;
   /** Where the config came from: a model chosen on the page is written back there. */
   configPath?: string;
+  /** The project the config was loaded for (a config without "project" reads it from here). */
+  projectDir?: string;
   /** The project's token prices, for CLIs that report no cost (Qwen, local models). */
   prices?: () => Promise<{ prices?: Prices }>;
   /** Where its CLI sessions run; default: its own folder under the system temp dir, outside the project. */
@@ -357,7 +359,7 @@ export class Supervisor {
     if (this.editing) return;
     const before = this.edits;
     try {
-      const fresh = (await loadRunnersConfig(this.opts.configPath)).supervisor;
+      const fresh = (await loadRunnersConfig(this.opts.configPath, this.opts.projectDir ? { projectDir: this.opts.projectDir } : {})).supervisor;
       if (fresh && this.edits === before && !this.editing) Object.assign(this.opts.config, fresh); // a page edit overlapped the read: keep it
       this.configError = null;
     } catch (e) {

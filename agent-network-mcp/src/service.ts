@@ -2,6 +2,7 @@ import { dirname } from "node:path";
 import { AppError } from "./errors.js";
 import { EventHub } from "./events/eventHub.js";
 import { readGitContext } from "./git.js";
+import { mergeBranch, type MergeResult } from "./worktrees.js";
 import { writeHandoffMarker } from "./handoff.js";
 import { archiveChange, changePath, readChange, type Exec } from "./openspec.js";
 import { anyDeclared, covers, findOverlaps, matches, normalizePath, overlaps, ownersOf } from "./ownership.js";
@@ -72,6 +73,15 @@ export interface NewTaskInput {
   maxFollowUps?: number;
   /** The task implements this OpenSpec change of the project (openspec/changes/<name>/). */
   openspec?: string;
+  /** Cost limit in USD over all sessions of the task; absent = none. */
+  maxCostUsd?: number;
+}
+
+/** A cost limit: a positive amount in USD (cents are kept). */
+export function checkCostLimit(value: unknown, what = "maxCostUsd"): number {
+  const n = Number(value);
+  if (typeof value === "boolean" || value === null || value === "" || !Number.isFinite(n) || n <= 0 || n > 100_000) throw new AppError("INVALID_INPUT", `${what} must be a positive amount in USD`);
+  return Math.round(n * 100) / 100;
 }
 
 /** An assignment that declares an empty file list: the agent changes nothing and reviews the others' work. */
@@ -244,10 +254,11 @@ export class NetworkService {
     const verifyCommand = input.verifyCommand?.trim() || undefined;
     const maxFollowUps = input.maxFollowUps ?? 0;
     if (!Number.isInteger(maxFollowUps) || maxFollowUps < 0 || maxFollowUps > 20) throw new AppError("INVALID_INPUT", "maxFollowUps must be an integer 0..20");
+    const maxCostUsd = input.maxCostUsd === undefined ? undefined : checkCostLimit(input.maxCostUsd);
 
     const git = await readGitContext(this.projectDir);
     const description = change ? openspecDescription(change.name, input.description) : input.description;
-    const task = await this.tasks.create({ title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps, ...(change ? { openspec: change.name } : {}) });
+    const task = await this.tasks.create({ title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps, ...(maxCostUsd !== undefined ? { maxCostUsd } : {}), ...(change ? { openspec: change.name } : {}) });
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
   }
@@ -264,18 +275,49 @@ export class NetworkService {
     });
   }
 
-  /** Operator: give a BLOCKED task more fix rounds; the fix that was held back starts right away. */
-  async unblockTask(taskId: string, extraRounds = 1): Promise<Task> {
+  /**
+   * Operator: give a BLOCKED task more fix rounds; the fix that was held back starts right away. A task blocked by its
+   * cost limit gets more money instead (extraUsd; rounds are left as they are) and goes on where it stopped.
+   */
+  async unblockTask(taskId: string, extraRounds = 1, extraUsd?: number): Promise<Task> {
     assertTaskId(taskId);
     if (!Number.isInteger(extraRounds) || extraRounds < 1 || extraRounds > 20) throw new AppError("INVALID_INPUT", "rounds must be an integer 1..20");
+    const usd = extraUsd === undefined ? undefined : checkCostLimit(extraUsd, "usd");
     return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
       const task = await this.tasks.get(taskId);
       if (task.status !== "BLOCKED") throw new AppError("INVALID_INPUT", `Task ${taskId} is ${task.status}, not BLOCKED`);
+      if (task.blockedBy === "cost") {
+        if (usd === undefined) throw new AppError("INVALID_INPUT", `Task ${taskId} is blocked by its cost limit ($${task.maxCostUsd}): raise it with usd, e.g. +5`);
+        const { blockedReason: _r, blockedBy: _b, ...open } = task;
+        const maxCostUsd = Math.round(((task.maxCostUsd ?? 0) + usd) * 100) / 100;
+        await this.tasks.save({ ...open, status: "ACTIVE", maxCostUsd });
+        await this.emit({ type: "TASK_UNBLOCKED", taskId, sourceAgent: "operator", payload: { extraUsd: usd, maxCostUsd } });
+        return this.advance(taskId);
+      }
+      if (usd !== undefined) throw new AppError("INVALID_INPUT", `Task ${taskId} is blocked by its fix rounds, not by money: give it rounds`);
       const { blockedReason: _drop, handover: _handover, takeover: _takeover, ...rest } = task;
       // unblockedAtRound: the fix held back in this round goes ahead even if it was stopped as a stalled fix
       await this.tasks.save({ ...rest, status: "ACTIVE", maxFixRounds: this.phases.maxFixRounds(task) + extraRounds, unblockedAtRound: task.syncRound });
       await this.emit({ type: "TASK_UNBLOCKED", taskId, sourceAgent: "operator", payload: { extraRounds } });
       return this.advance(taskId);
+    });
+  }
+
+  /**
+   * Operator (the page, after an agent session ended): the task's sessions have cost `spentUsd`, at or above its limit.
+   * An ACTIVE task becomes BLOCKED until the operator raises the limit or cancels it; the agents end their sessions as on
+   * any BLOCKED task. Returns null when there is nothing to block (no limit, not reached, not ACTIVE).
+   */
+  async blockForCost(taskId: string, spentUsd: number): Promise<Task | null> {
+    assertTaskId(taskId);
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator blocks a task by its cost");
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      if (task.status !== "ACTIVE" || task.maxCostUsd === undefined || spentUsd < task.maxCostUsd) return null;
+      const reason = `cost limit $${task.maxCostUsd} reached ($${spentUsd.toFixed(2)} spent); the operator decides: raise the limit or cancel`;
+      const saved = await this.tasks.save({ ...task, status: "BLOCKED", blockedReason: reason, blockedBy: "cost" });
+      await this.emit({ type: "TASK_BLOCKED", taskId, sourceAgent: OPERATOR, payload: { phase: task.phase, reason, kind: "cost", maxCostUsd: task.maxCostUsd, spentUsd: Math.round(spentUsd * 100) / 100, round: task.syncRound } });
+      return saved;
     });
   }
 
@@ -590,6 +632,13 @@ export class NetworkService {
     return winner?.event ?? null;
   }
 
+  /** The build tool finished a run: recorded for the page only (addressed to the agent itself, so it wakes nobody). */
+  async recordBuild(taskId: string | null, payload: { command: string; ok: boolean; exitCode: number | null; timedOut: boolean; durationMs: number; logPath: string; tests?: { total: number; failed: number } }): Promise<void> {
+    await this.emit({ type: "BUILD_RAN", ...(taskId ? { taskId } : {}), targetAgent: this.me, sourceAgent: this.me, payload: { agentId: this.me, ...payload } });
+    // the page shows the latest run per agent without reading every event of the task
+    if (taskId) await this.fs.writeJson(["tasks", taskId, "builds", `${this.me}.json`], { agentId: this.me, at: new Date().toISOString(), ...payload });
+  }
+
   private isDeliverable(event: NetworkEvent): boolean {
     if (event.sourceAgent === this.me) return false;
     return event.targetAgent == null || event.targetAgent === this.me;
@@ -685,6 +734,28 @@ export class NetworkService {
    * Operator, after DONE: `openspec archive` in the project folder, once its tasks.md is fully ticked there (the lead
    * ticks the tasks in its own checkout; its branch has to be merged into the project folder first).
    */
+  /**
+   * Operator, after DONE: merge the lead's branch (its own worktree) into the project's current branch, without a push.
+   * Refused, with nothing changed, on conflicts or uncommitted changes in the project (see worktrees.mergeBranch).
+   */
+  async mergeTask(
+    input: { taskId: string; project: string; branch: string },
+    merge: (project: string, branch: string, message: string) => Promise<MergeResult> = mergeBranch,
+  ): Promise<Task> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator merges a task's branch into the project");
+    const taskId = assertTaskId(input.taskId);
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `Merge once the task is DONE; ${taskId} is ${task.phase} (${task.status})`);
+      if (task.merged) throw new AppError("ALREADY_COMPLETED", `${task.merged.branch} was merged into ${task.merged.into} at ${task.merged.at} (${task.merged.commit.slice(0, 7)})`);
+      const r = await merge(input.project, input.branch, `Merge ${input.branch}: ${taskId} ${task.title}`.slice(0, 200));
+      const merged = { at: new Date().toISOString(), branch: input.branch, into: r.into, commit: r.commit, already: r.already };
+      const saved = await this.tasks.save({ ...task, merged });
+      await this.emit({ type: "TASK_MERGED", taskId, sourceAgent: OPERATOR, payload: merged });
+      return saved;
+    });
+  }
+
   async archiveOpenspec(input: { taskId: string }, exec?: Exec): Promise<{ task: Task; output: string }> {
     if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator archives an OpenSpec change");
     const taskId = assertTaskId(input.taskId);
@@ -809,6 +880,7 @@ export class NetworkService {
           git: task.git && base ? { ...task.git, commit: base } : task.git,
           maxFixRounds: this.phases.maxFixRounds(task),
           ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+          ...(task.maxCostUsd !== undefined ? { maxCostUsd: task.maxCostUsd } : {}),
           parentTaskId: task.id,
           rootTaskId: rootId,
           ...(base ? { baseCommit: base } : {}),

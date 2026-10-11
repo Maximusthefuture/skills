@@ -35,8 +35,12 @@ export interface SchedulerOptions {
   schedules: ScheduleConfig[];
   /** runners.json: read again on every look (edits apply at once), "enabled" is written back. */
   configPath?: string;
+  /** The project the config was loaded for (a config without "project" reads it from here). */
+  projectDir?: string;
   /** How often it looks. Default 30 s. */
   pollMs?: number;
+  /** Cost limit of a schedule's task that sets none ("maxTaskCostUsd" of runners.json, read again with the file). */
+  maxTaskCostUsd?: number;
   now?: () => number;
   log?: (line: string) => void;
 }
@@ -61,9 +65,11 @@ export class Scheduler {
   private ticking?: Promise<void>;
   private running = false;
   private configError: string | null = null;
+  private maxTaskCostUsd?: number;
 
   constructor(private readonly opts: SchedulerOptions) {
     this.fs = FileStore.open(opts.networkDir);
+    this.maxTaskCostUsd = opts.maxTaskCostUsd;
     this.operator = NetworkService.create(opts.networkDir, { id: "operator", type: "scheduler" });
   }
 
@@ -165,6 +171,7 @@ export class Scheduler {
           ...(s.verifyCommand ? { verifyCommand: s.verifyCommand } : {}),
           ...(s.maxFixRounds !== undefined ? { maxFixRounds: s.maxFixRounds } : {}),
           ...(s.maxFollowUps !== undefined ? { maxFollowUps: s.maxFollowUps } : {}),
+          ...((s.maxCostUsd ?? this.maxTaskCostUsd) !== undefined ? { maxCostUsd: s.maxCostUsd ?? this.maxTaskCostUsd } : {}),
         });
         run = { at: at.toISOString(), taskId: task.id, ...(manual ? { manual: true as const } : {}) };
       } catch (e) {
@@ -182,7 +189,9 @@ export class Scheduler {
   private async reloadConfig(): Promise<void> {
     if (!this.opts.configPath) return;
     try {
-      this.opts.schedules = (await loadRunnersConfig(this.opts.configPath)).schedules ?? [];
+      const config = await loadRunnersConfig(this.opts.configPath, this.opts.projectDir ? { projectDir: this.opts.projectDir } : {});
+      this.opts.schedules = config.schedules ?? [];
+      this.maxTaskCostUsd = config.maxTaskCostUsd;
       this.configError = null;
     } catch (e) {
       const message = (e as Error).message;

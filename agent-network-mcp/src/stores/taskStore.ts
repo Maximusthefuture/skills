@@ -13,6 +13,7 @@ export interface NewTask {
   maxFixRounds?: number;
   verifyCommand?: string;
   maxFollowUps?: number;
+  maxCostUsd?: number;
   parentTaskId?: string;
   rootTaskId?: string;
   baseCommit?: string;
@@ -45,6 +46,7 @@ export class TaskStore {
       maxFixRounds: input.maxFixRounds ?? DEFAULT_MAX_FIX_ROUNDS,
       ...(input.verifyCommand ? { verifyCommand: input.verifyCommand } : {}),
       ...(input.maxFollowUps ? { maxFollowUps: input.maxFollowUps, followUpsUsed: 0 } : {}),
+      ...(input.maxCostUsd !== undefined ? { maxCostUsd: input.maxCostUsd } : {}),
       ...(input.parentTaskId ? { parentTaskId: input.parentTaskId } : {}),
       ...(input.rootTaskId ? { rootTaskId: input.rootTaskId } : {}),
       ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),

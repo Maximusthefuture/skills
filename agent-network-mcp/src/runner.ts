@@ -191,6 +191,10 @@ export interface RunnerOptions {
   onActivity?: (e: ActivityItem) => void;
   /** The operator's urgent messages: interrupt the current session and start the next one with the message first. */
   urgent?: UrgentChannel;
+  /** Before a session starts: e.g. create the agent's worktree again after the operator removed it. Throwing = not now. */
+  prepare?: () => Promise<void>;
+  /** After a session is recorded, before the runner looks at the task again (the page checks the task's cost limit here). */
+  onSessionEnd?: (taskId: string) => Promise<void> | void;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -358,6 +362,15 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       await sleep(pollMs, signal);
       continue;
     }
+    if (opts.prepare) {
+      try {
+        await opts.prepare();
+      } catch (e) {
+        say(`cannot prepare the session: ${(e as Error).message}; waiting`);
+        await sleep(pollMs, signal);
+        continue;
+      }
+    }
 
     const attempt = (attempts.get(task.id) ?? 0) + 1;
     attempts.set(task.id, attempt);
@@ -423,6 +436,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
         ...(plannedTurnLimit ? { turnLimit: true as const } : {}),
       })
       .catch((e: Error) => log(`cannot record the session: ${e.message}`));
+    await Promise.resolve(opts.onSessionEnd?.(task.id)).catch((e: Error) => log(`after the session: ${e.message}`));
     if (signal?.aborted) break;
     if (interrupted) {
       // the operator's urgent message: a planned end, the next session starts at once with the message first

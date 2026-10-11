@@ -12,7 +12,7 @@ export interface Agent {
 }
 
 export type Phase = "DISCUSS" | "IMPLEMENT" | "SYNC" | "INTEGRATE" | "DONE";
-/** BLOCKED: the fix-round limit was reached and reviews still fail; only the operator can unblock or cancel it. */
+/** BLOCKED: the fix-round limit was reached and reviews still fail, or its cost limit was reached (blockedBy "cost"); only the operator can unblock or cancel it. */
 export type TaskStatus = "ACTIVE" | "BLOCKED" | "COMPLETED" | "CANCELLED";
 
 export interface GitContext {
@@ -58,6 +58,12 @@ export interface Task {
   verifyCommand?: string;
   /** Why the task is BLOCKED. */
   blockedReason?: string;
+  /** BLOCKED by its cost limit (maxCostUsd), not by its fix rounds: unblocking raises the limit. */
+  blockedBy?: "cost";
+  /** Cost limit in USD over all agent sessions of this task: reached, the task is BLOCKED until the operator raises it. */
+  maxCostUsd?: number;
+  /** After DONE: the lead's branch merged into the project's branch by the operator (the page's "Влить в проект"). */
+  merged?: { at: string; branch: string; into: string; commit: string; already: boolean };
   /** Follow-up: the task whose integration created this one. */
   parentTaskId?: string;
   /** Follow-up: the first task of the chain (the one the operator created). */
@@ -235,6 +241,8 @@ export const EVENT_TYPES = [
   "TASK_UNBLOCKED",
   "TASK_HANDED_OVER",
   "OPENSPEC_ARCHIVED",
+  "BUILD_RAN",
+  "TASK_MERGED",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

@@ -19,6 +19,7 @@ import { formatSessionLog, readSessionLog } from "../supervisor/sessionLog.js";
 import type { Supervisor } from "../supervisor/supervisor.js";
 import type { Scheduler } from "../schedule/scheduler.js";
 import { buildUiState } from "./state.js";
+import { branchDiff, fileDiff, removeWorktrees, type MergeResult } from "../worktrees.js";
 
 export interface UiServer {
   server: Server;
@@ -39,6 +40,8 @@ export interface UiProject {
   supervisor?: Supervisor;
   /** Tasks created on a cron (runners.json "schedules"). */
   scheduler?: Scheduler;
+  /** Cost limit (USD) of a task created on the page without one (runners.json "maxTaskCostUsd"). */
+  maxTaskCostUsd?: number;
 }
 
 export interface UiOptions {
@@ -50,6 +53,8 @@ export interface UiOptions {
   prices?: UiProject["prices"];
   /** Runs the openspec CLI for "archive" (tests replace it). */
   openspecExec?: Exec;
+  /** Tests: the git merge of "Влить в проект". */
+  merge?: (project: string, branch: string, message: string) => Promise<MergeResult>;
 }
 
 interface Project {
@@ -64,6 +69,7 @@ interface Project {
   scheduler?: Scheduler;
   operator?: NetworkService;
   prices?: UiProject["prices"];
+  maxTaskCostUsd?: number;
   git?: { at: number; value: Promise<GitContext | null> };
 }
 
@@ -74,6 +80,18 @@ const DAY_MS = 24 * 3600 * 1000;
 type Reply = { status: number; type: string; body: string };
 const json = (status: number, value: unknown): Reply => ({ status, type: "application/json", body: JSON.stringify(value) });
 const text = (status: number, body: string): Reply => ({ status, type: "text/plain; charset=utf-8", body });
+
+/** The lead's own branch of a task: its auto worktree's, else the branch checked out in its own folder. */
+async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { agents: string[] }): Promise<{ project: string; branch: string }> {
+  const lead = task.agents[0]!;
+  const folder = p.pool?.agentFolder(lead);
+  const project = folder?.worktree?.project ?? p.projectDir;
+  const branch = folder?.worktree?.branch ?? (folder?.cwd && resolve(folder.cwd) !== p.projectDir ? (await readGitContext(folder.cwd))?.branch : undefined);
+  if (!branch || branch === "HEAD") {
+    throw new AppError("INVALID_INPUT", `${lead} (the lead) has no branch of its own: it works in the project folder${folder?.cwd ? ` or on no branch in ${folder.cwd}` : ""}, so its commits are there already`);
+  }
+  return { project, branch };
+}
 
 /** A path for the page: the home folder as "~". */
 const tilde = (path: string): string => {
@@ -86,7 +104,7 @@ const slug = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g,
 /**
  * GET / (page), GET /api/projects, and per project (?project=<id>, default: the first one): GET /api/state, /api/runs,
  * /api/openspec/changes, /api/runners/<id>/log; with runners also POST /api/tasks, /api/runners/<id>/start|stop|instructions|model,
- * /api/questions/answer, /api/openspec/archive, /api/tasks/<id>/unblock|handover|cancel|message, /api/supervisor/start|stop|model|tools|note|resolve
+ * /api/questions/answer, /api/openspec/archive, /api/tasks/<id>/unblock|handover|cancel|message|merge, /api/worktrees/clean, /api/supervisor/start|stop|model|tools|note|resolve
  * (GET /api/supervisor, /api/activity). Bound to loopback; foreign Host headers are refused, and state-changing
  * requests must be same-origin JSON (a page on another site cannot create tasks for the agents).
  */
@@ -113,6 +131,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       ...(spec.prices ? { prices: spec.prices } : {}),
       ...(spec.runners && spec.supervisor ? { supervisor: spec.supervisor } : {}),
       ...(spec.runners && spec.scheduler ? { scheduler: spec.scheduler } : {}),
+      ...(spec.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: spec.maxTaskCostUsd } : {}),
     });
   }
   const host = opts.host ?? "127.0.0.1";
@@ -263,10 +282,30 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         return json(200, {
           ...(await buildUiState(p.fs, undefined, pricing)),
           project: { id: p.id, name: p.name, projectDir: tilde(p.projectDir), networkDir: tilde(p.networkDir), count: projects.length },
-          control: p.pool ? { runners: await p.pool.details() } : null,
+          control: p.pool
+            ? {
+                runners: await p.pool.details(), maxTaskCostUsd: p.maxTaskCostUsd ?? null,
+                /** Agents in auto worktrees: the DONE task card offers to merge the lead's branch and remove the worktrees. */
+                worktrees: p.pool.ids().filter((id) => p.pool!.agentFolder(id)?.worktree),
+              }
+            : null,
           supervisor: await supervisorBrief(p),
           schedules: p.scheduler ? await p.scheduler.status() : null,
         });
+      }
+      const diffOf = /^\/api\/tasks\/([^/]+)\/diff$/.exec(path);
+      if (diffOf && p.pool) {
+        // what "Влить в проект" brings: the lead's branch since it left the project's branch (after the merge: the merge itself)
+        // the list first (commits, files with +/-); one file's diff with ?file=<path>, when the page opens it
+        const task = await new TaskStore(p.fs).get(decodeURIComponent(diffOf[1]!));
+        const lead = task.merged && !task.merged.already ? null : await leadBranch(p, task);
+        const range: { project: string; base: string; head: string; mode: "two-dot" | "three-dot"; branch: string; merged: boolean } = lead
+          ? { project: lead.project, base: "HEAD", head: lead.branch, mode: "three-dot", branch: lead.branch, merged: false }
+          : { project: p.projectDir, base: `${task.merged!.commit}^1`, head: task.merged!.commit, mode: "two-dot", branch: task.merged!.branch, merged: true };
+        const head = range.head;
+        const file = url.searchParams.get("file");
+        if (file !== null) return json(200, await fileDiff(range.project, range.base, head, range.mode, file));
+        return json(200, { ...(await branchDiff(range.project, range.base, head, range.mode)), branch: range.branch, merged: range.merged });
       }
       if (path === "/api/runs") {
         const pricing = (await p.prices?.()) ?? {};
@@ -306,7 +345,9 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const body = await readJson(req);
 
     if (path === "/api/tasks") {
-      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown };
+      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown };
+      // the page sends "" for "no limit"; a field it leaves out gets the config's maxTaskCostUsd
+      const maxCostUsd = b.maxCostUsd === undefined ? p.maxTaskCostUsd : b.maxCostUsd === "" || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd);
       const agents = Array.isArray(b.agents) ? b.agents.map(String) : [];
       const openspec = typeof b.openspec === "string" && b.openspec.trim() ? assertChangeName(b.openspec.trim()) : undefined;
       if (openspec) await checkAgentFolders(p, openspec, agents);
@@ -318,6 +359,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         ...(typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? { verifyCommand: b.verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
+        ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
       });
       return json(201, { task });
     }
@@ -326,9 +368,15 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const acted = async (taskId: string, text: string) => {
       if (bySupervisor) await p.journal.add({ kind: "action", by: "supervisor", taskId, text });
     };
-    const taskAction = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel|message)$/.exec(path);
+    const taskAction = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel|message|merge)$/.exec(path);
     if (taskAction) {
       const id = decodeURIComponent(taskAction[1]!);
+      if (taskAction[2] === "merge") {
+        const { project, branch } = await leadBranch(p, await operator.tasks.get(id));
+        const merged = await operator.mergeTask({ taskId: id, project, branch }, opts.merge);
+        await acted(id, `merged ${branch} into ${merged.merged!.into}`);
+        return json(200, { task: merged });
+      }
       if (taskAction[2] === "message") {
         // always to the task's lead, who passes it on: the operator does not give the agents orders past the lead
         const b = body as { text?: unknown; urgent?: unknown };
@@ -351,10 +399,24 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         await acted(id, `cancelled the task`);
         return json(200, { task });
       }
-      const rounds = (body as { rounds?: unknown }).rounds;
-      const task = await operator.unblockTask(id, rounds === undefined ? 1 : Number(rounds));
+      const { rounds, usd } = body as { rounds?: unknown; usd?: unknown };
+      // money is the operator's call: the supervisor never raises a cost limit
+      if (bySupervisor && (usd !== undefined || (await operator.tasks.find(id))?.blockedBy === "cost")) {
+        return json(403, { error: "FORBIDDEN", message: "A task blocked by its cost limit is the operator's decision: escalate it with a recommendation" });
+      }
+      const task = await operator.unblockTask(id, rounds === undefined ? 1 : Number(rounds), usd === undefined ? undefined : Number(usd));
       await acted(id, `unblocked with ${task.maxFixRounds} fix rounds in all`);
       return json(200, { task });
+    }
+    if (path === "/api/worktrees/clean") {
+      // remove the agents' auto worktrees and merged branches: only while none of them works on anything
+      const ids = pool.ids().filter((id) => pool.agentFolder(id)?.worktree);
+      if (!ids.length) throw new AppError("INVALID_INPUT", 'No agent of this project works in an auto worktree ("worktree": true in runners.json defaults)');
+      const busy = pool.list().filter((r) => ids.includes(r.id) && r.session).map((r) => r.id);
+      if (busy.length) throw new AppError("INVALID_INPUT", `${busy.join(", ")} ${busy.length > 1 ? "are" : "is"} in a session now: remove the worktrees when no task is open`);
+      const open = (await operator.tasks.list()).filter((t) => (t.status === "ACTIVE" || t.status === "BLOCKED") && t.agents.some((a) => ids.includes(a)));
+      if (open.length) throw new AppError("INVALID_INPUT", `Open tasks still need the worktrees: ${open.map((t) => `${t.id} (${t.status})`).join(", ")}`);
+      return json(200, { result: await removeWorktrees(ids.map((id) => ({ id, ...pool.agentFolder(id)! }))) });
     }
     if (path === "/api/openspec/archive") {
       return json(200, await operator.archiveOpenspec({ taskId: String((body as { taskId?: unknown }).taskId ?? "") }, opts.openspecExec));

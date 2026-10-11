@@ -20,7 +20,7 @@ const finding = z.object({
   files: z.array(z.string()).optional().describe("Project-relative paths, e.g. ['src/main/java/A.java']"),
 });
 
-/** The tools an agent sees: swarm_context, create_task, send_message, propose, subtasks, complete, wait. */
+/** The tools an agent sees: swarm_context, create_task, send_message, propose, subtasks, complete, build, wait. */
 export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   const onError = async (e: unknown) => errorResult(await swarm.errorBody(e));
   const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, handler: (args: z.infer<z.ZodObject<S>>, signal: AbortSignal) => Promise<unknown>) =>
@@ -100,6 +100,15 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
       followUps: z.array(followUp).optional().describe("INTEGRATE with PASS, lead only, when swarm_context shows followUps.remaining > 0: new tasks for work that is left; the agents start them after this task is DONE"),
     },
     async (a) => swarm.complete(a),
+  );
+  tool(
+    "build",
+    "Run the build or tests in your folder and get the outcome, test totals and what failed (failing tests with their first lines, compile errors), not the whole output; the full log is saved and its path returned (grep it or read a part for details). Use it instead of running Maven/Gradle/npm builds in the shell: their output fills your context. Default command: the task's verifyCommand. One plain command, no shell (&&, pipes, redirects).",
+    {
+      command: z.string().optional().describe("Build or test command, e.g. './mvnw -q test -Dtest=OrderServiceTest -Dsurefire.timeout=300' or 'npm test'; omit to run the task's verifyCommand"),
+      timeoutMin: z.number().optional().describe("Stop it after this many minutes (default 20)"),
+    },
+    async (a, signal) => swarm.build(a, signal),
   );
   tool(
     "wait",

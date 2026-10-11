@@ -18,8 +18,10 @@
     "schedules: tasks the page creates by itself on a cron (local time; @daily, @weekdays = Mon-Fri 9:00, ...), no model involved. A run is skipped while the previous task of the same schedule is still open. {date} and {time} in title/description are filled in. Off here (\"enabled\": false): switch it on on the Tasks tab or here.",
     "Subagents: the agent tool is not excluded, so an agent can start the subagents of .qwen/agents/ in its folder for bounded side jobs. Only the agent itself talks to the swarm (the system prompt says so); give subagents tools without mcp__agent-network. Add \"agent\" to --exclude-tools to switch subagents off.",
     "The helper subagent of Qwen is a file: copy examples/runner/qwen-agents/helper.md to ~/.qwen/agents/ once (every project and worktree sees it), or to .qwen/agents/ of the project and commit it. --max-subagent-depth 1: a subagent starts no subagents of its own.",
-    "The model server is http://127.0.0.1:1234/v1 (LM Studio on this machine); another host: change --openai-base-url in both commands (agents and supervisor). The MCP servers are given inline (--mcp-config takes JSON)."
+    "The model server is http://127.0.0.1:1234/v1 (LM Studio on this machine); another host: change --openai-base-url in both commands (agents and supervisor). The MCP servers are given inline (--mcp-config takes JSON); \"timeout\" (ms) lets the build tool run up to 30 min (Qwen stops MCP calls after 10 min by default).",
+    "maxTaskCostUsd: the cost limit of a task created on the page or by a schedule (all its sessions together, priced with \"prices\" since Qwen reports no cost); reached, the task is BLOCKED until you raise it (+$ on the page) or cancel it. Remove it for no limit."
   ],
+  "maxTaskCostUsd": 10,
   "defaults": {
     "command": [
       "qwen",
@@ -45,7 +47,7 @@
       "--openai-api-key",
       "lm-studio",
       "--mcp-config",
-      "{\"mcpServers\":{\"agent-network\":{\"command\":\"node\",\"args\":[\"{agentNetworkMcp}/dist/index.js\"],\"env\":{\"AGENT_TYPE\":\"qwen\"}}}}",
+      "{\"mcpServers\":{\"agent-network\":{\"command\":\"node\",\"args\":[\"{agentNetworkMcp}/dist/index.js\"],\"env\":{\"AGENT_TYPE\":\"qwen\"},\"timeout\":1800000}}}",
       "--approval-mode",
       "auto-edit",
       "--allowed-tools",

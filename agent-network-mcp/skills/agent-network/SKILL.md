@@ -5,7 +5,7 @@ description: Use when you are an agent in the agent-network swarm (MCP server "a
 
 # Agent network
 
-You work through seven MCP tools of the `agent-network` server. The server owns the workflow and
+You work through eight MCP tools of the `agent-network` server. The server owns the workflow and
 the phase; you only do the work and follow `nextAction`. There are no other tools (no agent_register,
 phase_get, ...): you are registered automatically; tasks are created by the operator or, when the USER asks, by you with `create_task`.
 
@@ -41,6 +41,7 @@ First call, always: `swarm_context`. Never call `propose`, `complete` or `send_m
 - `propose({summary, assignments: [{agentId, responsibility, files, dependsOn?}], decisions?, interfaces?})` — DISCUSS only; every file has one owner. `dependsOn: [agent]` for work that calls that agent's new code (API tests): it completes only after that agent reported and its commits are merged.
 - `subtasks({add?, start?, done?, drop?})` — your own checklist for your part: `add` new steps (ids s1, s2, ...), `start` the one you work on, `done` finished ones, `drop: [{id, reason}]` unneeded ones. Kept by the server (a restarted session sees it), visible to the others.
 - `complete(...)` — meaning depends on the phase: DISCUSS no arguments (approve the agreement you have read); IMPLEMENT `{result, filesChanged?, commits?}`; SYNC `{status, findings?}`; INTEGRATE (lead) `{status, result, commits, findings?, followUps?}` (`followUps` only with PASS and while `followUps.remaining` > 0). NEEDS_FIX requires an ERROR finding; name the agent who must fix in `relatedAgent`; severity is INFO, WARNING or ERROR. Arguments from another phase are rejected.
+- `build({command?, timeoutMin?})` — runs the build or tests in your folder and answers with the outcome, test totals and what failed; the full log goes to a file (path in the answer). No command = the task's `verifyCommand`. One plain build-tool command (`./mvnw`, `gradle`, `npm`, …), no shell. Use it instead of running builds in the shell: their output fills your context.
 - `wait({timeoutMs?})` — returns with `status`: `MESSAGES`, `ACTION_REQUIRED`, `UPDATED`, `DONE` or `TIMEOUT`, with fresh context (`TIMEOUT` is a short answer). On `TIMEOUT` call `wait()` again. If something is already pending it returns immediately. Omit `timeoutMs` to use the server default.
 
 ## With development skills

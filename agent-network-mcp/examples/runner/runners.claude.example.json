@@ -1,11 +1,11 @@
 {
   "_comment": [
-    "Example for `agent-network-mcp ui --runners runners.json`: three Claude Code agents on a project in git, one worktree each.",
-    "Copy it (e.g. to agent-network-mcp/runners.json, which is gitignored) and replace every /abs/path with your paths.",
-    "Worktrees: cd /abs/path/project && git worktree add ../project-backend -b swarm-backend && git worktree add ../project-reviewer -b swarm-reviewer && git worktree add ../project-tester -b swarm-tester",
+    "Example for `agent-network-mcp ui --runners runners.claude.example.json`, started inside your project (a git repository with at least one commit): three Claude Code agents, one worktree each. No paths to fill in.",
+    "The project is the git repository ui is started in (or \"project\": \"/path\" here); the network is <project>/.agent-network (kept out of git via .git/info/exclude). {agentNetworkMcp} is this package's folder, filled in by the loader. To change models or commands, copy this file anywhere and edit the copy.",
+    "Worktrees: \"worktree\": true in defaults: each agent without \"cwd\" works in <project>-<id> on branch swarm-<id>, created at ui start from the project's HEAD (and again before a session if removed). Give an agent \"cwd\" to put it elsewhere.",
     "--max-turns 70 (Qwen: --max-session-turns 70): short sessions on purpose. Every turn reads the whole context again, so one 200-turn session costs several times more than three of 70. A session that reaches the limit after doing something is a planned end, not a failure: the runner starts a fresh one at once and tells it to go on from git status and its subtasks.",
-    "mcp.json takes AGENT_ID and NETWORK_DIR from the environment (${AGENT_ID}); the runner sets them for every session.",
-    "--settings adds the agent-network hooks (new messages while working, no early stop); fill in its /abs/path values too, or drop the flag.",
+    "The MCP servers and the hooks are given inline (--mcp-config and --settings take JSON); Claude fills in ${AGENT_ID} and ${NETWORK_DIR} from the environment the runner sets for every session.",
+    "--settings adds the agent-network hooks (new messages while working, no early stop); drop the flag to run without them.",
     "Prompt first, right after -p: --allowedTools takes several values and would swallow it.",
     "instructionsFile (per agent, relative to this file): the agent's own instructions, appended to the standard prompt and read again before every session; can also be set on the page.",
     "stream-json output lets the runner count tokens and cost per session (task statistics) and still show a readable log.",
@@ -16,9 +16,10 @@
     "supervisor: the agent that looks after the others (page tab «Надзор»). A detector without a model checks the swarm every 10 s; on an incident (a question to you unanswered for questionAfterSec, a BLOCKED task, no progress for stallMin, the same command repeatCount times, a test JVM older than testMin, a runner that gave up) it starts one supervisor session with the tools of supervisor-mcp.json. Read-only file tools, no shell: it acts through the page (answers, messages, +rounds, handover) and frees hung tests and database locks; decisions only you can take come to the page as «нужно ваше решение». maxSessionsPerHour and budgetUsd (USD per 24 h) cap its cost; a quiet run costs nothing, one incident about $0.2–0.6 on sonnet. Switch it on/off, pick the model and its tools on the page.",
     "supervisor.tools: your own commands for it, argv without a shell; {agentCwd} adds an agentId parameter (the agent's folder), {projectDir}/{networkDir} are filled in, own params are checked (type, enum, pattern). \"action\": true for a command that changes something: each run goes into its journal. disabledTools switches any tool off (also on the page).",
     "schedules: tasks the page creates by itself on a cron (local time; @daily, @weekdays = Mon-Fri 9:00, ...), no model involved. A run is skipped while the previous task of the same schedule is still open. {date} and {time} in title/description are filled in. Off here (\"enabled\": false): switch it on on the Tasks tab or here.",
-    "Subagents: Agent in --tools lets an agent start subagents for bounded side jobs; --agents defines \"helper\" (read and run only, no swarm tools). Only the agent itself talks to the swarm: the built-in general-purpose subagent would inherit the agent-network tools, so the system prompt tells agents to use helper (or a project agent such as critic). Each subagent is a separate context: tokens. Drop Agent from --tools to switch subagents off."
+    "Subagents: Agent in --tools lets an agent start subagents for bounded side jobs; --agents defines \"helper\" (read and run only, no swarm tools). Only the agent itself talks to the swarm: the built-in general-purpose subagent would inherit the agent-network tools, so the system prompt tells agents to use helper (or a project agent such as critic). Each subagent is a separate context: tokens. Drop Agent from --tools to switch subagents off.",
+    "maxTaskCostUsd: the cost limit of a task created on the page or by a schedule (all its sessions together); reached, the task is BLOCKED until you raise it (+$ on the page) or cancel it. Remove it for no limit."
   ],
-  "networkDir": "/abs/path/project/.agent-network",
+  "maxTaskCostUsd": 10,
   "defaults": {
     "command": [
       "claude",
@@ -36,10 +37,10 @@
       "--max-turns",
       "70",
       "--mcp-config",
-      "/abs/path/agent-network-mcp/examples/runner/mcp.json",
+      "{\"mcpServers\":{\"agent-network\":{\"command\":\"node\",\"args\":[\"{agentNetworkMcp}/dist/index.js\"],\"env\":{\"AGENT_ID\":\"${AGENT_ID}\",\"AGENT_TYPE\":\"claude\",\"NETWORK_DIR\":\"${NETWORK_DIR}\"}}}}",
       "--strict-mcp-config",
       "--settings",
-      "/abs/path/agent-network-mcp/examples/claude-hooks/settings.json",
+      "{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":\"node {agentNetworkMcp}/dist/index.js hook post-tool\",\"timeout\":10}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"node {agentNetworkMcp}/dist/index.js hook stop\",\"timeout\":10}]}]}}",
       "--permission-mode",
       "acceptEdits",
       "--agents",
@@ -69,22 +70,20 @@
       "opus"
     ],
     "maxRestarts": 2,
-    "systemPromptFile": "swarm-system-prompt.md"
+    "systemPromptFile": "swarm-system-prompt.md",
+    "worktree": true
   },
   "agents": [
     {
       "id": "backend",
-      "cwd": "/abs/path/project-backend",
       "instructionsFile": "instructions/backend.md"
     },
     {
       "id": "reviewer",
-      "cwd": "/abs/path/project-reviewer",
       "instructionsFile": "instructions/reviewer.md"
     },
     {
       "id": "tester",
-      "cwd": "/abs/path/project-tester",
       "autostart": false,
       "model": "haiku",
       "instructionsFile": "instructions/tester.md"
@@ -107,7 +106,7 @@
       "--tools",
       "Read,Grep,Glob",
       "--mcp-config",
-      "/abs/path/agent-network-mcp/examples/runner/supervisor-mcp.json",
+      "{\"mcpServers\":{\"supervisor\":{\"command\":\"node\",\"args\":[\"{agentNetworkMcp}/dist/index.js\",\"supervisor-mcp\"],\"env\":{\"AGENT_NETWORK_UI_URL\":\"${AGENT_NETWORK_UI_URL}\",\"AGENT_NETWORK_PROJECT\":\"${AGENT_NETWORK_PROJECT}\",\"NETWORK_DIR\":\"${NETWORK_DIR}\",\"AGENT_NETWORK_SUPERVISOR_FOLDERS\":\"${AGENT_NETWORK_SUPERVISOR_FOLDERS}\",\"AGENT_NETWORK_SUPERVISOR_TOOLS\":\"${AGENT_NETWORK_SUPERVISOR_TOOLS}\"}}}}",
       "--strict-mcp-config",
       "--allowedTools",
       "mcp__supervisor",

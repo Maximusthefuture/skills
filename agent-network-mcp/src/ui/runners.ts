@@ -1,7 +1,7 @@
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentWorktree } from "../worktrees.js";
+import { ensureWorktrees, type AgentWorktree } from "../worktrees.js";
 import { AppError } from "../errors.js";
 import { parseFreshPhases } from "../handoff.js";
 import { isValidModel, runRunner, usesModel, type RunnerOptions, type RunningSession } from "../runner.js";
@@ -93,6 +93,8 @@ export interface ScheduleConfig {
   verifyCommand?: string;
   maxFixRounds?: number;
   maxFollowUps?: number;
+  /** Cost limit of the task in USD; default: "maxTaskCostUsd" of the config. */
+  maxCostUsd?: number;
   /** Default true; switched on the page, written back here. */
   enabled: boolean;
 }
@@ -108,13 +110,20 @@ export interface RunnersConfig {
   prices?: Prices;
   /** The project: "project" in the file, else the git repository `ui` was started in. */
   project?: string;
+  /** Cost limit (USD) of tasks created on the page or by a schedule when they set none; absent = no limit. */
+  maxTaskCostUsd?: number;
 }
 
 type RawAgent = Partial<RunnerAgentConfig>;
 
+function costLimit(value: unknown, what: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new AppError("INVALID_CONFIG", `${what} must be a positive amount in USD, e.g. 10`);
+  return value;
+}
+
 export async function loadRunnersConfig(path: string, opts: { projectDir?: string } = {}): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown };
+  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown };
   try {
     // {agentNetworkMcp} anywhere in the file is this package's folder
     raw = JSON.parse((await readFile(file, "utf8")).replaceAll("{agentNetworkMcp}", PACKAGE_DIR.replaceAll("\\", "/")));
@@ -169,12 +178,14 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     });
   }
   const prices = parsePrices(raw.prices, file);
+  const maxTaskCostUsd = raw.maxTaskCostUsd === undefined || raw.maxTaskCostUsd === null ? undefined : costLimit(raw.maxTaskCostUsd, `${file}: "maxTaskCostUsd"`);
   const supervisor = raw.supervisor === undefined ? undefined : await parseSupervisor(raw.supervisor, file, abs);
   const schedules = raw.schedules === undefined ? undefined : parseSchedules(raw.schedules, file, agents.map((a) => a.id));
   return {
     ...(typeof raw.networkDir === "string" ? { networkDir: abs(raw.networkDir) } : project ? { networkDir: join(project, ".agent-network") } : {}),
     ...(project ? { project } : {}), agents, path: file,
     ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(schedules?.length ? { schedules } : {}),
+    ...(maxTaskCostUsd !== undefined ? { maxTaskCostUsd } : {}),
   };
 }
 
@@ -204,6 +215,7 @@ function parseSchedules(raw: unknown, file: string, agentIds: string[]): Schedul
     for (const k of ["maxFixRounds", "maxFollowUps"] as const) {
       if (s[k] !== undefined && (typeof s[k] !== "number" || !Number.isInteger(s[k]) || (s[k] as number) < 0)) bad(`"${k}" must be a whole number >= 0`);
     }
+    if (s.maxCostUsd !== undefined && (typeof s.maxCostUsd !== "number" || !(s.maxCostUsd > 0))) bad('"maxCostUsd" must be a positive amount in USD');
     out.push({
       id: s.id as string,
       cron: s.cron as string,
@@ -214,6 +226,7 @@ function parseSchedules(raw: unknown, file: string, agentIds: string[]): Schedul
       ...(typeof s.verifyCommand === "string" && s.verifyCommand.trim() ? { verifyCommand: s.verifyCommand } : {}),
       ...(s.maxFixRounds !== undefined ? { maxFixRounds: s.maxFixRounds as number } : {}),
       ...(s.maxFollowUps !== undefined ? { maxFollowUps: s.maxFollowUps as number } : {}),
+      ...(s.maxCostUsd !== undefined ? { maxCostUsd: s.maxCostUsd as number } : {}),
       enabled: s.enabled !== false,
     });
   }
@@ -406,13 +419,19 @@ export class RunnerPool {
   constructor(
     private readonly networkDir: string,
     agents: RunnersConfig["agents"],
-    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string } = {},
+    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string; onSessionEnd?: (agentId: string, taskId: string) => Promise<void> } = {},
   ) {
     for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [], urgent: [], stopSession: null, interruptAt: null });
   }
 
   ids(): string[] {
     return [...this.managed.keys()];
+  }
+
+  /** Where an agent works: its folder and, for an auto worktree, the project and branch. */
+  agentFolder(id: string): { cwd?: string; worktree?: AgentWorktree } | null {
+    const m = this.managed.get(id);
+    return m ? { ...(m.config.cwd ? { cwd: m.config.cwd } : {}), ...(m.config.worktree ? { worktree: m.config.worktree } : {}) } : null;
   }
 
   list(): RunnerView[] {
@@ -539,6 +558,9 @@ export class RunnerPool {
         m.session = session;
       },
       onActivity: (e) => this.record(m, e),
+      ...(this.opts.onSessionEnd ? { onSessionEnd: (taskId: string) => this.opts.onSessionEnd!(m.config.id, taskId) } : {}),
+      // an auto worktree removed after a task ("Убрать worktree") comes back from the project's HEAD before the next session
+      ...(m.config.worktree ? { prepare: async () => void (await ensureWorktrees([m.config])).forEach((line) => this.say(m, `[ui] worktree created again: ${line}`)) } : {}),
       urgent: {
         take: () => {
           const text = m.urgent.splice(0).join("\n\n");

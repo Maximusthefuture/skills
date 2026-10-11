@@ -66,6 +66,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         eventsTotal: evs.total,
         subtasks: Object.fromEntries((await Promise.all(task.agents.map((a) => subtasks.get(task.id, a)))).map((l) => [l.agentId, l.items])),
         followUps: tasks.filter((t) => t.parentTaskId === task.id).map((t) => t.id),
+        /** The latest run of the build tool per agent (agentId -> {ok, durationMs, tests?, at, logPath}). */
+        builds: Object.fromEntries((await Promise.all(task.agents.map((a) => fs.readJson<{ agentId: string }>(["tasks", task.id, "builds", `${a}.json`]).catch(() => null)))).filter((b) => b !== null).map((b) => [b!.agentId, b])),
         ...(await (async () => {
           const all = await messageStore.list(task.id);
           return { questions: operatorQuestions(all), notes: operatorNotes(all) };
@@ -153,10 +155,14 @@ function operatorQuestions(messages: Message[]) {
 }
 
 function pickTask(t: Task) {
-  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover } = t;
+  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged } = t;
   return {
     id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
+    /** Cost limit in USD (null = none); blockedBy "cost": BLOCKED by it, unblocking raises it. */
+    maxCostUsd: maxCostUsd ?? null, blockedBy: blockedBy ?? null,
+    /** The lead's branch merged into the project after DONE. */
+    merged: merged ?? null,
     parentTaskId: parentTaskId ?? null, baseCommit: baseCommit ?? null,
     followUpBudget: maxFollowUps ? { max: maxFollowUps, used: followUpsUsed ?? 0 } : null,
     /** BLOCKED: unless the operator decides by dueAt, the lead takes over the stuck fix. */
