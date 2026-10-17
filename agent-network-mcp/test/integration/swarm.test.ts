@@ -21,7 +21,7 @@ describe("swarm tool surface", () => {
   it("exposes exactly swarm_context, create_task, send_message, propose, subtasks, complete, wait", async () => {
     const networkDir = await network();
     const backend = await spawnAgent({ id: "backend", networkDir });
-    expect(await backend.listTools()).toEqual(["build", "complete", "create_task", "propose", "resolve_comments", "send_message", "spawn_agent", "subtasks", "swarm_context", "wait"]);
+    expect(await backend.listTools()).toEqual(["build", "complete", "create_task", "delegate", "plan", "propose", "resolve_comments", "send_message", "spawn_agent", "subtasks", "swarm_context", "wait"]);
   });
 
   it("registers the agent at startup, so the other agent sees it without any tool call", async () => {
@@ -352,6 +352,7 @@ describe("three agents in three git worktrees", () => {
     git(repo, "config", "user.email", "t@example.com");
     git(repo, "config", "user.name", "t");
     writeFileSync(join(repo, ".gitignore"), ".agent-network/\n");
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "t", private: true, scripts: { test: "node -e \"process.exit(0)\"" } }));
     git(repo, "add", ".");
     git(repo, "commit", "-q", "-m", "init");
     const trees: Record<string, string> = {};
@@ -423,11 +424,14 @@ describe("three agents in three git worktrees", () => {
     await qa.call("complete", { status: "PASS" });
     expect(await backend.call("complete", { status: "PASS" })).toMatchObject({ phaseChanged: { to: "INTEGRATE" }, nextAction: "integrate", hint: expect.stringContaining("npm test") });
 
-    // INTEGRATE: the lead merges the three branches in the main checkout and reports the merged HEAD
-    ws.git(ws.repo, "merge", "-q", "--no-edit", "backend", "frontend", "qa");
-    const merged = ws.git(ws.repo, "rev-parse", "HEAD");
-    expect(readdirSync(join(ws.repo, "src")).sort()).toEqual(["UserService.ts", "UserView.ts"]);
-    const done = await backend.call("complete", { status: "PASS", result: "main: backend+frontend+qa merged, npm test green", commits: [merged] });
+    // INTEGRATE: the lead merges the other branches into its own and reports the merged HEAD
+    ws.git(ws.trees.backend!, "merge", "-q", "--no-edit", "frontend", "qa");
+    const merged = ws.git(ws.trees.backend!, "rev-parse", "HEAD");
+    expect(readdirSync(join(ws.trees.backend!, "src")).sort()).toEqual(["UserService.ts", "UserView.ts"]);
+    // its word is not enough: PASS needs a green verifyCommand it ran on that commit
+    await expect(backend.call("complete", { status: "PASS", result: "merged, npm test green", commits: [merged] })).rejects.toThrow(/VERIFY_REQUIRED/);
+    expect(await backend.call("build", {})).toMatchObject({ status: "PASS" });
+    const done = await backend.call("complete", { status: "PASS", result: "backend+frontend+qa merged, npm test green", commits: [merged] });
     expect(done).toMatchObject({ task: { phase: "DONE", status: "COMPLETED" } });
     expect((await backend.call("swarm_context", { full: true })).integration).toMatchObject({ status: "PASS", commits: [merged] });
     for (const a of [frontend, qa]) expect(await a.call("wait", { timeoutMs: 5_000 })).toMatchObject({ status: "DONE" });

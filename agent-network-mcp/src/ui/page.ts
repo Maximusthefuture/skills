@@ -13,7 +13,7 @@ export const PAGE_HTML = String.raw`<!doctype html>
 aside{background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
 .brand{display:flex;align-items:center;gap:8px;padding:16px 16px 12px;font-weight:600}
 .proj{margin:0 10px 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);cursor:pointer}
-.proj b{display:flex;align-items:center;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.proj span.s{display:block;color:var(--muted);font:11px var(--mono);margin-top:2px}
+.proj b{display:flex;align-items:center;font-weight:600;overflow-wrap:anywhere}.proj span.s{display:block;color:var(--muted);font:11px var(--mono);margin-top:2px}
 .grp{padding:10px 16px 4px;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
 nav a{display:flex;align-items:center;gap:10px;padding:7px 16px;color:var(--muted);text-decoration:none;border-left:2px solid transparent}
 nav a .n{font:11px var(--mono);color:var(--idle);width:16px}nav a .c{margin-left:auto;font:11px var(--mono)}
@@ -21,7 +21,7 @@ nav a.on{color:var(--text);background:var(--card);border-left-color:var(--accent
 .foot{margin-top:auto;padding:12px 16px;border-top:1px solid var(--line);color:var(--muted);font:11px var(--mono);word-break:break-all}
 .top{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;padding:10px 24px;border-bottom:1px solid var(--line);font:11px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:var(--bg);position:sticky;top:0;z-index:2}
 .top b{color:var(--text);font-weight:500;margin-left:4px}.top .link{cursor:pointer}.top .link:hover b{text-decoration:underline}.top .r{margin-left:auto;text-transform:none}.top .warnq b{color:var(--warn)}
-main{padding:20px 24px 40px;max-width:1180px}
+main{padding:20px 24px 40px;min-width:0}
 h1{font-size:22px;font-weight:600;margin:0}.lead{color:var(--muted);margin:2px 0 16px}
 h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:22px 0 8px}
 .hrow{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}.hrow>.end{margin-left:auto}
@@ -35,9 +35,9 @@ h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute
 .panel table th,.panel table td{padding:8px 14px}.panel table th{font:11px var(--mono);text-transform:uppercase;letter-spacing:.05em}
 .ev{display:grid;grid-template-columns:64px 74px minmax(0,1fr);gap:8px;padding:6px 14px;border-bottom:1px solid var(--line);font:12px var(--mono)}.ev:last-child{border:0}.ev .t{color:var(--muted)}.ev .k{color:var(--accent)}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--idle);margin-right:6px;flex:none}.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}.dot.acc{background:var(--accent)}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:10px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
-.agent .top2,.runner .top2{display:flex;align-items:center;gap:8px;font-weight:600}.runner .top2 button{margin-left:auto}.runner .line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agent .top2,.runner .top2{display:flex;align-items:center;gap:8px;font-weight:600}.runner .top2 button{margin-left:auto}.runner .line{overflow-wrap:anywhere}
 .ONLINE .dot,.WORKING .dot{background:var(--ok)}.WAITING .dot{background:var(--warn)}.DEAD .dot{background:var(--bad)}
 .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;border:1px solid var(--line);color:var(--muted);font-weight:400}
 .badge.ONLINE,.badge.WORKING,.badge.PASS,.badge.READY_FOR_SYNC,.badge.RUNNING,.badge.running{color:var(--ok);border-color:var(--ok)}.badge.WAITING,.badge.IN_PROGRESS,.badge.queued{color:var(--warn);border-color:var(--warn)}.badge.DEAD,.badge.NEEDS_FIX,.badge.ERROR,.badge.BLOCKED,.badge.blocked{color:var(--bad);border-color:var(--bad)}.badge.STOPPED{color:var(--idle)}
@@ -61,6 +61,15 @@ button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:
 .openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}
 .toasts{position:fixed;top:12px;right:12px;z-index:50;display:flex;flex-direction:column;gap:8px;width:min(340px,calc(100vw - 24px));pointer-events:none}
 .toast{pointer-events:auto;cursor:pointer;position:relative;background:var(--card);color:var(--text);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:9px 30px 9px 12px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:13px;animation:tin .18s ease-out}
+.planov{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;flex-direction:column}.planov[hidden]{display:none}body.noscroll{overflow:hidden}
+.planhead{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}.planhead b{font-weight:600;overflow-wrap:anywhere;min-width:0;flex:1 1 200px}.planhead .pver{width:auto}.planhead button{margin-left:auto}
+.planbody{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 340px;grid-template-rows:minmax(0,1fr);min-height:0}.planbody iframe{width:100%;height:100%;border:0;background:#fff}
+.planside{border-left:1px solid var(--line);padding:12px;overflow:auto;min-height:0;display:flex;flex-direction:column;gap:10px;background:var(--side)}.planside textarea{width:100%}.planside .small{font-size:12px}
+.pmode{align-self:flex-start}.pnote{font-size:13px}.pquote{font-style:italic;color:var(--muted)}.pitem{border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--card);position:relative;margin-top:6px;font-size:13px}.pitem>button{position:absolute;top:2px;right:2px}
+.pdiag textarea{font:12px/1.4 var(--mono);white-space:pre;min-height:180px}.pdiag .dst{font-size:12px;margin:4px 0}.pdiag .dst.bad{color:var(--bad)}.pconfirm{border:1px solid var(--accent);background:var(--accbg);border-radius:6px;padding:8px 10px;font-size:13px}.pconfirm div{margin-bottom:6px}.pqs .card{margin:6px 0 0;padding:8px;font-size:13px}.pqs textarea{min-height:44px}.pact summary{cursor:pointer}.pstep{font-size:12px;margin:3px 0;overflow-wrap:anywhere}.pstep.err{color:var(--bad)}.pcritic{border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--card);font-size:13px}.prisk{border-top:1px solid var(--line);padding:6px 0;margin-top:6px}.prisk .psug{color:var(--accent)}.prisk button{margin-top:4px}.psent{border:1px solid var(--ok);background:var(--okbg);border-radius:6px;padding:8px 10px;font-size:13px}.ppick{border:1px solid var(--qline);background:var(--qbg);border-radius:6px;padding:8px}.planside>*{flex-shrink:0}.pdiff{display:flex;gap:6px;align-items:center;font-size:13px}.pdiff input{width:auto;margin:0}.pactions{margin-top:auto;padding-top:8px}.phist summary{cursor:pointer}.planline button{vertical-align:baseline}
+@media (max-width:860px){.planbody{grid-template-columns:1fr;grid-template-rows:55vh minmax(0,1fr)}.planside{border-left:0;border-top:1px solid var(--line)}}
+.askov{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px}.askbox{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;max-width:460px;white-space:pre-line;box-shadow:0 8px 30px rgba(0,0,0,.25)}.askbox .checks{margin-top:12px}
+.prep{margin:6px 0}.prep .prepmore{margin-top:4px}.prep .prepmore label{display:block;margin:4px 0}
 .toast.ok{border-left-color:var(--ok)}.toast.warn{border-left-color:var(--warn)}.toast.bad{border-left-color:var(--bad)}
 .toast b{display:block;margin-bottom:2px}.toast .x{position:absolute;top:4px;right:8px;border:0;background:none;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:2px}
 @keyframes tin{from{opacity:0;transform:translateY(-6px)}}
@@ -80,8 +89,8 @@ pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var
 .act.mini .arow{grid-template-columns:62px 96px minmax(0,1fr)}.act.mini .arow .seq,.act.mini .arow .who{display:none}
 .arow:hover{background:var(--card2)}.arow.open{background:var(--card2)}
 .arow .seq,.arow .tm{color:var(--muted);font:11px var(--mono);white-space:nowrap}
-.arow .who{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.arow .sum{font:12px/1.45 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arow .who{font-weight:600;overflow-wrap:anywhere}
+.arow .more2{color:var(--muted);display:none}.arow:hover .more2{display:inline}.arow .sum{font:12px/1.45 var(--mono);overflow-wrap:anywhere}
 .arow.text .sum{font-family:inherit;font-size:13px}.arow.thinking .sum{font-style:italic;color:var(--muted);font-family:inherit}
 .arow .tool{display:inline-block;padding:0 6px;margin-right:6px;border:1px solid var(--line);border-radius:5px;font:11px var(--mono);color:var(--text);background:var(--card)}
 .kind{font:11px var(--mono);white-space:nowrap}
@@ -99,7 +108,7 @@ pre.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var
 .jrow .txt{white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.jrow.open .txt{display:block}
 .jk{font:11px var(--mono);white-space:nowrap}.jk.incident{color:var(--warn)}.jk.action{color:var(--accent)}.jk.needs-you{color:var(--bad);font-weight:600}.jk.session{color:var(--violet)}.jk.note{color:var(--text)}
 .jrow.resolved .txt{color:var(--muted)}
-.jsess{grid-column:1/-1;display:flex;gap:10px;align-items:center;font:11px var(--mono);color:var(--muted);min-width:0}.jsess span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.jsess button{padding:2px 10px;font-size:12px;flex:none}
+.jsess{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font:11px var(--mono);color:var(--muted);min-width:0}.jsess span{overflow-wrap:anywhere}.jsess button{padding:2px 10px;font-size:12px;flex:none}
 pre.jlog{grid-column:1/-1;max-height:420px;cursor:text;margin:0}
 .ph .end a{color:var(--accent);text-decoration:none}.jrow.resolved .jk.needs-you{color:var(--muted);font-weight:400}
 .ph .sk{margin-left:12px;font-weight:400}.ph .sk button{padding:3px 8px}
@@ -123,8 +132,8 @@ button.warnbtn{background:var(--warn);border-color:var(--warn);color:#fff}
 .compose .who{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)}.compose .who button{padding:1px 9px;font-size:12px;border-radius:999px}
 .compose .hist{margin-top:8px;font-size:12px}.compose .hist div{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:8px;padding:4px 0;border-top:1px solid var(--line)}.compose .hist .tm{color:var(--muted);font-family:var(--mono)}.compose .hist .rd{color:var(--muted);white-space:nowrap}.compose .hist .rd.ok{color:var(--ok)}
 @media (max-width:700px){.jrow{grid-template-columns:56px 74px minmax(0,1fr)}.jrow .by{display:none}.jrow .txt{grid-column:1/-1}}
-.ptl{display:flex;gap:3px;height:26px;margin:10px 0}
-.ptl .seg{min-width:84px;display:block;line-height:24px;text-align:center;padding:0 8px;font:11px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--bg);color:var(--muted);border:1px solid var(--line);border-radius:5px}
+.ptl{display:flex;gap:3px;min-height:26px;margin:10px 0}
+.ptl .seg{min-width:84px;display:block;line-height:16px;padding:4px 8px;text-align:center;font:11px var(--mono);overflow-wrap:anywhere;background:var(--bg);color:var(--muted);border:1px solid var(--line);border-radius:5px}
 .ptl .seg.past,.ptl .seg.now,.ptl .seg.bad{min-width:140px}
 .ptl .seg .rd{display:inline-flex;gap:2px;margin-left:6px;vertical-align:1px}.ptl .seg .rd i{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.45}.ptl .seg .rd i.last{opacity:1}
 .ptl .seg.past{background:var(--okbg);color:var(--ok);border-color:transparent}.ptl .seg.now{background:var(--accbg);color:var(--accent);border-color:var(--accent);font-weight:600}.ptl .seg.bad{background:var(--badbg);color:var(--bad);border-color:var(--bad);font-weight:600}
@@ -134,18 +143,18 @@ button.warnbtn{background:var(--warn);border-color:var(--warn);color:#fff}
 .pk{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px 12px}.pk .l{font-size:12px;color:var(--muted)}.pk .v{font:500 18px var(--mono);margin:2px 0 6px}.pk .v small{font-size:12px;color:var(--muted);margin-left:6px;font-weight:400}.pk .h{font-size:12px;color:var(--muted);margin-top:5px}
 .pagents{margin:2px 0 10px}.prow{display:grid;grid-template-columns:130px minmax(0,1fr) 56px;gap:12px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}
 .prow .nm b{display:block;font-size:13px}.prow .nm span{font:11px var(--mono);color:var(--muted)}
-.prow .st{font-size:12px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.prow .st.ok{color:var(--ok)}.prow .st.warn{color:var(--warn)}.prow .st.now{color:var(--text)}.prow .st.bad{color:var(--bad)}
+.prow .st{font-size:12px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}.prow .st.ok{color:var(--ok)}.prow .st.warn{color:var(--warn)}.prow .st.now{color:var(--text)}.prow .st.bad{color:var(--bad)}
 .prow .cnt{font:12px var(--mono);text-align:right;color:var(--muted)}.prow .cnt b{color:var(--text);font-weight:500}
 .plegend{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:6px}.plegend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .ovp{display:grid;grid-template-columns:minmax(0,1.5fr) 104px minmax(0,2fr) 70px;gap:12px;align-items:center;padding:8px 14px;border-top:1px solid var(--line);cursor:pointer;font-size:13px}.ovp:hover{background:var(--card2)}
-.ovp .tt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ovp .tt span{color:var(--muted);font:11px var(--mono);margin-right:6px}.ovp .badge{text-align:center}.ovp .pct{font:12px var(--mono);text-align:right}
+.ovp .tt{overflow-wrap:anywhere}.ovp .tt span{color:var(--muted);font:11px var(--mono);margin-right:6px}.ovp .badge{text-align:center}.ovp .pct{font:12px var(--mono);text-align:right}
 @media (max-width:700px){.ptl .seg,.ptl .seg.past,.ptl .seg.now,.ptl .seg.bad{min-width:0;padding:0 4px;font-size:10px}.ovp{grid-template-columns:minmax(0,1fr) auto}.ovp .pbar{grid-column:1/-1}.ovp .pct{grid-row:1;grid-column:2}.ovp .badge{display:none}.prow{grid-template-columns:90px minmax(0,1fr) 44px}}
 .tscroll{overflow-x:auto}
-.acards{display:grid;gap:10px;margin:10px 0}
+.acards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr));gap:10px;margin:10px 0}
 .acard{border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:10px 12px;min-width:0}
 .acard .ah{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.acard .ah b{font-size:14px}.acard .tag{font:11px var(--mono);color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:0 7px}
 .acard .stats2{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center}.acard .stats2 .chip{font:11px var(--mono)}
-.acard .ag{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;margin-top:8px}
+.acard .ag{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:14px;margin-top:8px}
 .acard .lbl{font:10.5px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:3px}
 .acard .txt{font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
 .acard .asec{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
@@ -171,7 +180,7 @@ details.more{margin:0}details.more>summary{list-style:none;cursor:pointer;color:
 details.more>summary .tg::after{content:"ещё ▾";color:var(--accent);font-size:12px;white-space:nowrap}details.more[open]>summary .tg::after{content:"свернуть ▴"}details.more[open]>summary .pv{display:none}
 @media (max-width:820px){.acard .ag{grid-template-columns:1fr}.acard .stats2{margin-left:0}}
 tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;padding:4px 0 6px 18px}
-[hidden]{display:none!important}.nw{white-space:nowrap}.path{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[hidden]{display:none!important}.nw{white-space:nowrap}.path{max-width:420px;overflow-wrap:anywhere}
 .app>div{min-width:0}
 @media (max-width:820px){.app{grid-template-columns:minmax(0,1fr)}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}nav{display:flex;overflow-x:auto}.grp,.foot{display:none}nav a{border-left:0;border-bottom:2px solid transparent;white-space:nowrap;padding:8px 12px}nav a.on{border-bottom-color:var(--accent)}.cols{grid-template-columns:1fr}.top{position:static;padding:8px 16px}main{padding:16px}.kpi{border-right:0;border-bottom:1px solid var(--line)}}
 </style>
@@ -227,7 +236,17 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
           <label>Раундов исправлений<input name="maxFixRounds" type="number" min="0" max="20" value="3"></label>
           <label title="Сумма всех сессий агентов задачи. Достигнута — задача встаёт в BLOCKED, решаете вы: добавить денег или отменить. Пусто — без лимита.">Лимит стоимости, $<input name="maxCostUsd" type="number" min="0" step="0.5" placeholder="без лимита"></label>
         </div>
+        <div class="prep"><label class="inline">Подготовка: <select name="depth" style="width:auto">
+          <option value="fast">быстро — сразу к соглашению</option>
+          <option value="standard" selected>стандарт — lead уточняет постановку</option>
+          <option value="thorough">тщательно — допрос, план на утверждение, критик</option>
+          <option value="custom" hidden>своя настройка</option></select></label>
+        <span class="muted small" id="depthnote"></span>
+        <details class="prepmore"><summary class="muted">настроить вручную</summary>
         <label class="inline" title="Lead сначала читает задачу и код и либо задаёт вам вопросы (с вариантами), либо пишет, как понял задачу; соглашение — только после этого"><input type="checkbox" name="clarify" checked> Сначала уточнить постановку: lead задаст вопросы или напишет, как понял задачу</label>
+        <label class="inline" title="По методу grill-me: lead разбирает задачу раундами вопросов — объём, поведение, граничные случаи, данные, что считать готовым, что не трогать — каждый с вариантами и рекомендацией; факты из кода выясняет сам. В конце спрашивает «Как я понял: … Всё так?»; план и соглашение — только после вашего «да», а решения допроса lead переносит в план"><input type="checkbox" name="grill"> Допрос (grill-me): раунды вопросов, в конце вы подтверждаете, как lead понял задачу</label>
+        <label class="inline" title="Lead пишет план HTML-страницей: кто что делает, файлы, контракты, риски, вопросы к вам. Вы оставляете замечания к блокам, правите текст прямо в плане и утверждаете; соглашение и код — только после утверждения"><input type="checkbox" name="planReview"> План на утверждение: lead пишет план страницей, вы правите и утверждаете его</label>
+        </details></div>
         <div class="checks"><button type="submit">Создать задачу</button><span class="note" id="formnote"></span></div>
       </form>
       <div class="panel" id="schedules" hidden></div>
@@ -318,6 +337,12 @@ function parseHash(){const m=location.hash.replace(/^#\/?/,"").split("/");return
 function go(tab,project){location.hash="#/"+tab+(project?"/"+encodeURIComponent(project):"")}
 function q(path){return path+(route.project?(path.includes("?")?"&":"?")+"project="+encodeURIComponent(route.project):"")}
 async function getJSON(path){const r=await fetch(path,{cache:"no-store"});if(!r.ok)throw new Error(r.status+"");return r.json()}
+// a question in the page instead of confirm(): some browsers (the desktop app's own) answer confirm() with "cancel" by themselves
+function ask(text){return new Promise(done=>{const o=el("div","askov");o.setAttribute("role","dialog");const b=el("div","askbox");b.append(el("div","",text));
+  const r=el("div","checks");const yes=el("button","","Да");yes.type="button";const no=el("button","ghost","Отмена");no.type="button";
+  const end=v=>{o.remove();removeEventListener("keydown",key,true);done(v)};const key=e=>{if(e.key==="Escape"){e.stopPropagation();end(false)}else if(e.key==="Enter"){e.preventDefault();end(true)}};
+  yes.onclick=()=>end(true);no.onclick=()=>end(false);o.onclick=e=>{if(e.target===o)end(false)};addEventListener("keydown",key,true);
+  r.append(yes,no);b.append(r);o.append(b);document.body.append(o);yes.focus()})}
 async function post(url,body){const r=await fetch(q(url),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body||{})});const t=await r.text();let j;try{j=JSON.parse(t)}catch(e){j={message:t}}if(!r.ok)throw new Error(j.message||t);return j}
 window.addEventListener("hashchange",()=>{const r=parseHash();const switched=r.project&&r.project!==route.project;route.tab=r.tab;if(r.project)route.project=r.project;if(switched)resetProject();showTab();tick()});
 document.querySelectorAll("nav a").forEach(a=>a.addEventListener("click",ev=>{ev.preventDefault();go(a.dataset.tab,route.project)}));
@@ -338,7 +363,7 @@ async function tick(){
     if(["activity","runners","tasks","overview"].includes(route.tab))await fetchActivity();
     if(route.tab==="supervisor")SUP=await getJSON(q("/api/supervisor"+(supAll?"?all=1":"")));
     if(route.tab==="observer")OBS=await getJSON(q("/api/observer"));
-    n++;render();
+    n++;render();planSync();
   }catch(e){$("topbar").textContent="нет связи с сервером"}
 }
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
@@ -532,7 +557,7 @@ function renderOpenspec(t){
   if(controlMode&&t.status==="COMPLETED"&&!o.archivedAt){
     const ready=o.progress&&o.progress.done===o.progress.total;const st=archiveState.get(key)||{};
     const r=el("div","checks");const b=el("button","ghost",st.pending?"архивирую…":"Архивировать change");b.type="button";b.disabled=!ready||!!st.pending;
-    b.onclick=async()=>{if(!confirm("openspec archive "+o.change+" в папке проекта? Change переедет в openspec/changes/archive, его спеки — в openspec/specs."))return;
+    b.onclick=async()=>{if(!await ask("openspec archive "+o.change+" в папке проекта? Change переедет в openspec/changes/archive, его спеки — в openspec/specs."))return;
       archiveState.set(key,{pending:true});render();
       try{const res=await post("/api/openspec/archive",{taskId:t.id});archiveState.set(key,{output:res.output||"готово"})}catch(e){archiveState.set(key,{error:e.message})}await tick()};
     r.append(b);if(!ready)r.append(el("span","note","сначала влейте ветку lead'а в папку проекта: lead отмечает задачи у себя"));box.append(r);
@@ -551,7 +576,7 @@ function renderSpawned(t){
       if(x.role.source==="lead"&&S.control){const sv=el("button","ghost small","Сохранить роль в библиотеку");sv.type="button";
         sv.onclick=async()=>{const name=prompt("Имя роли в библиотеке проекта (.agent-network/roles/<имя>.md):",x.role.name);if(!name)return;
           try{const r=await post("/api/roles/save",{taskId:t.id,agentId:x.id,name});toast("ok","Роль сохранена",r.role.name)}
-          catch(e){if(/exists already|has a role/.test(e.message)&&confirm(e.message+"\nПерезаписать?")){try{await post("/api/roles/save",{taskId:t.id,agentId:x.id,name,overwrite:true});toast("ok","Роль перезаписана",name)}catch(e2){alert(e2.message)}}else alert(e.message)}};rd.append(sv)}
+          catch(e){if(/exists already|has a role/.test(e.message)&&await ask(e.message+"\nПерезаписать?")){try{await post("/api/roles/save",{taskId:t.id,agentId:x.id,name,overwrite:true});toast("ok","Роль перезаписана",name)}catch(e2){alert(e2.message)}}else alert(e.message)}};rd.append(sv)}
       box.append(rd)}});
   return box;
 }
@@ -571,7 +596,7 @@ async function renderRoles(){const box=$("roles");if(!box)return;if(Date.now()-r
   const sig=JSON.stringify(ROLES);if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.replaceChildren();
   if(!ROLES||!ROLES.length){box.append(el("div","muted","Ролей пока нет. Роль, которую lead написал для добавленного агента, сохраняется кнопкой в карточке задачи; дальше lead берёт её по имени."));return}
   ROLES.forEach(r=>{const d=el("details","card");d.append(el("summary","",r.name+" — "+r.description),el("pre","log",r.instructions));
-    if(S.control){const x=el("button","ghost small","Удалить");x.type="button";x.onclick=async()=>{if(!confirm("Удалить роль "+r.name+"?"))return;try{await post("/api/roles/"+r.name+"/delete",{});rolesAt=0;renderRoles()}catch(e){alert(e.message)}};d.append(x)}
+    if(S.control){const x=el("button","ghost small","Удалить");x.type="button";x.onclick=async()=>{if(!await ask("Удалить роль "+r.name+"?"))return;try{await post("/api/roles/"+r.name+"/delete",{});rolesAt=0;renderRoles()}catch(e){alert(e.message)}};d.append(x)}
     box.append(d)})}
 // a change-writing task: what it writes, and after DONE + merge the way to implement it
 function renderProposes(t){
@@ -611,7 +636,7 @@ function renderBranch(t){
   if(m)box.append(el("div","muted",(m.already?"уже была в ":"влита в ")+m.into+(m.strategy==="squash"?" одним коммитом ":m.strategy==="merge"?" коммитом слияния ":" · ")+m.commit.slice(0,7)+" · "+time(m.at)+(m.reverted?" · откачена "+m.reverted.commit.slice(0,7)+" "+time(m.reverted.at):"")));
   else box.append(el("div","muted","Итог задачи — в ветке "+(wts.includes(lead)?"swarm-"+lead:lead)+". Влить её в текущую ветку проекта (без push)."));
   const r=el("div","checks");
-  const run=async(url,body,question,done)=>{if(!confirm(question))return;branchState.set(key,{pending:true});render();
+  const run=async(url,body,question,done)=>{if(!await ask(question))return;branchState.set(key,{pending:true});render();
     try{const res=await post(url,body);branchState.set(key,{output:done(res)})}catch(e){branchState.set(key,{error:e.message})}await tick()};
   if(m&&!m.already&&!m.reverted){const rv=el("button","ghost",st.pending?"…":"Откатить");rv.type="button";rv.disabled=!!st.pending;rv.title="git revert "+m.commit.slice(0,7)+": новый коммит, который отменяет изменения задачи; при конфликте ничего не меняется";
     rv.onclick=()=>run("/api/tasks/"+encodeURIComponent(t.id)+"/revert",{},"Откатить изменения задачи "+t.id+" в "+m.into+"? Будет новый коммит «Revert "+t.id+"», история не переписывается.",res=>"откачено: "+res.task.merged.reverted.commit.slice(0,7));r.append(rv)}
@@ -651,10 +676,10 @@ function renderDiff(x,taskId,t){
     sel.onchange=()=>{dv.ui=null;loadDiff(t,key,sel.value)};bar.append(sel)}
   if(S.control){const done=t.status==="COMPLETED";bar.append(el("span","muted",comments.length?"замечаний: "+comments.length:"клик по строке — замечание"));
     if(comments.length){const send=el("button","",done?"Создать задачу по замечаниям":"Отправить lead'у");send.type="button";
-      send.onclick=async()=>{if(!confirm(done?"Создать задачу для роя «исправить по замечаниям» ("+comments.length+")?":"Отправить "+comments.length+" замечаний lead'у ("+t.agents[0]+")?"))return;send.disabled=true;
+      send.onclick=async()=>{if(!await ask(done?"Создать задачу для роя «исправить по замечаниям» ("+comments.length+")?":"Отправить "+comments.length+" замечаний lead'у ("+t.agents[0]+")?"))return;send.disabled=true;
         try{const r=await post("/api/tasks/"+encodeURIComponent(taskId)+"/review",{comments,branch:x.branch});dv.comments=[];toast("ok",r.sent==="task"?"Создана "+r.task.id:"Замечания отправлены "+r.to,r.sent==="task"?r.task.title:comments.length+" шт.",r.sent==="task"?r.task.id:taskId)}
         catch(e){alert(e.message);send.disabled=false}render()};
-      const clr=el("button","ghost small","очистить");clr.type="button";clr.onclick=()=>{if(confirm("Удалить все замечания?")){dv.comments=[];render()}};bar.append(send,clr)}}
+      const clr=el("button","ghost small","очистить");clr.type="button";clr.onclick=async()=>{if(await ask("Удалить все замечания?")){dv.comments=[];render()}};bar.append(send,clr)}}
   box.append(bar);
   box.append(el("div","muted",(x.merged?"влитые изменения ":"изменения ветки ")+x.branch+": "+x.commitsTotal+" коммит(ов), "+x.files.length+" файл(ов), +"+x.files.reduce((a,f)=>a+f.added,0)+" −"+x.files.reduce((a,f)=>a+f.deleted,0)));
   const more=(left,step,go)=>{const b=el("button","ghost small","ещё "+Math.min(left,step)+" из "+left);b.type="button";b.onclick=()=>{go();render()};return b};
@@ -694,12 +719,155 @@ function renderDiff(x,taskId,t){
   if(x.files.length>ui.files)box.append(more(x.files.length-ui.files,DIFF_PAGE,()=>ui.files+=DIFF_PAGE));
   return box;
 }
+// the lead's HTML plan (task.planReview): a line in the card, the review in a full-window view (one iframe that the refresh never rebuilds)
+const PLAN_STATUS={none:"lead пишет план…",awaiting:"план ждёт вас",revising:"lead дорабатывает план по вашему отзыву",approved:"план утверждён"};
+function renderPlan(t){const p=t.plan;const box=el("div","openspec planline");box.append(el("b","","План "),el("span",p.status==="awaiting"?"badge WARNING":p.status==="approved"?"badge PASS":"badge",PLAN_STATUS[p.status]));
+  if(p.version){box.append(el("span","muted"," · v"+p.version+(p.by?" от "+p.by:"")+(p.at?" "+time(p.at).slice(0,5):"")+(p.rounds?" · отзывов: "+p.rounds:"")+(p.approvedVersion?" · утверждена v"+p.approvedVersion:"")));
+    const b=el("button",p.status==="awaiting"&&S.control?"small":"ghost small",p.status==="awaiting"&&S.control?"Открыть и проверить":"Открыть план");b.type="button";b.onclick=()=>openPlan(t.id);box.append(" ",b)}
+  else box.append(el("span","muted"," · появится здесь, когда lead его напишет; соглашение — после вашего «Утвердить»"));
+  return box}
+let PV=null; // the open plan: {taskId, plan, version, mode, comments, pick, edited, diff, pending, el:{...}}
+let PLAN_EL=null;
+function planEl(){if(PLAN_EL)return PLAN_EL;const o=el("div","planov");o.setAttribute("role","dialog");o.setAttribute("aria-label","План задачи");
+  const head=el("div","planhead");const title=el("b","");const ver=document.createElement("select");ver.className="pver";const st=el("span","muted");const x=el("button","ghost","Закрыть");x.type="button";let armed=null;
+  x.onclick=()=>{if(!planDirty()||armed){clearTimeout(armed);armed=null;x.textContent="Закрыть";closePlan(true);return}
+    x.textContent="Закрыть без отправки? Ещё раз";armed=setTimeout(()=>{armed=null;x.textContent="Закрыть"},4000)};
+  head.append(title,ver,st,x);const body=el("div","planbody");const fr=document.createElement("iframe");fr.title="план"; // sandboxed by its own CSP (sandbox allow-scripts): an opaque origin, no calls to this page
+  const side=el("div","planside");body.append(fr,side);o.append(head,body);document.body.append(o);
+  ver.onchange=()=>{if(!planDirty())loadPlanVersion(Number(ver.value));else{ver.value=String(PV.version);PV.error="Сначала отправьте или уберите свои замечания и правки: при переходе на другую версию они пропадут.";renderPlanSide()}};
+  return PLAN_EL={o,title,ver,st,fr,side}}
+function planDirty(){return PV&&(PV.comments.length>0||PV.edited)}
+function planHasNotes(){return planDirty()||(PV&&PV.answered)}
+async function openPlan(taskId){const e=planEl();PV={taskId,plan:null,version:0,mode:"view",comments:[],pick:null,edited:false,diff:false,diffCount:null,pending:false,el:e};
+  e.o.hidden=false;document.body.classList.add("noscroll");await reloadPlan(true)}
+function closePlan(force){if(!PV)return;if(!force&&planDirty())return;PV.el.o.hidden=true;PV.el.fr.src="about:blank";document.body.classList.remove("noscroll");PV=null}
+async function reloadPlan(toLatest){const j=await getJSON(q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan"));PV.plan=j.plan;PV.critiques=j.critiques||[];PV.critic=j.critic||{enabled:false};const last=j.plan.versions.at(-1);
+  if(toLatest&&last)await loadPlanVersion(last.n);else renderPlanSide()}
+async function loadPlanVersion(v){PV.version=v;PV.confirm=null;PV.error=null;PV.comments=[];PV.pick=null;PV.edited=false;PV.answered=false;PV.diagram=null;PV.diffCount=null;PV.ready=false;
+  PV.el.fr.src=q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/"+v+"/view");renderPlanSide()}
+function planSay(m){if(PV&&PV.el.fr.contentWindow)PV.el.fr.contentWindow.postMessage(m,"*")}
+const planWaits=new Map();let planSeq=0;
+function planCollect(){return new Promise((ok,fail)=>{const id=++planSeq;planWaits.set(id,ok);planSay({type:"collect",id});setTimeout(()=>{if(planWaits.delete(id))fail(new Error("страница плана не ответила"))},4000)})}
+async function planDiff(){if(!PV)return;const prev=PV.version-1;if(!PV.diff||prev<1){planSay({type:"diff",prev:null});PV.diffCount=null;renderPlanSide();return}
+  try{const j=await getJSON(q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/"+prev));planSay({type:"diff",prev:j.html})}catch(e){toast("bad","Не удалось загрузить v"+prev,e.message)}}
+addEventListener("message",ev=>{if(!PV||ev.source!==PV.el.fr.contentWindow)return;const m=ev.data||{};if(!m.an)return;
+  if(m.type==="ready"){PV.ready=true;planSay({type:"mode",mode:PV.mode});if(PV.diff)planDiff();renderPlanSide()}
+  else if(m.type==="pick"){PV.pick={target:m.target,quote:m.quote||"",text:""};renderPlanSide();setTimeout(()=>{const ta=PV&&PV.el.side.querySelector(".ppick textarea");if(ta)ta.focus()},0)}
+  else if(m.type==="answered"){if(!PV.answered){PV.answered=true;if(!PV.el.side.contains(document.activeElement))renderPlanSide()}}
+  else if(m.type==="edited"){PV.edited=true;if(!PV.el.side.contains(document.activeElement))renderPlanSide()}
+  else if(m.type==="diagram"){PV.diagram={index:m.index,source:m.source,original:m.original,error:null};renderPlanSide();setTimeout(()=>{const ta=PV&&PV.el.side.querySelector(".pdiag textarea");if(ta)ta.focus()},0)}
+  else if(m.type==="diagram-ok"||m.type==="diagram-error"){if(PV.diagram&&PV.diagram.index===m.index){PV.diagram.error=m.type==="diagram-error"?m.message:null;const s2=PV.el.side.querySelector(".pdiag .dst");if(s2){s2.className="dst "+(PV.diagram.error?"bad":"muted");s2.textContent=PV.diagram.error?"ошибка: "+PV.diagram.error:"схема перерисована"}}}
+  else if(m.type==="diffed"){PV.diffCount=m.count;renderPlanSide()}
+  else if(m.type==="collected"){const ok=planWaits.get(m.id);if(ok){planWaits.delete(m.id);ok(m)}}});
+addEventListener("keydown",e=>{if(e.key!=="Escape"||!PV||PV.el.o.hidden||(document.activeElement&&document.activeElement.tagName==="TEXTAREA"))return;if(PV.confirm){PV.confirm=null;renderPlanSide()}else closePlan()});
+// no browser dialogs here (some browsers answer them by themselves): the panel asks, the second click sends
+function planWhat(c){const n=(k,a,b,d)=>k+" "+(k%10===1&&k%100!==11?a:k%10>=2&&k%10<=4&&(k%100<10||k%100>=20)?b:d);
+  return [PV.comments.length?n(PV.comments.length,"замечание","замечания","замечаний"):"",c.edits.length?n(c.edits.length,"правка","правки","правок"):"",c.answers.length?n(c.answers.length,"ответ","ответа","ответов"):""].filter(Boolean).join(", ")}
+async function planAsk(approve){PV.error=null;let c;try{c=await planCollect()}catch(e){PV.error=e.message;renderPlanSide();return}
+  const notes=PV.comments.length+c.edits.length+c.answers.length;
+  if(!approve&&!notes){PV.error="Нечего отправлять: кликните блок в режиме «Замечание», поправьте текст или ответьте на вопрос плана.";renderPlanSide();return}
+  PV.confirm={approve,what:planWhat(c)};renderPlanSide()}
+async function planSend(approve){const v=PV.version;PV.confirm=null;PV.error=null;PV.pending=true;renderPlanSide();
+  try{const c=await planCollect();const what=planWhat(c);
+    const r=await post("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/"+(approve?"approve":"feedback"),{version:v,comments:PV.comments,edits:c.edits,answers:c.answers,...(c.html?{html:c.html}:{})});
+    toast("ok",approve?"План утверждён":"Отзыв отправлен "+(r.to||"lead'у"),approve?"v"+r.plan.approved.version+": lead предложит соглашение":what,PV.taskId);
+    PV.comments=[];PV.edited=false;PV.answered=false;PV.pick=null;PV.diagram=null;PV.plan=r.plan;PV.pending=false;
+    const last=r.plan.versions.at(-1);if(last&&last.n!==v)await loadPlanVersion(last.n);else{PV.mode="view";planSay({type:"mode",mode:"view"});renderPlanSide()}await tick()}
+  catch(e){PV.pending=false;PV.error="Не отправлено: "+e.message;renderPlanSide()}}
+function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&&S.tasks.find(x=>x.id===PV.taskId);
+  e.title.textContent=PV.taskId+(t?" · "+t.title:"");
+  const vs=p?p.versions:[];e.ver.replaceChildren(...vs.map(x=>new Option("v"+x.n+" · "+x.by+" · "+time(x.at).slice(0,5)+(p.approved&&p.approved.version===x.n?" · утверждена":""),String(x.n))));e.ver.value=String(PV.version);e.ver.hidden=vs.length<2;
+  const last=vs.at(-1);const latest=last&&PV.version===last.n;const qs=(S&&S.openQuestions||[]).filter(q=>q.taskId===PV.taskId);
+  const live=t&&t.status==="ACTIVE"&&t.phase==="DISCUSS";const can=!!(S&&S.control)&&latest&&live&&!p.approved;
+  e.st.textContent=!vs.length?"плана ещё нет":p.approved?"утверждён v"+p.approved.version:!latest?"старая версия: только просмотр":!live?"задача уже не на плане":t.plan&&t.plan.status==="revising"?"lead дорабатывает план":"";
+  const side=e.side;side.replaceChildren();
+  const cur=vs.find(x=>x.n===PV.version);if(cur&&cur.note)side.append(el("div","pnote","v"+cur.n+": "+cur.note));
+  if(can){const w=el("div","win pmode");[["view","Просмотр"],["comment","Замечание"],["edit","Править текст"]].forEach(([m,l])=>{const b=el("button",PV.mode===m?"on":"",l);b.type="button";
+      b.onclick=()=>{PV.mode=m;PV.pick=null;PV.diagram=null;planSay({type:"mode",mode:m});renderPlanSide()};w.append(b)});side.append(w);
+    side.append(el("div","muted small",PV.mode==="comment"?"Кликните блок или выделите слова — и напишите, что не так.":PV.mode==="edit"?"Правьте текст прямо на странице: lead получит «было → стало». Клик по схеме — правка её кода Mermaid.":"Вопросы плана отмечайте прямо на странице; ответы уйдут с отзывом."))}
+  if(PV.version>1){const l=el("label","pdiff");const cb=document.createElement("input");cb.type="checkbox";cb.checked=PV.diff;cb.onchange=()=>{PV.diff=cb.checked;planDiff()};
+    l.append(cb," подсветить новое с v"+(PV.version-1)+(PV.diff&&PV.diffCount!==null?" ("+PV.diffCount+")":""));side.append(l)}
+  if(PV.pick&&can){const f=el("div","ppick");f.append(el("div","muted","к "+PV.pick.target));if(PV.pick.quote)f.append(el("div","pquote","«"+PV.pick.quote+"»"));
+    const ta=document.createElement("textarea");ta.rows=3;ta.placeholder="Что поменять…";ta.value=PV.pick.text;ta.oninput=()=>{PV.pick.text=ta.value};
+    const add=el("button","small","Добавить");add.type="button";add.onclick=()=>{if(!ta.value.trim())return;PV.comments.push({target:PV.pick.target,...(PV.pick.quote?{quote:PV.pick.quote}:{}),text:ta.value.trim()});PV.pick=null;planSay({type:"unpick"});renderPlanSide()};
+    const cancel=el("button","ghost small","Отмена");cancel.type="button";cancel.onclick=()=>{PV.pick=null;planSay({type:"unpick"});renderPlanSide()};
+    ta.onkeydown=ev=>{if(ev.key==="Enter"&&(ev.metaKey||ev.ctrlKey))add.click();if(ev.key==="Escape")cancel.click()};f.append(ta,add,cancel);side.append(f)}
+  if(PV.diagram&&can){const d=PV.diagram;const f=el("div","pdiag");f.append(el("b","","Схема "+(d.index+1)+": код Mermaid"));
+    const ta=document.createElement("textarea");ta.rows=12;ta.spellcheck=false;ta.value=d.source;let timer=null;
+    ta.oninput=()=>{d.source=ta.value;clearTimeout(timer);timer=setTimeout(()=>planSay({type:"diagram-set",index:d.index,source:d.source}),400)};
+    const stl=el("div","dst "+(d.error?"bad":"muted"),d.error?"ошибка: "+d.error:"правьте код — схема перерисуется в плане");
+    const done=el("button","small","Готово");done.type="button";done.onclick=()=>{PV.diagram=null;renderPlanSide()};
+    const back=el("button","ghost small","Вернуть как было");back.type="button";back.onclick=()=>{d.source=d.original;ta.value=d.original;planSay({type:"diagram-set",index:d.index,source:d.original})};
+    f.append(ta,stl,done,back);side.append(f)}
+  if(PV.comments.length){const l=el("div","plist");l.append(el("b","","Замечания ("+PV.comments.length+")"));
+    PV.comments.forEach(c=>{const r=el("div","pitem");r.append(el("div","muted",c.target),...(c.quote?[el("div","pquote","«"+c.quote+"»")]:[]),el("div","",c.text));
+      const x=el("button","ghost small","×");x.type="button";x.title="убрать";x.onclick=()=>{PV.comments=PV.comments.filter(y=>y!==c);renderPlanSide()};r.append(x);l.append(r)});side.append(l)}
+  if(PV.edited&&can)side.append(el("div","note","Есть правки: они уйдут lead'у и сохранятся новой версией плана."));
+  if(planDirty()&&can)side.append(el("div","muted small","«Утвердить» станет доступно, когда lead посмотрит ваши замечания и правки и пришлёт новую версию."));
+  const fb=p?p.feedback:[];if(fb.length){const d=el("details","phist");d.append(el("summary","muted","История отзывов ("+fb.length+")"));
+    fb.slice().reverse().forEach(f=>{const r=el("div","pitem");r.append(el("div","muted",time(f.at).slice(0,5)+" · v"+f.onVersion+(f.withApproval?" · с утверждением":" · раунд "+f.round)+(f.savedAs?" → правки в v"+f.savedAs:"")));
+      f.comments.forEach(c=>r.append(el("div","","• "+c.target+": "+c.text)));f.edits.forEach(x=>r.append(el("div","mono",x.kind==="diagram"?"схема изменена":!x.before?"+ "+x.after:!x.after?"− "+x.before:x.before+" → "+x.after)));f.answers.forEach(a=>r.append(el("div","","? "+a.question+": "+a.value.join(", "))));d.append(r)});side.append(d)}
+  // what was sent last and that the lead has it: no second send by mistake
+  const sent=p?p.feedback.filter(f=>!f.withApproval).at(-1):null;
+  if(sent&&latest&&live&&!p.approved&&(sent.onVersion===PV.version||sent.savedAs===PV.version)){const n=(k,a,b,c)=>k+" "+(k%10===1&&k%100!==11?a:k%10>=2&&k%10<=4&&(k%100<10||k%100>=20)?b:c);
+    const what=[sent.comments.length?n(sent.comments.length,"замечание","замечания","замечаний"):"",sent.edits.length?n(sent.edits.length,"правка","правки","правок"):"",sent.answers.length?n(sent.answers.length,"ответ","ответа","ответов"):""].filter(Boolean).join(", ");
+    side.append(el("div","psent","✓ Отправлено lead'у "+(t?t.agents[0]:"")+" в "+time(sent.at).slice(0,5)+(what?": "+what:"")+". "+(qs.length?"Lead ждёт вашего ответа на вопрос — он ниже.":"Lead дорабатывает план — новая версия откроется здесь сама.")))}
+  // the critic's risks for this version: what breaks in production if it is built as written; one click makes a risk a comment
+  if(PV.critic&&PV.critic.enabled&&cur&&cur.by!=="operator"){const cr=(PV.critiques||[]).find(c=>c.version===PV.version);const box=el("div","pcritic");
+    if(PV.critic.running===PV.version)box.append(el("b","","Критик читает план v"+PV.version+"…"),el("div","muted small","ищет, что сломается в проде: данные, деплой и откат, контракты, гонки, нагрузка, безопасность"));
+    else if(!cr)box.append(el("div","muted small","Критик возьмёт v"+PV.version+" в работу через несколько секунд."));
+    else{const head=el("div","");head.append(el("b","",cr.error?"Критик не дал списка рисков":"Критик: "+(cr.risks.length?cr.risks.length+" "+(cr.risks.length===1?"риск":cr.risks.length<5?"риска":"рисков"):"рисков не нашёл")));
+      head.append(el("span","muted small"," · "+time(cr.endedAt||cr.at).slice(0,5)+(cr.model?" · "+cr.model:"")+(cr.costUsd!==undefined?" · $"+cr.costUsd:"")));box.append(head);
+      if(cr.skills&&cr.skills.length){const d=el("details","small");d.append(el("summary","muted","скиллы: "+(cr.skillSets||[]).join(", ")+" ("+cr.skills.length+")"),el("div","muted",cr.skills.join(", ")));box.append(d)}
+      if(cr.error)box.append(el("div","note bad",cr.error));
+      PV.criticAdded=PV.criticAdded||new Set();
+      cr.risks.forEach((k,i)=>{const it=el("div","prisk "+k.severity);it.append(el("span","badge "+(k.severity==="high"?"FAIL":k.severity==="medium"?"WARNING":"INFO"),k.severity==="high"?"серьёзно":k.severity==="medium"?"важно":"мелочь"),el("b",""," "+k.title));
+        if(k.where)it.append(el("div","mono muted",k.where));it.append(el("div","",k.why));if(k.suggest)it.append(el("div","psug","→ "+k.suggest));
+        const key=PV.version+"/"+i;
+        if(can){const b=el("button","ghost small",PV.criticAdded.has(key)?"✓ в замечаниях":"В замечания");b.type="button";b.disabled=PV.criticAdded.has(key);
+          b.onclick=()=>{PV.comments.push({target:"риск от критика: "+k.title+(k.where?" ("+k.where+")":""),text:k.why+(k.suggest?"\nПредложение: "+k.suggest:"")});PV.criticAdded.add(key);renderPlanSide()};it.append(b)}
+        box.append(it)});
+      if(can&&S.control){const again=el("button","ghost small","Покритиковать ещё раз");again.type="button";
+        again.onclick=async()=>{try{await post("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/critique",{version:PV.version});await reloadPlan(false)}catch(e){PV.error=e.message;renderPlanSide()}};box.append(again)}}
+    side.append(box)}
+  // the lead's open questions on this task: answered here, the same form as on top of the Tasks tab
+  PV.qcards=PV.qcards||new Map();
+  if(qs.length){const box=el("div","pqs");box.append(el("b","","Вопросы к вам ("+qs.length+")"));
+    qs.forEach(qq=>{const key="plan/"+qq.taskId+"/"+qq.messageId;if(!PV.qcards.has(key))PV.qcards.set(key,questionCard(qq,S,key));box.append(PV.qcards.get(key))});side.append(box)}
+  for(const k of [...PV.qcards.keys()])if(!qs.some(q=>"plan/"+q.taskId+"/"+q.messageId===k))PV.qcards.delete(k);
+  // what the lead is doing right now: its last steps from the activity feed
+  if(t&&typeof ACT!=="undefined"){const lead=t.agents[0];const steps=ACT.filter(e=>e.agentId===lead&&(!e.taskId||e.taskId===t.id)&&(e.kind==="text"||e.kind==="tool_use"||(e.kind==="tool_result"&&e.isError))).slice(-6).reverse();
+    if(steps.length){const d=el("details","pact");d.open=PV.actOpen!==false;d.ontoggle=()=>{PV.actOpen=d.open};const live=t.queue==="running";
+      d.append(el("summary","muted","Что делает lead "+lead+(live?" · работает":" · ждёт")));
+      steps.forEach(e=>{const row=el("div","pstep"+(e.kind==="tool_result"?" err":""));row.append(el("span","muted mono",time(e.at).slice(0,5)+" "),
+        e.kind==="text"?el("span","",e.summary||""):el("span","mono",(e.kind==="tool_result"?"✗ ":"")+(e.tool||"").replace(/^mcp__agent-network__/,"")+(e.summary?" — "+e.summary:"")));d.append(row)});
+      side.append(d)}}
+  if(PV.pending)side.append(el("div","muted small","Отправляю…"));
+  if(PV.error)side.append(el("div","note bad",PV.error));
+  if(PV.confirm&&can){const q=el("div","pconfirm");const a=PV.confirm.approve;
+    q.append(el("div","",a?"Утвердить план v"+PV.version+"?"+(PV.confirm.what?" Вместе с ним lead получит ваши ответы: "+PV.confirm.what+".":"")+" Дальше lead предложит соглашение по плану.":"Отправить lead'у: "+PV.confirm.what+"? Он посмотрит и пришлёт новую версию плана."));
+    const yes=el("button","small",a?"Да, утвердить":"Да, отправить");yes.type="button";yes.onclick=()=>planSend(a);
+    const no=el("button","ghost small","Отмена");no.type="button";no.onclick=()=>{PV.confirm=null;renderPlanSide()};q.append(yes," ",no);side.append(q)}
+  if(can){const bar=el("div","checks pactions");const send=el("button","",PV.pending?"…":"Отправить lead'у");send.type="button";send.disabled=PV.pending||!PV.ready||!planHasNotes();
+    if(!planHasNotes())send.title="Нечего отправлять: добавьте замечание, правку или ответ на вопрос";send.onclick=()=>planAsk(false);
+    const revising=t&&t.plan&&t.plan.status==="revising";
+    const ap=el("button",planDirty()||revising?"ghost":"",PV.pending?"…":"Утвердить план v"+PV.version);ap.type="button";ap.disabled=PV.pending||!PV.ready||planDirty()||revising;
+    if(revising)ap.title="Lead смотрит ваш отзыв: утвердите версию, которую он пришлёт (если менять нечего, он пришлёт ту же страницу с пояснением)";
+    else if(planDirty())ap.title="Сначала отправьте замечания и правки lead'у: он посмотрит, доработает план и пришлёт новую версию — её и утвердите";ap.onclick=()=>planAsk(true);bar.append(send,ap);side.append(bar)}}
+
+// the state refresh: a new version from the lead opens by itself unless you have notes or edits in progress
+function planSync(){if(!PV||!S)return;const t=S.tasks.find(x=>x.id===PV.taskId);if(!t||!t.plan||!PV.plan)return;
+  const known=PV.plan.versions.at(-1);const newer=t.plan.version&&(!known||t.plan.version>known.n);const approved=!!t.plan.approvedVersion!==!!PV.plan.approved;
+  const cur=PV.plan.versions.find(v=>v.n===PV.version);const waitCritic=PV.critic&&PV.critic.enabled&&cur&&cur.by!=="operator"&&!(PV.critiques||[]).some(c=>c.version===PV.version);
+  if(PV.pending||(!newer&&!approved)){if(!PV.el.side.contains(document.activeElement)){if(waitCritic)reloadPlan(false);else renderPlanSide()}return}
+  if(planDirty()){if(!PV.told){PV.told=true;toast("ok","Lead прислал v"+t.plan.version,"откройте её из списка версий, когда отправите свои замечания",PV.taskId)}reloadPlan(false);return}
+  reloadPlan(true)}
 const unblockState=new Map();
 function renderBlocked(t){
   const box=el("div","blocked");box.append(badge("BLOCKED")," "+(t.blockedReason||"лимит раундов исправлений исчерпан"));
   if(!controlMode){box.append(el("span","muted"," — нужен оператор: task unblock / task cancel"));return box}
   const key=route.project+"/"+t.id;const st=unblockState.get(key)||{};
-  const act=async(what,body,question)=>{if(!confirm(question))return;unblockState.set(key,{pending:true});render();
+  const act=async(what,body,question)=>{if(!await ask(question))return;unblockState.set(key,{pending:true});render();
     try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/"+what,body);unblockState.delete(key)}catch(e){unblockState.set(key,{error:e.message})}await tick()};
   if(t.blockedBy==="runner"){
     box.append(el("div","","Сессии агента подряд заканчивались, не доделав его часть, и runner сдался — без него остальные ждали бы вечно. Посмотрите лог runner'а на вкладке «Runner'ы» (причина обычно там), поправьте и попробуйте снова: runner начнёт с новой сессии."));
@@ -764,6 +932,11 @@ function renderTask(t){
   if(chain.length)hd.append(el("div","muted",chain.join(" · ")));
   if(t.openspec)hd.append(renderOpenspec(t));
   if(t.proposes)hd.append(renderProposes(t));
+  if(t.planReview&&t.plan)hd.append(renderPlan(t));
+  if(t.jobOf)hd.append(el("div","muted","Поручение от "+t.jobOf.taskId+" (lead "+t.jobOf.by+", его подзадача "+t.jobOf.subtask+"): один агент, без ревью; результат уходит lead'у."));
+  {const jobs=(S.tasks||[]).filter(x=>x.jobOf&&x.jobOf.taskId===t.id);if(jobs.length){const box=el("div","openspec");box.append(el("b","","Поручения ("+jobs.length+")"));
+    jobs.forEach(j=>{const r=el("div","srow2");r.append(badge(j.status==="COMPLETED"?"PASS":j.status==="CANCELLED"?"INFO":j.status==="BLOCKED"?"FAIL":"WAITING",j.status==="COMPLETED"?"готово":j.status==="CANCELLED"?"отменено":j.status==="BLOCKED"?"BLOCKED":"в работе"),el("span","mono"," "+j.id+" · "+j.agents[0]),el("span",""," "+j.title.replace(/^task-\d+ job: /,"")));
+      const im=(j.implementations||[]).find(i=>i.agentId===j.agents[0]);if(im&&im.summary)r.append(el("div","muted why","итог: "+im.summary));box.append(r)});hd.append(box)}}
   if(t.status!=="CANCELLED"&&controlMode&&S.control.worktrees&&S.control.worktrees.length)hd.append(renderBranch(t));
   hd.append(renderStats(t));
   if(t.status==="BLOCKED")hd.append(renderBlocked(t));
@@ -885,7 +1058,7 @@ function renderSchedules(s){
     const acts=el("div","sacts");acts.append(b);
     if(s.control){const ed=el("button","ghost","Изменить");ed.type="button";ed.disabled=!!schedForm;ed.onclick=()=>openScheduleForm(x);
       const del=el("button","ghost","Удалить");del.type="button";del.disabled=!!schedForm;
-      del.onclick=async()=>{if(!confirm("Удалить расписание "+x.id+" из runners.json? Уже созданные им задачи останутся."))return;try{await post("/api/schedules/"+encodeURIComponent(x.id)+"/delete",{});box.dataset.sig="";await tick()}catch(e){alert(e.message)}};acts.append(ed,del)}
+      del.onclick=async()=>{if(!await ask("Удалить расписание "+x.id+" из runners.json? Уже созданные им задачи останутся."))return;try{await post("/api/schedules/"+encodeURIComponent(x.id)+"/delete",{});box.dataset.sig="";await tick()}catch(e){alert(e.message)}};acts.append(ed,del)}
     r.append(sw,nm,el("div","cr",x.cron),nx,last,acts);return r});
   const empty=!list.length?[el("div","muted spad","Расписаний нет. «+ Расписание» — задача по cron: например, каждую ночь искать и чинить нестабильные тесты.")]:[];
   box.replaceChildren(ph,...(schedForm?[schedForm.el]:[]),...empty,...rows)}
@@ -901,7 +1074,9 @@ function renderTasks(){
   if(box.querySelector("[data-id]")){openDetails.clear();box.querySelectorAll("details[open]").forEach(d=>{const card=d.closest("[data-id]");if(card)openDetails.add(card.dataset.id+"|"+(d.dataset.key||d.firstChild.textContent.split(" ")[0]))})}
   const scrolls=new Map();box.querySelectorAll("[data-scroll]").forEach(b=>{if(b.closest("details:not([open])"))return;const card=b.closest("[data-id]");if(card)scrolls.set(card.dataset.id+"|"+b.dataset.scroll,{top:b.scrollTop,atEnd:b.scrollTop+b.clientHeight>=b.scrollHeight-8})});
   // build every card first and swap them in at once: measuring a half-built list would shrink the page and reset its scroll
-  const cards=s.tasks.map(t=>{const c=renderTask(t);c.dataset.id=t.id;
+  // the newest task on top (by when it was created; the same moment: the higher number)
+  const newest=s.tasks.slice().sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")||b.id.localeCompare(a.id,undefined,{numeric:true}));
+  const cards=newest.map(t=>{const c=renderTask(t);c.dataset.id=t.id;
     c.querySelectorAll("[data-scroll]").forEach(b=>{const sv=scrolls.get(t.id+"|"+b.dataset.scroll);if(sv&&!(b.dataset.scroll==="msgs"&&sv.atEnd))b.dataset.top=String(sv.top)}); // at the bottom of messages: stay at the newest
     c.querySelectorAll("details").forEach(d=>{if(openDetails.has(t.id+"|"+(d.dataset.key||d.firstChild.textContent.split(" ")[0])))d.open=true});return c});
   box.replaceChildren(...(cards.length?cards:[el("div","empty",s.control?"Задач нет. Нажмите «+ Новая задача».":"Задач нет. Создайте: agent-network-mcp task create --title … --agents a,b")]));
@@ -925,11 +1100,21 @@ $("openspec").addEventListener("change",ev=>{const f=$("newtask");const isNew=ev
   f.elements.namedItem("title").placeholder=isNew?"(необязательно) OpenSpec change <имя>":ev.target.value||"Отмена заказа: POST /orders/{id}/cancel";
   f.elements.namedItem("description").placeholder=isNew?"Что нужно — вашими словами: зачем, что меняется для пользователя, ограничения. Lead напишет proposal, specs, design и tasks; вопросы о решениях придут вам.":"Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты.";
   if(isNew)f.elements.namedItem("proposes").focus();checkSpecFolders()});
+// presets of the preparation before the agreement: the checkboxes under "настроить вручную" follow them, a change of one makes it "своя"
+const DEPTH={fast:{clarify:false,grill:false,planReview:false,note:"мелкие понятные задачи: никаких вопросов и плана"},standard:{clarify:true,grill:false,planReview:false,note:"lead задаёт вопросы или пишет, как понял задачу"},thorough:{clarify:true,grill:true,planReview:true,note:"раунды вопросов с вашим «да», план страницей на утверждение (и критик плана, если он настроен)"}};
+function applyDepth(){const f=$("newtask");const d=DEPTH[f.elements.namedItem("depth").value];if(!d)return;["clarify","grill","planReview"].forEach(k=>f.elements.namedItem(k).checked=d[k]);$("depthnote").textContent=d.note}
+function syncDepth(){const f=$("newtask");const cur={clarify:f.elements.namedItem("clarify").checked,grill:f.elements.namedItem("grill").checked,planReview:f.elements.namedItem("planReview").checked};
+  const hit=Object.keys(DEPTH).find(k=>["clarify","grill","planReview"].every(x=>DEPTH[k][x]===cur[x]));const sel=f.elements.namedItem("depth");sel.value=hit||"custom";$("depthnote").textContent=hit?DEPTH[hit].note:"своя настройка"}
+$("newtask").elements.namedItem("depth").addEventListener("change",applyDepth);
+["clarify","grill","planReview"].forEach(k=>$("newtask").elements.namedItem(k).addEventListener("change",()=>setTimeout(syncDepth,0)));
+applyDepth();
+$("newtask").elements.namedItem("grill").addEventListener("change",e=>{if(e.target.checked)$("newtask").elements.namedItem("clarify").checked=true});
+$("newtask").elements.namedItem("clarify").addEventListener("change",e=>{if(!e.target.checked)$("newtask").elements.namedItem("grill").checked=false});
 $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev.target;const note=$("formnote");const btn=f.querySelector("button");
   const others=[...$("others").querySelectorAll("input:checked")].map(i=>i.value);const v=n=>f.elements.namedItem(n);
   if(!v("openspec").value&&(!v("title").value.trim()||!v("description").value.trim())){note.className="note err";note.textContent="Нужны название и описание (или выберите OpenSpec change).";return}
   btn.disabled=true;note.className="note";note.textContent="создаю…";
-  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,clarify:v("clarify").checked,...(v("openspec").value==="__new__"?{proposes:v("proposes").value}:{openspec:v("openspec").value})});
+  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value}:{openspec:v("openspec").value})});
     note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("openspec").value="";v("proposes").value="";$("proposes-row").hidden=true;await tick()}
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
 
@@ -1080,6 +1265,7 @@ function actRow(e,mini){
   const sum=el("span","sum");
   if(e.tool){const t=el("span","tool",(e.kind==="tool_result"?(e.isError?"✗ ":"✓ "):"")+e.tool.replace(/^mcp__agent-network__/,"swarm·").replace(/^mcp__supervisor__/,"supervisor·"));sum.append(t)}
   sum.append((e.durationMs!==undefined?secs(e.durationMs)+" · ":"")+(e.summary||""));sum.title=e.summary||"";
+  if(e.detail&&!actOpen.has(e.seq))sum.append(el("span","more2"," · целиком — клик"));
   if(e.sub){r.classList.add("subag");sum.prepend(el("span","subm","↳ сабагент "))}
   r.append(el("span","seq","#"+e.seq),el("span","tm",time(e.at)),el("span","who",e.agentId),kind,sum);
   const wrap=el("div");wrap.dataset.seq=String(e.seq);wrap.append(r);
@@ -1125,7 +1311,12 @@ const qCards=new Map();
 function renderQuestions(s){
   const open=s.openQuestions||[];$("questions").hidden=!open.length;const box=$("qlist");const keep=new Set();
   for(const qq of open){const key=route.project+"/"+qq.taskId+"/"+qq.messageId;keep.add(key);if(qCards.has(key))continue;
-    const c=el("div","card q");const h=el("div","");h.append(el("span","who",qq.from),el("span","muted"," · "+qq.taskId+" «"+qq.taskTitle+"» · "+time(qq.askedAt)));c.append(h,el("div","",qq.question));
+    const c=questionCard(qq,s,key);qCards.set(key,c);box.append(c)}
+  for(const [key,c] of qCards)if(!keep.has(key)){c.remove();qCards.delete(key)}
+}
+/** An agent's question to the operator: its text, its choices (the recommended one picked) and the answer form. */
+function questionCard(qq,s,key){
+  const c=el("div","card q");const h=el("div","");h.append(el("span","who",qq.from),el("span","muted"," · "+qq.taskId+" «"+qq.taskTitle+"» · "+time(qq.askedAt)));c.append(h,el("div","",qq.question));
     if(s.control){const f=el("form","");const ta=document.createElement("textarea");ta.placeholder="Ваш ответ агенту "+qq.from;
       // the agent's choices: one (radio) or several (checkboxes), its recommendation picked; the text box adds to it or replaces it
       const ch=qq.choices;let picked=()=>[];
@@ -1134,16 +1325,14 @@ function renderQuestions(s){
           const t=el("div","");t.append(el("b","",o.label));if(o.label===ch.recommended)t.append(el("span","tag","агент рекомендует"));if(o.description)t.append(el("div","muted",o.description));l.append(i,t);opts.append(l)});
         f.append(opts);picked=()=>[...opts.querySelectorAll("input:checked")].map(i=>i.value);ta.placeholder="Комментарий к выбору или свой ответ вместо вариантов (необязательно)";ta.rows=2}const r2=el("div","row2");const b=el("button","","Ответить");b.type="submit";const note=el("span","note","");
       const x=el("button","ghost","Закрыть без ответа");x.type="button";x.title="агент ничего не получит: например, он уже сделал по своему предложению или вопрос решён иначе";
-      x.onclick=async()=>{if(!confirm("Закрыть вопрос "+qq.from+" без ответа? Агент ничего не получит."))return;x.disabled=true;try{await post("/api/questions/dismiss",{taskId:qq.taskId,messageId:qq.messageId});await tick()}catch(e){note.className="note err";note.textContent=e.message;x.disabled=false}};
+      x.onclick=async()=>{if(!await ask("Закрыть вопрос "+qq.from+" без ответа? Агент ничего не получит."))return;x.disabled=true;try{await post("/api/questions/dismiss",{taskId:qq.taskId,messageId:qq.messageId});await tick()}catch(e){note.className="note err";note.textContent=e.message;x.disabled=false}};
       r2.append(b,x,note);f.append(ta,r2);
       f.onsubmit=async ev=>{ev.preventDefault();const sel=picked();const text=ta.value.trim();if(!sel.length&&!text)return;
         const answer=sel.length?"Chosen: "+sel.map(x=>'"'+x+'"').join(", ")+(text?"\n"+text:""):text;
         b.disabled=true;note.className="note";note.textContent="отправляю…";
         try{await post("/api/questions/answer",{taskId:qq.taskId,messageId:qq.messageId,answer});note.className="note ok";note.textContent="отправлено";await tick()}catch(e){note.className="note err";note.textContent=e.message;b.disabled=false}};
       c.append(f)}else c.append(el("div","muted","ответить можно из UI, запущенного с --runners"));
-    qCards.set(key,c);box.append(c)}
-  for(const [key,c] of qCards)if(!keep.has(key)){c.remove();qCards.delete(key)}
-}
+  return c}
 
 /* ---------- supervisor ---------- */
 let SUP=null,supKind="all",supAll=false;const supSessions=new Map();const supSeen={project:null,ids:new Set(),needs:new Set()},supOpen=new Set();let supUi=null;
@@ -1244,7 +1433,7 @@ function renderObserver(){
       ag.oninput=()=>obsState.set(p.id,{...st,agents:ag.value});
       const acc=el("button","","Принять → задача");acc.type="button";acc.disabled=!!st.pending;
       acc.onclick=async()=>{const where=p.target==="agent-network"?"в сети agent-network-mcp ("+o.agentNetworkNetwork+"): там должны работать runner'ы этих агентов":"в этом проекте";
-        if(!confirm("Создать задачу «"+p.title+"» "+where+"? Агенты: "+ag.value))return;obsState.set(p.id,{pending:true});render();
+        if(!await ask("Создать задачу «"+p.title+"» "+where+"? Агенты: "+ag.value))return;obsState.set(p.id,{pending:true});render();
         try{const r=await post("/api/observer/proposals/"+p.id+"/accept",{agents:ag.value.split(",").map(x=>x.trim()).filter(Boolean)});obsState.delete(p.id);toast("ok","Создана "+r.task.id,r.task.here?"в этом проекте":"в "+r.task.network)}catch(e){obsState.set(p.id,{error:e.message})}await tick()};
       const rej=el("button","ghost","Отклонить");rej.type="button";rej.disabled=!!st.pending;
       rej.onclick=async()=>{const why=prompt("Почему? Наблюдатель прочтёт и больше это не предложит.");if(!why||!why.trim())return;

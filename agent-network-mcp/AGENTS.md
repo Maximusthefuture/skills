@@ -28,6 +28,10 @@ nextAction:
   agent's NEW code (e.g. API tests against an endpoint being built) gets `dependsOn: [<that agent>]`: it still works in parallel,
   but its `complete()` is accepted only after that agent reported its part and the dependent merged its commits
   (`DEPENDENCY_NOT_READY` / `DEPENDENCY_NOT_MERGED` otherwise).
+  With `plan` in `swarm_context` (the operator asked for a plan first), the lead writes the plan as one self-contained
+  HTML page with `plan({html, note})` before `propose`; the operator comments on it, edits it in place and approves it
+  on the page. Feedback arrives in `pendingMessages`: rework it with `plan({edits: [{find, replace}]})` (read the current
+  page with `plan({read: true})` after the operator edited it). `propose` is refused (`PLAN_NOT_APPROVED`) until approved.
 - `approve` (DISCUSS): read `agreement` (assignments and each agent's files); `complete()` approves it. If you disagree, `send_message` or `propose` a replacement.
 - `implement` (IMPLEMENT): work ONLY on your own assignment and change only your own files (`ownership.yourFiles`) or files granted to you. Reviewing the other agents' code is for SYNC, not now. Report blockers with `send_message`. When finished
   call `complete({result, filesChanged})`. Working on your own git branch (a separate worktree)? Commit your files first and pass
@@ -40,6 +44,9 @@ nextAction:
   The list is kept by the server: after a restart `swarm_context` shows your `subtasks` and what is done; the others see your progress.
   A follow-up task (`task.baseCommit` is set) starts from the merged result of its parent: if you work in your own git branch,
   `git merge <baseCommit>` first.
+  Lead with `delegable` in `swarm_context`: a self-contained piece (a load test, a diagnosis, a benchmark) can go to a new
+  runner: commit, then `delegate({template, job, files})`. It is your open subtask until its result comes back in
+  `pendingMessages` (merge its commits). A job you were delegated: do it alone, `complete()` sends the result to that lead.
 - `fix` (IMPLEMENT after a review): read `fixRequests`, fix your part, call `complete({result, filesChanged})` again.
 - `sync` (SYNC): inspect the work of the agents in `reviewTargets` (`teamImplementations`: commits, changed files; agreed interfaces, tests, dependencies),
   then `complete({status: "PASS"})` or `complete({status: "NEEDS_FIX", findings: [{severity, description, relatedAgent, files}]})`.

@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   const service = await NetworkService.create(config.networkDir, identity, { log, ...(config.operatorTimeoutMs ? { operatorTimeoutMs: config.operatorTimeoutMs } : {}) });
   await service.registerAgent(announce); // visible to the others right away; fails if a live process already owns this AGENT_ID
   const advanced = process.env.AGENT_NETWORK_ADVANCED === "1";
-  const server = createServer(service, { advanced, log, waitMs: config.waitMs, freshPhases: config.freshPhases, underRunner: config.underRunner, operatorTimeoutMs: config.operatorTimeoutMs });
+  const server = createServer(service, { advanced, log, waitMs: config.waitMs, freshPhases: config.freshPhases, underRunner: config.underRunner, sessionTask: config.sessionTask, operatorTimeoutMs: config.operatorTimeoutMs });
   await server.connect(new StdioServerTransport());
   log(`started: agent=${identity.id} network=${config.networkDir}${config.networkDirDetected ? " (auto, from git)" : ""}${advanced ? " (advanced tools)" : ""}${config.freshPhases ? ` (fresh sessions: ${config.freshPhases.join(",")})` : ""}`);
 

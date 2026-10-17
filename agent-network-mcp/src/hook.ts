@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { isHandedOver } from "./handoff.js";
+import { isParked } from "./park.js";
 import { openFileRequests } from "./mcp/swarm.js";
 import { pickNetworkDir } from "./networkDir.js";
 import { FileStore } from "./storage/fileStore.js";
@@ -174,7 +175,7 @@ export async function runHook(mode: HookMode, input: HookInput, opts: HookOption
 
   if (mode === "stop") {
     // the server told this session to end at a phase change: a fresh session takes the task over
-    for (const t of tasks) if (await isHandedOver(fs, agentId, t)) return null;
+    for (const t of tasks) if ((await isHandedOver(fs, agentId, t)) || (await isParked(fs, agentId, t))) return null;
     return { decision: "block", reason: stopReason(agentId, tasks, unread, open) };
   }
 

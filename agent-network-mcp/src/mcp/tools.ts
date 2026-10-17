@@ -20,7 +20,7 @@ const finding = z.object({
   files: z.array(z.string()).optional().describe("Project-relative paths, e.g. ['src/main/java/A.java']"),
 });
 
-/** The tools an agent sees: swarm_context, create_task, send_message, propose, subtasks, complete, build, wait. */
+/** The tools an agent sees: swarm_context, create_task, send_message, propose, plan, subtasks, complete, build, spawn_agent, delegate, resolve_comments, wait. */
 export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, handler: (args: z.infer<z.ZodObject<S>>, signal: AbortSignal) => Promise<unknown>) =>
     defineTool(server, async (e: unknown) => errorResult(await swarm.errorBody(e, name)), name, description, shape, handler);
@@ -82,6 +82,17 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
     async (a) => swarm.propose(a),
   );
   tool(
+    "plan",
+    "Lead, DISCUSS, when swarm_context has 'plan' (the operator asked for a plan before the agreement): write the plan as ONE self-contained HTML page. The operator comments on it, edits it in place and answers its questions on the page; their feedback arrives in pendingMessages; propose() is accepted once they approve it. Each call saves a new version.",
+    {
+      html: z.string().optional().describe("The whole page: <!doctype html><html>... with inline <style>; for the first version or a rewrite"),
+      edits: z.array(z.object({ find: z.string().describe("Exact text of the current version, occurring once"), replace: z.string().describe("Its replacement; \"\" removes it") })).optional().describe("Changes of the current version instead of the whole page (cheaper after feedback)"),
+      note: z.string().optional().describe("What changed in this version, e.g. 'tester takes the API tests; the retry moved to the client'. After the operator's feedback, a note alone sends the same page again (nothing needed to change, and why)"),
+      read: z.boolean().optional().describe("true: return the current version's html (after the operator edited it in place), save nothing"),
+    },
+    async (a) => swarm.plan(a),
+  );
+  tool(
     "subtasks",
     "Your own checklist for your part of the task (mainly IMPLEMENT): split a big assignment into steps, start one, mark them done as you finish, drop the ones that turn out unnecessary (with a reason). The list is kept by the server, so a restarted session and the other agents see your progress. complete() in IMPLEMENT is refused while subtasks are open. Ids are s1, s2, ...",
     {
@@ -126,6 +137,18 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
       instructions: z.string().optional().describe("Your own role (with role): what this agent does in the task, what it looks at, which skills it uses, what it must not do, how it reports; 40-6000 characters. Its template still decides the CLI, model and permissions"),
     },
     async (a) => swarm.spawnAgent(a),
+  );
+  tool(
+    "delegate",
+    "Lead, IMPLEMENT or INTEGRATE: hand a self-contained piece of your work to a new runner from a template ('delegable' in swarm_context): e.g. a load test, a concurrency test, a diagnosis, a benchmark. It runs alone (no agreement, no review) from your last commit, as your open subtask; its result and commits come back to you in pendingMessages. Commit your work first.",
+    {
+      template: z.string().describe("Template name from delegable.templates, e.g. 'tester'"),
+      job: z.string().describe("What to do, concretely: the goal, where (files, endpoints), how to check it, what to report back, e.g. 'Load test POST /orders with 50 parallel requests; report p95 and errors'"),
+      files: z.array(z.string()).optional().describe("Files or globs it may change, e.g. ['src/test/java/shop/load/**']; omit for a job that only reports"),
+      role: z.string().optional().describe("A role of the project's library by name, or the name of one you write now with instructions"),
+      instructions: z.string().optional().describe("Your own role (with role): what this agent does, what it must not do, how it reports; 40-6000 characters"),
+    },
+    async (a) => swarm.delegate(a),
   );
   tool(
     "resolve_comments",

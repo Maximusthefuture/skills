@@ -20,6 +20,8 @@ export interface NewTask {
   openspec?: string;
   proposes?: string;
   clarify?: boolean;
+  planReview?: boolean;
+  grill?: boolean;
 }
 
 export class TaskStore {
@@ -55,6 +57,8 @@ export class TaskStore {
       ...(input.openspec ? { openspec: { change: input.openspec } } : {}),
       ...(input.proposes ? { proposes: { change: input.proposes } } : {}),
       ...(input.clarify ? { clarify: true as const } : {}),
+      ...(input.planReview ? { planReview: true as const } : {}),
+      ...(input.grill ? { clarify: true as const, grill: true as const } : {}),
     };
     await this.fs.writeJson([...this.taskDir(id), "task.json"], task);
     return task;

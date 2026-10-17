@@ -10,7 +10,7 @@ import { detectNetworkDir, pickNetworkDir } from "./networkDir.js";
 import { isValidModel, runRunner, usesModel } from "./runner.js";
 import { collectStats } from "./stats.js";
 import { FileStore } from "./storage/fileStore.js";
-import { NetworkService } from "./service.js";
+import { NetworkService, depthFlags } from "./service.js";
 import { loadRunnersConfig, projectRunnersConfig, RunnerPool, TEMPLATES, watchPrices, type RunnersConfig, type TemplateName } from "./ui/runners.js";
 import { startUiServer } from "./ui/server.js";
 import { Journal, type JournalEntry } from "./supervisor/journal.js";
@@ -19,6 +19,7 @@ import { Supervisor } from "./supervisor/supervisor.js";
 import { Scheduler } from "./schedule/scheduler.js";
 import { Spawner, writeSpawnFile } from "./spawner.js";
 import { Observer } from "./observer/observer.js";
+import { PlanCritic } from "./planCritic.js";
 import { ensureWorktrees, gitRoot } from "./worktrees.js";
 
 const USAGE = `Usage:
@@ -26,6 +27,9 @@ const USAGE = `Usage:
                                 [--max-fix-rounds 3] [--follow-ups 0] [--max-cost <usd>] [--openspec <change> | --propose <new-change>] [--network-dir <abs path>]
                                 --propose: the agents WRITE that OpenSpec change (the lead writes, the others review), no code
                                 --clarify: the lead first asks what is unclear (or says how it understood the task), then proposes
+                                --plan: the lead first writes an HTML plan; you comment, edit and approve it on the page, then it proposes
+                                --depth fast|standard|thorough: the preparation before the agreement (thorough = grill + plan to approve)
+                                --grill: the lead first grills you about the task in rounds of questions, then you confirm its summary
   agent-network-mcp task list [--network-dir <abs path>]
   agent-network-mcp task stats [--id <task-001>] [--runners runners.json] [--network-dir <abs path>]
                                 time per phase, sessions, tokens, cost (--runners: price sessions without a CLI cost with its "prices")
@@ -87,6 +91,9 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       openspec: { type: "string" },
       propose: { type: "string" },
       clarify: { type: "boolean" },
+      plan: { type: "boolean" },
+      grill: { type: "boolean" },
+      depth: { type: "string" },
       runners: { type: "string" },
       rounds: { type: "string" },
       usd: { type: "string" },
@@ -168,7 +175,10 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       description: values.description ?? (values.openspec || values.propose ? "" : values.title!),
       ...(values.openspec ? { openspec: values.openspec } : {}),
       ...(values.propose ? { proposes: values.propose } : {}),
+      ...(values.depth ? depthFlags(values.depth) : {}),
       ...(values.clarify ? { clarify: true } : {}),
+      ...(values.plan ? { planReview: true } : {}),
+      ...(values.grill ? { grill: true } : {}),
       agents: values.agents.split(",").map((a) => a.trim()).filter(Boolean),
       ...(values["max-fix-rounds"] !== undefined ? { maxFixRounds: Number(values["max-fix-rounds"]) } : {}),
       ...(values.verify ? { verifyCommand: values.verify } : {}),
@@ -278,15 +288,20 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         runners && config?.observer
           ? new Observer({ networkDir: dir, config: config.observer, ...(prices ? { prices } : {}), log: (line) => out(line), onActivity: (e) => runners.recordActivity("observer", e) })
           : undefined;
+      // reads each version of a plan the lead writes, for what breaks in production
+      const planCritic =
+        runners && config?.planCritic
+          ? new PlanCritic({ networkDir: dir, projectDir: config.project ?? dirname(dir), config: config.planCritic, folderOf: (id) => runners.agentFolder(id)?.cwd, ...(prices ? { prices } : {}), log: (line) => out(line), onActivity: (e) => runners.recordActivity("plan-critic", e) })
+          : undefined;
       return {
-        networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}), ...(observer ? { observer } : {}),
+        networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}), ...(observer ? { observer } : {}), ...(planCritic ? { planCritic } : {}),
         ...(config?.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}),
         ...(config?.mergeStrategy ? { mergeStrategy: config.mergeStrategy } : {}),
       };
     });
     const ui = await startUiServer(specs, { port });
     out(`Agent Network UI: ${ui.url}  (${projects.length === 1 ? `network: ${projects[0]!.dir}` : `projects: ${projects.map((p) => basename(dirname(p.dir))).join(", ")}`})  Ctrl+C to stop`);
-    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)), supervisor: s.supervisor, scheduler: s.scheduler, projectId: ui.projects[i]!.id, networkDir: s.networkDir, spawner: undefined as Spawner | undefined, observer: s.observer }] : []));
+    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)), supervisor: s.supervisor, scheduler: s.scheduler, projectId: ui.projects[i]!.id, networkDir: s.networkDir, spawner: undefined as Spawner | undefined, observer: s.observer, planCritic: s.planCritic }] : []));
     for (const entry of pools) {
       const { pool, config, name, supervisor, scheduler, projectId, networkDir } = entry;
       // the templates leads may spawn from, for their MCP servers; and the loop that starts the spawned runners
@@ -302,6 +317,10 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
       if (entry.observer) {
         entry.observer.start();
         out(`observer${pools.length > 1 ? ` (${name})` : ""}: ${config.observer!.cron ? `runs on ${config.observer!.cron}` : "runs from the button on its tab"}; digests of closed tasks are collected as they close`);
+      }
+      if (entry.planCritic) {
+        entry.planCritic.start();
+        out(`plan critic${pools.length > 1 ? ` (${name})` : ""}: reads every plan version a lead writes for a task with a plan to approve`);
       }
       if (config.spawn) out(`spawn${pools.length > 1 ? ` (${name})` : ""}: leads may add ${config.spawn.templates.map((t) => t.name).join(", ")} (up to ${config.spawn.maxPerTask} per task)`);
       if (scheduler) {
@@ -321,7 +340,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         if (stopping) process.exit(130); // second Ctrl+C: leave now
         stopping = true;
         out("stopping the runners...");
-        void Promise.all(pools.map(({ pool, supervisor, scheduler, spawner, observer }) => Promise.all([spawner?.stop(), observer?.stop(), pool.stopAll(), supervisor?.stop(), scheduler?.stop()])))
+        void Promise.all(pools.map(({ pool, supervisor, scheduler, spawner, observer, planCritic }) => Promise.all([spawner?.stop(), observer?.stop(), planCritic?.stop(), pool.stopAll(), supervisor?.stop(), scheduler?.stop()])))
           .then(() => ui.close())
           .then(() => process.exit(0));
       };

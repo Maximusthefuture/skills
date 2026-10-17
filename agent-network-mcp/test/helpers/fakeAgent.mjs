@@ -7,13 +7,20 @@
 // at the turn limit (stream-json result error_max_turns), from attempt N they finish it; "turns-idle:N" = the same
 // without touching anything (no progress); "busy:N" = sessions before attempt N make one tool call and keep working until
 // stopped, from attempt N they finish it> [prompt and other args...]
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync as writeRaw } from "node:fs";
 import { join } from "node:path";
 
 const { NETWORK_DIR, AGENT_ID, AGENT_NETWORK_TASK_ID: taskId, AGENT_NETWORK_ATTEMPT, AGENT_NETWORK_FRESH_PHASES, AGENT_NETWORK_RUNNER } = process.env;
 const [log, finishArg, ...rest] = process.argv.slice(2);
 const attempt = Number(AGENT_NETWORK_ATTEMPT);
 appendFileSync(log, JSON.stringify({ agent: AGENT_ID, networkDir: NETWORK_DIR, taskId, attempt, fresh: AGENT_NETWORK_FRESH_PHASES ?? null, runner: AGENT_NETWORK_RUNNER ?? null, args: rest }) + "\n");
+
+// the network's files are written like the server writes them: to a temporary file, then renamed (a reader never sees half a file)
+const writeFileSync = (path, text) => {
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeRaw(tmp, text);
+  renameSync(tmp, path);
+};
 
 const finish = (id) => {
   const path = join(NETWORK_DIR, "tasks", id, "task.json");

@@ -81,7 +81,7 @@ describe("agent runner", () => {
     const s = await setup();
     const r = start(s.networkDir, [process.execPath, FAKE, s.log, "handoff:2", "{prompt}"], { maxRestarts: 0, freshPhases: ["SYNC"], restartDelayMs: 60_000 });
     const t = await s.newTask("Review with fresh eyes");
-    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "task done");
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "task done", 15_000); // two sessions with git checks: slow under load
     expect(await r.stop()).toBe(0);
     const runs = s.launches();
     expect(runs.map((l) => [l.attempt, l.fresh])).toEqual([[1, "SYNC"], [2, "SYNC"]]);
@@ -128,6 +128,9 @@ describe("agent runner", () => {
     const r = start(s.networkDir, [process.execPath, FAKE, s.log, "turns:3", "--max-turns", "3", "{prompt}"], { maxRestarts: 0, restartDelayMs: 60_000, cwd: await tmpDir() });
     const t = await s.newTask("Long work in short sessions");
     await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "task done", 15_000); // git checks per session: slow under load
+    // the fake agent marks the task done and only then exits: stopping now would kill the last session (exit 128) under load
+    const store = new SessionStore(await FileStore.open(s.networkDir));
+    await until(async () => (await store.list(t.id)).length === 3, "the last session recorded", 15_000);
     expect(await r.stop()).toBe(0);
     const runs = s.launches();
     expect(runs.map((l) => l.attempt)).toEqual([1, 2, 3]);
@@ -135,7 +138,7 @@ describe("agent runner", () => {
     expect(runs[1]!.args.join(" ")).toContain("reached its turn limit in the middle of the work");
     expect(runs[1]!.args.join(" ")).not.toContain("previous one ended");
     expect(r.lines).toContain(`${t.id}: session 1 reached its turn limit (3 turns) after progress; a fresh session goes on (phase DISCUSS)`);
-    const sessions = await new SessionStore(await FileStore.open(s.networkDir)).list(t.id);
+    const sessions = await store.list(t.id);
     expect(sessions.map((x) => [x.exitCode, x.turnLimit ?? false])).toEqual([[1, true], [1, true], [0, false]]);
 
     // changed files in its git folder are progress too, even with nothing ticked

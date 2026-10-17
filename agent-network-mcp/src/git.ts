@@ -34,3 +34,36 @@ export async function containsCommit(cwd: string, commit: string): Promise<boole
     return (e as { code?: unknown }).code === 1 ? false : null;
   }
 }
+
+/**
+ * The commit checked out in `cwd` and whether the folder has changes git would commit (its own .agent-network/ build logs
+ * left out); null when it is not a git repository.
+ */
+export async function workTreeState(cwd: string): Promise<{ head: string; dirty: number } | null> {
+  try {
+    const head = await git(cwd, "rev-parse", "HEAD");
+    const status = await git(cwd, "status", "--porcelain", "--untracked-files=normal");
+    const dirty = status.split("\n").filter((l) => l.trim() && !/^.. "?\.agent-network\//.test(l)).length;
+    return { head, dirty };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Files changed by the commits of the branch in `cwd` since `base`, not counting merges and the commits in `others` (work of
+ * other agents merged in): what the agent itself changed, whatever it reports. null when git cannot tell.
+ */
+export async function filesChangedSince(cwd: string, base: string, others: string[] = []): Promise<string[] | null> {
+  try {
+    const known: string[] = [];
+    for (const c of [base, ...others]) {
+      if (await git(cwd, "rev-parse", "--verify", "--quiet", `${c}^{commit}`).then(() => true, () => false)) known.push(c);
+    }
+    if (!known.includes(base)) return null;
+    const out = await git(cwd, "log", "--no-merges", "--name-only", "--pretty=format:", "HEAD", "--not", ...known);
+    return [...new Set(out.split("\n").map((l) => l.trim()).filter(Boolean))].sort();
+  } catch {
+    return null;
+  }
+}

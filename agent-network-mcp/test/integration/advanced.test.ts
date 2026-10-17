@@ -43,7 +43,7 @@ describe("advanced tools", () => {
     const backend = await spawnAgent({ id: "backend", networkDir });
     expect(await backend.listTools()).toEqual(
       [
-        "swarm_context", "create_task", "send_message", "propose", "subtasks", "complete", "build", "spawn_agent", "resolve_comments", "wait",
+        "swarm_context", "create_task", "send_message", "propose", "plan", "subtasks", "complete", "build", "spawn_agent", "delegate", "resolve_comments", "wait",
         "agent_register", "agent_list", "agent_heartbeat",
         "task_create", "task_get",
         "agreement_propose", "agreement_approve", "agreement_get",

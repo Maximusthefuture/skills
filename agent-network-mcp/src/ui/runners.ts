@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -116,6 +117,8 @@ export interface RunnersConfig {
   spawn?: SpawnConfig;
   /** The agent that looks back over finished tasks for the system's problems and proposes improvements (src/observer). */
   observer?: ObserverConfig;
+  /** Reads every version of a plan the lead writes (task.planReview) for what breaks in production (src/planCritic). */
+  planCritic?: PlanCriticConfig;
   /** "Влить в проект": squash (default, one commit per task) or merge (a merge commit keeping the agents' commits). */
   mergeStrategy?: "squash" | "merge";
 }
@@ -129,6 +132,21 @@ export interface ObserverConfig {
   systemPromptFile?: string;
   /** When it runs by itself (5-field cron, local time); without it only the page's button starts it. */
   cron?: string;
+}
+
+/**
+ * The plan critic: the observer's kind of CLI ({prompt}, {model}; {projectDir} and {planDir} for its read tools), no cron,
+ * plus skill sets: each applies when one of its "when" files is in the project's root (pom.xml, package.json, go.mod, ...).
+ */
+export type PlanCriticConfig = Omit<ObserverConfig, "cron"> & { skillSets?: SkillSet[] };
+
+/** Skills the critic gets for a kind of project: a skill folder (with SKILL.md) or a folder of skills (skills/<name>/SKILL.md). */
+export interface SkillSet {
+  name: string;
+  /** File names (a * matches anything) in the project's root that mark this kind of project. */
+  when: string[];
+  /** Absolute paths. */
+  skills: string[];
 }
 
 export interface SpawnTemplate {
@@ -190,7 +208,7 @@ function costLimit(value: unknown, what: string): number {
 
 export async function loadRunnersConfig(path: string, opts: { projectDir?: string } = {}): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; spawn?: unknown; observer?: unknown; mergeStrategy?: unknown };
+  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown };
   try {
     // {agentNetworkMcp} anywhere in the file is this package's folder
     raw = JSON.parse((await readFile(file, "utf8")).replaceAll("{agentNetworkMcp}", PACKAGE_DIR.replaceAll("\\", "/")));
@@ -262,9 +280,26 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     return { templates, maxPerTask };
   }
 
-  async function parseObserver(rawObserver: unknown): Promise<ObserverConfig> {
+  function parseSkillSets(rawSets: unknown): { skillSets?: SkillSet[] } {
+    if (rawSets === undefined) return {};
     const bad = (what: string): never => {
-      throw new AppError("INVALID_CONFIG", `${file}: "observer" ${what}`);
+      throw new AppError("INVALID_CONFIG", `${file}: "planCritic.skillSets" ${what}`);
+    };
+    if (!Array.isArray(rawSets)) bad('is a list: [{"name": "java-spring", "when": ["pom.xml"], "skills": ["path/to/skill"]}]');
+    const strings = (v: unknown) => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && x.trim());
+    const sets = (rawSets as Record<string, unknown>[]).map((x, i) => {
+      if (!x || typeof x !== "object" || typeof x.name !== "string" || !x.name.trim()) bad(`[${i}] needs "name"`);
+      if (!strings(x.when)) bad(`[${i}] needs "when": file names in the project's root, e.g. ["pom.xml", "build.gradle*"]`);
+      if (!strings(x.skills)) bad(`[${i}] needs "skills": skill folders (with SKILL.md) or folders of skills`);
+      // ~ is the home folder; a relative path is relative to this file
+      return { name: (x.name as string).trim(), when: x.when as string[], skills: (x.skills as string[]).map((s) => (s.startsWith("~/") ? join(homedir(), s.slice(2)) : abs(s))) };
+    });
+    return sets.length ? { skillSets: sets } : {};
+  }
+
+  async function parseObserver(rawObserver: unknown, key = "observer"): Promise<ObserverConfig> {
+    const bad = (what: string): never => {
+      throw new AppError("INVALID_CONFIG", `${file}: "${key}" ${what}`);
     };
     if (!rawObserver || typeof rawObserver !== "object" || Array.isArray(rawObserver)) bad("must be an object");
     const o = rawObserver as Record<string, unknown>;
@@ -273,7 +308,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     if (o.model !== undefined && !isValidModel(o.model)) bad('"model" must be a model name');
     if (usesModel(command) && !o.model) bad('command has {model}: set "model"');
     if (o.models !== undefined && (!Array.isArray(o.models) || !o.models.every(isValidModel))) bad('"models" must be a list of model names');
-    if (typeof o.promptFile !== "string") bad('needs "promptFile" (e.g. "{agentNetworkMcp}/examples/runner/observer-prompt.md")');
+    if (typeof o.promptFile !== "string") bad(`needs "promptFile" (e.g. "{agentNetworkMcp}/examples/runner/${key === "observer" ? "observer" : "plan-critic"}-prompt.md")`);
     const promptFile = abs(o.promptFile as string);
     await readFile(promptFile, "utf8").catch((e: Error) => bad(`promptFile ${promptFile}: ${e.message}`));
     const systemPromptFile = typeof o.systemPromptFile === "string" ? abs(o.systemPromptFile) : undefined;
@@ -303,6 +338,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
   }
   const spawn = raw.spawn === undefined ? undefined : await parseSpawn(raw.spawn);
   const observer = raw.observer === undefined ? undefined : await parseObserver(raw.observer);
+  const planCritic = raw.planCritic === undefined ? undefined : { ...(await parseObserver({ ...(raw.planCritic as object), cron: undefined }, "planCritic")), ...parseSkillSets((raw.planCritic as { skillSets?: unknown }).skillSets) };
   if (raw.mergeStrategy !== undefined && raw.mergeStrategy !== "squash" && raw.mergeStrategy !== "merge") throw new AppError("INVALID_CONFIG", `${file}: "mergeStrategy" is "squash" (one commit per task) or "merge"`);
   const prices = parsePrices(raw.prices, file);
   const maxTaskCostUsd = raw.maxTaskCostUsd === undefined || raw.maxTaskCostUsd === null ? undefined : costLimit(raw.maxTaskCostUsd, `${file}: "maxTaskCostUsd"`);
@@ -315,6 +351,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     ...(maxTaskCostUsd !== undefined ? { maxTaskCostUsd } : {}),
     ...(spawn?.templates.length ? { spawn } : {}),
     ...(observer ? { observer } : {}),
+    ...(planCritic ? { planCritic } : {}),
     ...(raw.mergeStrategy ? { mergeStrategy: raw.mergeStrategy as "squash" | "merge" } : {}),
   };
 }

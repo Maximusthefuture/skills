@@ -244,7 +244,8 @@ export class SessionOutput {
           ...(typeof ev.is_error === "boolean" ? { isError: ev.is_error } : {}),
           ...(models.length ? { model: models.join(", ") } : {}),
           ...(ev.subtype === "error_max_turns" ? { stopReason: "max_turns" as const } : {}),
-          ...(typeof ev.result === "string" && ev.result.trim() ? { text: ev.result.trim().slice(0, 2000) } : {}),
+          // up to 20 KB: the plan critic answers with a JSON list of risks several KB long
+          ...(typeof ev.result === "string" && ev.result.trim() ? { text: ev.result.trim().slice(0, 20_000) } : {}),
         };
         const text = typeof ev.result === "string" ? ev.result.trim() : "";
         const tokens = usage ? ` · tokens ${usage.total} (in ${usage.input}, out ${usage.output})` : "";

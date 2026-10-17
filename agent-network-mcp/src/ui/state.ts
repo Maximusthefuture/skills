@@ -1,6 +1,7 @@
 import { dirname } from "node:path";
 import { isAppError } from "../errors.js";
 import { changePath, hasChange, readChange } from "../openspec.js";
+import { planBrief, readPlanState } from "../plan.js";
 import { defaultIsProcessAlive } from "../stores/agentStore.js";
 import { queueStates } from "./runs.js";
 import { AgentStore } from "../stores/agentStore.js";
@@ -48,6 +49,9 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         integrations.list(task.id),
       ]);
       const current = reports.filter((r) => r.round === task.syncRound);
+      // a task with planReview, still in DISCUSS: where the lead's plan stands (waiting on the operator or the lead)
+      const plan = task.planReview ? planBrief(await readPlanState(fs, task.id)) : null;
+      const planWait = plan && task.status === "ACTIVE" && task.phase === "DISCUSS" && !agreement && plan.status !== "approved" ? [plan.status === "awaiting" ? "operator" : task.agents[0]!] : null;
       const [msgs, evs] = await Promise.all([tail<Message>(fs, ["tasks", task.id, "messages"], "msg"), tail<NetworkEvent>(fs, ["tasks", task.id, "events"], "event")]);
       return {
         ...pickTask(task),
@@ -59,7 +63,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         syncReports: reports,
         integrations: integrationReports,
         grants: await grants.list(task.id),
-        waitingOn: waitingOn(task, agreement?.assignments.map((a) => a.agentId) ?? [], agreement?.approvedBy ?? [], impls, current.map((r) => r.agentId), !!agreement),
+        plan,
+        waitingOn: planWait ?? waitingOn(task, agreement?.assignments.map((a) => a.agentId) ?? [], agreement?.approvedBy ?? [], impls, current.map((r) => r.agentId), !!agreement),
         messages: msgs.items,
         messagesTotal: msgs.total,
         events: evs.items,
@@ -161,7 +166,7 @@ function operatorQuestions(messages: Message[]) {
 }
 
 function pickTask(t: Task) {
-  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify } = t;
+  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify, planReview, grill, jobOf } = t;
   return {
     id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
@@ -175,6 +180,12 @@ function pickTask(t: Task) {
     spawned: spawned ?? [],
     /** The lead checks the task with the operator before it proposes. */
     clarify: !!clarify,
+    /** The clarify is a grilling: rounds of questions, then the operator confirms the lead's summary. */
+    grill: !!grill,
+    /** A job the lead of another task delegated (delegate): one agent, no review, its result goes back to that lead. */
+    jobOf: jobOf ?? null,
+    /** The lead writes an HTML plan that the operator approves before the agreement. */
+    planReview: !!planReview,
     parentTaskId: parentTaskId ?? null, baseCommit: baseCommit ?? null,
     followUpBudget: maxFollowUps ? { max: maxFollowUps, used: followUpsUsed ?? 0 } : null,
     /** BLOCKED: unless the operator decides by dueAt, the lead takes over the stuck fix. */

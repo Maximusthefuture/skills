@@ -97,6 +97,21 @@ export interface Task {
    * the task (fyi). propose() is refused until it has written to the operator.
    */
   clarify?: true;
+  /**
+   * With clarify: the lead grills the operator about the task in rounds of questions (each with its recommendation), then
+   * asks it to confirm its summary ("How I understand it: ... Is that right?"); propose() waits for that "yes".
+   */
+  grill?: true;
+  /**
+   * The lead writes its plan as an HTML page first (tasks/<id>/plan/); the operator comments on it, edits it in place and
+   * approves it on the page. propose() is refused until the plan is approved.
+   */
+  planReview?: true;
+  /**
+   * A job the lead of another task delegated (delegate): one agent, no agreement, no review; it starts in IMPLEMENT, its
+   * complete() ends it (DONE), and the result goes back to the lead as its subtask.
+   */
+  jobOf?: { taskId: string; by: string; subtask: string };
   /** Agents the lead added to the team from templates (spawn_agent); the page starts a runner for each. */
   spawned?: { id: string; template: string; by: string; at: string; reason: string; role?: SpawnRole }[];
 }
@@ -296,6 +311,11 @@ export const EVENT_TYPES = [
   "AGENT_SPAWNED",
   "REVIEW_COMMENTS",
   "REVIEW_RESOLVED",
+  "PLAN_UPDATED",
+  "PLAN_FEEDBACK",
+  "PLAN_APPROVED",
+  "JOB_DELEGATED",
+  "JOB_FINISHED",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

@@ -19,6 +19,8 @@ export interface Config {
   freshPhases?: Phase[];
   /** AGENT_NETWORK_RUNNER=1: the session was started by a runner. */
   underRunner?: boolean;
+  /** AGENT_NETWORK_TASK_ID (set by a runner): the task this session was started for. */
+  sessionTask?: string;
   /** AGENT_NETWORK_OPERATOR_TIMEOUT_MIN: how long a question to the operator holds the asker (default 10 min). */
   operatorTimeoutMs?: number;
 }
@@ -61,5 +63,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, cwd: string = p
   }
   const identity: AgentIdentity = { id: candidates[0]!, type: env.AGENT_TYPE || "unknown" };
   if (env.AGENT_ROLE) identity.role = env.AGENT_ROLE;
-  return { identity, candidates, networkDir: resolved, ...(detected ? { networkDirDetected: true as const } : {}), ...(waitMs ? { waitMs } : {}), ...(freshPhases.length ? { freshPhases } : {}), ...(env.AGENT_NETWORK_RUNNER === "1" ? { underRunner: true } : {}), ...(operatorTimeoutMs ? { operatorTimeoutMs } : {}) };
+  return { identity, candidates, networkDir: resolved, ...(detected ? { networkDirDetected: true as const } : {}), ...(waitMs ? { waitMs } : {}), ...(freshPhases.length ? { freshPhases } : {}), ...(env.AGENT_NETWORK_RUNNER === "1" ? { underRunner: true } : {}), ...(env.AGENT_NETWORK_RUNNER === "1" && /^task-\d+$/.test(env.AGENT_NETWORK_TASK_ID ?? "") ? { sessionTask: env.AGENT_NETWORK_TASK_ID } : {}), ...(operatorTimeoutMs ? { operatorTimeoutMs } : {}) };
 }

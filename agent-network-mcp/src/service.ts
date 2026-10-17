@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { buildTools, parseBuildCommand } from "./build.js";
 import { AppError } from "./errors.js";
 import { EventHub } from "./events/eventHub.js";
 import { readGitContext } from "./git.js";
@@ -8,6 +9,8 @@ import { writeHandoffMarker } from "./handoff.js";
 import { archiveChange, assertChangeName, changePath, hasChange, readChange, type Exec } from "./openspec.js";
 import { anyDeclared, covers, findOverlaps, matches, normalizePath, overlaps, ownersOf } from "./ownership.js";
 import { DEFAULT_MAX_FIX_ROUNDS, isHalt, PhaseManager, type Halt, type Transition } from "./phase/phaseManager.js";
+import { writeParkMarker } from "./park.js";
+import { applyEdits, checkFeedback, checkPlanHtml, feedbackText, planStatus, readPlanState, type PlanFeedback, type PlanState } from "./plan.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore } from "./stores/agentStore.js";
 import { AgreementStore } from "./stores/agreementStore.js";
@@ -83,6 +86,46 @@ export interface NewTaskInput {
   proposes?: string;
   /** The lead first asks what is unclear, or says how it understood the task, before it may propose. */
   clarify?: boolean;
+  /** The lead writes an HTML plan first, and proposes only after the operator approved it. */
+  planReview?: boolean;
+  /** Clarify by a grilling: rounds of questions, then the operator confirms the lead's summary (implies clarify). */
+  grill?: boolean;
+}
+
+/**
+ * A message that checks the task (clarify): the lead's question to the operator, or its note that starts with how it
+ * understood the task. Any other note (an error report, a status) does not count.
+ */
+export function clarifies(m: Pick<Message, "from" | "to" | "type" | "content">, lead: string): boolean {
+  if (m.from !== lead || m.to !== OPERATOR) return false;
+  return m.type === "QUESTION" || UNDERSTOOD.test(m.content);
+}
+
+/** The yes of a summary question: "Yes, that's it" / "Да, всё так" (a plain "Yes" is an ordinary choice). */
+const CONFIRM_YES = /^\s*(yes|да)[\s,!.—-]+(that'?s (it|right)|correct|exactly|всё так|все так|верно|именно)/i;
+const UNDERSTOOD = /^[\s*_#>]*(how i understand( it| the task)?|(updated |my )?understanding|как я понял|моё понимание|мое понимание)/i;
+
+/**
+ * A grilled task is clear once the operator said yes to the lead's summary: a question of the lead that starts with how it
+ * understood the task, answered with its first option ("Yes, that's it") or a plain yes.
+ */
+export function grillConfirmed(messages: Pick<Message, "id" | "from" | "to" | "type" | "content" | "replyTo" | "choices">[], lead: string): boolean {
+  // the summary: it starts with how the lead understood the task (markdown around it is fine), or it offers yes / no
+  const summary = (q: (typeof messages)[number]) =>
+    UNDERSTOOD.test(q.content) || (CONFIRM_YES.test(q.choices?.options[0]?.label ?? "") && /^\s*(no|нет)(?![a-zа-яё])/i.test(q.choices?.options[1]?.label ?? ""));
+  return messages.some((q) => q.from === lead && q.to === OPERATOR && q.type === "QUESTION" && summary(q) &&
+    messages.some((a) => a.from === OPERATOR && a.replyTo === q.id && (
+      (q.choices?.options[0] && a.content.startsWith(`Chosen: "${q.choices.options[0].label}"`)) ||
+      /^\s*(chosen: "(yes|да)|yes(?![a-z])|да(?![а-яё])|ок(?![а-яё])|ok(?![a-z])|верно|всё так|все так)/i.test(a.content))));
+}
+
+/** How much the lead prepares before the agreement: fast (nothing), standard (clarify), thorough (grill + plan to approve). */
+export type Depth = "fast" | "standard" | "thorough";
+export function depthFlags(depth: string): { clarify: boolean; grill: boolean; planReview: boolean } {
+  if (depth === "fast") return { clarify: false, grill: false, planReview: false };
+  if (depth === "standard") return { clarify: true, grill: false, planReview: false };
+  if (depth === "thorough") return { clarify: true, grill: true, planReview: true };
+  throw new AppError("INVALID_INPUT", `depth is fast, standard or thorough, not "${depth}"`);
 }
 
 const ROLE_NAME = /^[a-z][a-z0-9-]{1,30}$/;
@@ -269,6 +312,7 @@ export class NetworkService {
   private async createTaskCore(createdBy: string, input: NewTaskInput, asAgent: boolean): Promise<Task> {
     const change = input.openspec?.trim() ? await readChange(this.projectDir, input.openspec.trim()) : null;
     const proposes = input.proposes?.trim() ? await this.checkNewChange(input.proposes.trim(), !!change) : undefined;
+    if (proposes && input.planReview) throw new AppError("INVALID_INPUT", "A task that writes an OpenSpec change has no separate plan: the change itself is what you review");
     const title = input.title.trim() || change?.name || (proposes ? `OpenSpec change ${proposes}` : "");
     if (!title) throw new AppError("INVALID_INPUT", "title must not be empty");
     const agents = [...new Set(input.agents.map((a) => assertAgentId(a)))];
@@ -292,6 +336,8 @@ export class NetworkService {
       title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps,
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}), ...(change ? { openspec: change.name } : {}), ...(proposes ? { proposes } : {}),
       ...(input.clarify ? { clarify: true } : {}),
+      ...(input.planReview ? { planReview: true } : {}),
+      ...(input.grill ? { grill: true } : {}),
     });
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
@@ -382,10 +428,107 @@ export class NetworkService {
     await rm(join(this.fs.root, "roles", `${name}.md`));
   }
 
-  /** The lead of the task has written to the operator in it (a question or a note): the task was checked (clarify). */
+  /** The lead checked the task with the operator (clarify): a question, or a note on how it understood the task. */
   async leadWroteOperator(task: Task): Promise<boolean> {
     const lead = this.phases.integrator(task);
-    return (await this.messages.list(task.id)).some((m) => m.from === lead && m.to === OPERATOR);
+    const all = await this.messages.list(task.id);
+    return task.grill ? grillConfirmed(all, lead) : all.some((m) => clarifies(m, lead));
+  }
+
+  // ---------------------------------------------------------------- the plan (task.planReview)
+
+  async planState(taskId: string): Promise<PlanState> {
+    return readPlanState(this.fs, assertTaskId(taskId));
+  }
+
+  /** One version of the plan as it was saved (null when there is none). */
+  async planHtml(taskId: string, version?: number): Promise<{ version: number; html: string } | null> {
+    const s = await this.planState(taskId);
+    const v = version ?? s.versions.at(-1)?.n;
+    if (!v || !s.versions.some((x) => x.n === v)) return null;
+    return { version: v, html: await readFile(join(this.fs.root, "tasks", taskId, "plan", `v${v}.html`), "utf8") };
+  }
+
+  private async savePlanVersion(taskId: string, s: PlanState, html: string, note?: string): Promise<number> {
+    const n = (s.versions.at(-1)?.n ?? 0) + 1;
+    await mkdir(join(this.fs.root, "tasks", taskId, "plan"), { recursive: true });
+    await writeFile(join(this.fs.root, "tasks", taskId, "plan", `v${n}.html`), html);
+    s.versions.push({ n, by: this.me, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 500) } : {}), bytes: Buffer.byteLength(html) });
+    return n;
+  }
+
+  /** The lead: a new version of the plan, the whole page or find/replace edits of the current one. */
+  async writePlan(input: { taskId: string; html?: string; edits?: { find: string; replace: string }[]; note?: string }): Promise<{ version: number; status: string }> {
+    await this.requireMe();
+    return this.fs.withLock(this.tasks.lockPath(assertTaskId(input.taskId)), async () => {
+      const task = await this.requireMember(input.taskId);
+      if (task.status !== "ACTIVE") throw new AppError("ALREADY_COMPLETED", `${task.id} is ${task.status}: the plan is closed`);
+      if (!task.planReview) throw new AppError("INVALID_INPUT", `${task.id} asks for no plan: propose() the agreement`);
+      if (this.phases.integrator(task) !== this.me) throw new AppError("FORBIDDEN", `The lead (${this.phases.integrator(task)}) writes the plan; tell it what you think with send_message`);
+      this.requirePhase(task, "DISCUSS");
+      // a grilled task: the plan is written from the settled decisions, so the grilling comes first
+      if (task.grill && !grillConfirmed(await this.messages.list(task.id), this.me)) {
+        throw new AppError("CLARIFY_FIRST", `${task.id} grills the operator about the task first: finish the rounds of questions and get its "yes" to your summary ("How I understand it: ... Is that right?"); then write the plan with every decision in it.`);
+      }
+      const s = await this.planState(task.id);
+      if (s.approved) throw new AppError("ALREADY_COMPLETED", `The operator approved plan v${s.approved.version}: propose() the agreement as it says`);
+      if (input.html !== undefined && input.edits?.length) throw new AppError("INVALID_INPUT", "Send either html (the whole page) or edits (changes of the current version), not both");
+      let html: string;
+      if (input.html !== undefined) html = checkPlanHtml(input.html);
+      else if (input.edits?.length) {
+        const current = await this.planHtml(task.id);
+        if (!current) throw new AppError("INVALID_INPUT", "There is no plan yet: send the whole page as html");
+        html = checkPlanHtml(applyEdits(current.html, input.edits));
+      } else if (input.note?.trim() && planStatus(s) === "revising") {
+        // the lead looked at the operator's feedback and keeps the page as it is: the same page again, with why
+        html = (await this.planHtml(task.id))!.html;
+      } else throw new AppError("INVALID_INPUT", "Send html (the whole page) or edits: [{find, replace}]; after the operator's feedback, a note alone keeps the page as it is (say why)");
+      const version = await this.savePlanVersion(task.id, s, html, input.note);
+      await this.fs.writeJson(["tasks", task.id, "plan", "state.json"], s);
+      await this.emit({ type: "PLAN_UPDATED", taskId: task.id, sourceAgent: this.me, payload: { version } });
+      return { version, status: planStatus(s) };
+    });
+  }
+
+  /**
+   * The operator: notes, in-place edits and answers on a version of the plan (the edited page becomes a new version),
+   * and with approve the plan is approved: propose() is open to the lead, the notes go along.
+   */
+  async planFeedback(input: { taskId: string; version: number; comments?: unknown; edits?: unknown; answers?: unknown; html?: string; approve?: boolean }): Promise<{ state: PlanState; message: Message | null }> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator reviews the plan");
+    return this.fs.withLock(this.tasks.lockPath(assertTaskId(input.taskId)), async () => {
+      const task = await this.tasks.get(input.taskId);
+      if (!task.planReview) throw new AppError("INVALID_INPUT", `${task.id} has no plan to review`);
+      if (task.status !== "ACTIVE" || task.phase !== "DISCUSS") throw new AppError("INVALID_PHASE", `${task.id} is past its plan (${task.status}, ${task.phase})`);
+      const s = await this.planState(task.id);
+      if (s.approved) throw new AppError("ALREADY_COMPLETED", `Plan v${s.approved.version} is approved already`);
+      const last = s.versions.at(-1);
+      if (!last) throw new AppError("INVALID_INPUT", "The lead has not written a plan yet");
+      if (input.version !== last.n) throw new AppError("INVALID_INPUT", `You looked at v${input.version}, the current plan is v${last.n}: open it and send again`);
+      const fb: PlanFeedback = { round: s.feedback.filter((f) => !f.withApproval).length + 1, at: new Date().toISOString(), onVersion: last.n, ...checkFeedback(input) };
+      // comments and edits are the lead's to look at first: it decides whether the plan changes; only answers go with an approval
+      if (input.approve && planStatus(s) === "revising") throw new AppError("INVALID_INPUT", `The lead is working in your feedback on v${last.n}: approve the version it sends`);
+      if (input.approve && fb.comments.length + fb.edits.length > 0) throw new AppError("INVALID_INPUT", "Send your comments and edits to the lead first: it reworks the plan (or says why not), then you approve the new version");
+      if (fb.edits.length && input.html) fb.savedAs = await this.savePlanVersion(task.id, s, checkPlanHtml(input.html), "the operator's edits");
+      const said = fb.comments.length + fb.edits.length + fb.answers.length > 0;
+      if (!said && !input.approve) throw new AppError("INVALID_INPUT", "Nothing to send: comment on a block, edit the text or answer a question");
+      if (input.approve) {
+        s.approved = { version: fb.savedAs ?? last.n, at: fb.at };
+        if (said) fb.withApproval = true;
+      }
+      if (said) s.feedback.push(fb);
+      await this.fs.writeJson(["tasks", task.id, "plan", "state.json"], s);
+      const lead = this.phases.integrator(task);
+      const content = input.approve
+        ? `The operator approved plan v${s.approved!.version}. propose() the agreement now, as the plan says (assignments, files, contracts)${said ? "; the operator's answers below are part of it" : ""}.${said ? `
+${feedbackText(fb)}` : ""}`
+        : `The operator's feedback on plan v${last.n} (round ${fb.round}). Work it in: plan({edits: [{find, replace}]}) or plan({html}), with a note on what changed; a question you cannot settle: send_message({to: "operator"}). The operator approves the plan on the page, then you propose().
+${feedbackText(fb)}`;
+      const message = await this.messages.create({ taskId: task.id, from: OPERATOR, to: lead, type: "INFORMATION", content });
+      await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: lead, sourceAgent: OPERATOR, payload: { messageId: message.id, from: OPERATOR, type: message.type } });
+      await this.emit({ type: input.approve ? "PLAN_APPROVED" : "PLAN_FEEDBACK", taskId: task.id, sourceAgent: OPERATOR, payload: { version: input.approve ? s.approved!.version : last.n, comments: fb.comments.length, edits: fb.edits.length, answers: fb.answers.length } });
+      return { state: s, message };
+    });
   }
 
   /** What the page lets leads spawn (<network>/spawn.json, written from runners.json "spawn" when the page starts). */
@@ -408,6 +551,145 @@ export class NetworkService {
     return out;
   }
 
+  /** A spawned agent's role: written by the lead now (role + instructions), or taken from the project's library by name. */
+  private async roleOf(input: { role?: string; instructions?: string }): Promise<SpawnRole | undefined> {
+    const roleName = input.role?.trim();
+    if (roleName) {
+      if (!ROLE_NAME.test(roleName)) throw new AppError("INVALID_INPUT", "role: a name of lowercase letters, digits and -, e.g. 'architect'");
+      if (input.instructions?.trim()) {
+        const text = input.instructions.trim();
+        if (text.length < 40 || text.length > 6000) throw new AppError("INVALID_INPUT", "instructions: 40..6000 characters — what this agent does in the task, what it looks at, what it must not do, how it reports");
+        return { name: roleName, instructions: text, source: "lead" };
+      }
+      const found = (await this.roles()).find((r) => r.name === roleName);
+      if (!found) throw new AppError("INVALID_INPUT", `No role "${roleName}" in the project's library; write it with instructions, or use one of: ${(await this.roles()).map((r) => r.name).join(", ") || "(none yet)"}`);
+      return { name: roleName, instructions: found.instructions, source: "library" };
+    }
+    if (input.instructions?.trim()) throw new AppError("INVALID_INPUT", "instructions need a role name: role: 'architect', instructions: '...'");
+    return undefined;
+  }
+
+  /** This agent's session parks on the task's current state (see park.ts): the runner waits without a model. */
+  async park(task: Task): Promise<void> {
+    await writeParkMarker(this.fs, this.me, task);
+  }
+
+  /** The jobs delegated from a task (their own tasks, newest last). */
+  async jobsOf(taskId: string): Promise<Task[]> {
+    return (await this.tasks.list()).filter((t) => t.jobOf?.taskId === taskId);
+  }
+
+  /**
+   * The lead hands a self-contained piece of its work to a new runner (a load test, a diagnosis, a migration dry run):
+   * a task of its own with one agent from a spawn template, started in IMPLEMENT from the lead's commit, no agreement and
+   * no review. It is the lead's open subtask until it is done; then its result and commits come back to the lead.
+   */
+  async delegate(input: { taskId: string; template: string; job: string; files?: string[]; role?: string; instructions?: string; baseCommit?: string }): Promise<{ job: Task; agentId: string; subtask: string }> {
+    await this.requireMe();
+    return this.mutate(input.taskId, async (task) => {
+      const lead = this.phases.integrator(task);
+      if (lead !== this.me) throw new AppError("FORBIDDEN", `Only the lead (${lead}) delegates work of ${task.id}`);
+      if (task.phase !== "IMPLEMENT" && task.phase !== "INTEGRATE") throw new AppError("INVALID_PHASE", "Delegate in IMPLEMENT or INTEGRATE, once the agreement says who does what; before that, spawn_agent adds a team member");
+      if (task.jobOf) throw new AppError("FORBIDDEN", "A delegated job does not delegate further: do it, or say in your result what is left");
+      const job = input.job?.trim() ?? "";
+      if (job.length < 20) throw new AppError("INVALID_INPUT", "job: what to do, concretely — the goal, where (files, endpoints), how to check it, what to report back (20+ characters)");
+      const { templates, maxPerTask } = await this.spawnTemplates();
+      if (!templates.length) throw new AppError("INVALID_INPUT", 'Nothing to delegate to: the operator has no "spawn" templates in runners.json');
+      const template = templates.find((t) => t.name === input.template);
+      if (!template) throw new AppError("INVALID_INPUT", `No template "${input.template}"; the templates: ${templates.map((t) => t.name).join(", ")}`, { templates: templates.map((t) => t.name) });
+      const jobs = await this.jobsOf(task.id);
+      const used = (task.spawned?.length ?? 0) + jobs.length;
+      if (used >= maxPerTask) throw new AppError("INVALID_INPUT", `This task added or delegated ${used} runner(s) already, the limit is ${maxPerTask}`);
+      const files = [...new Set((input.files ?? []).map((f) => normalizePath(assertRelativeFilePath(f))))];
+      const role = await this.roleOf(input);
+      const taken = new Set([...(await this.agents.list()).map((a) => a.id), ...(await this.tasks.list()).flatMap((t) => t.agents), OPERATOR]);
+      let agentId = "";
+      for (let n = 1; ; n++) if (!taken.has((agentId = `${template.name}-job${n}`))) break;
+      // the lead's checklist gets the job as an open step: its own complete() waits for it
+      const list = await this.subtasks.get(task.id, lead);
+      const subtask = `s${list.nextSeq}`;
+      await this.subtasks.save({ ...list, items: [...list.items, { id: subtask, title: `delegated to ${agentId}: ${job.split("\n")[0]!.slice(0, 120)}`, status: "TODO", updatedAt: new Date().toISOString() }], nextSeq: list.nextSeq + 1 });
+      const at = new Date().toISOString();
+      const description =
+        `Delegated by ${lead}, the lead of ${task.id} ("${task.title}"):\n\n${job}\n\n` +
+        `You do this job alone: no agreement, no review; the lead takes your result into its task.` +
+        (input.baseCommit ? ` Start from the lead's code: git merge ${input.baseCommit} first.` : "") +
+        (files.length ? ` Change only: ${files.join(", ")}; commit your work.` : " Change no file: report what you found in your result.") +
+        ` Then complete({result: <what you did and found, the numbers>, filesChanged, commits}): that ends the job and sends the result to ${lead}. Questions about the job: send_message({to: "operator"}).`;
+      const created = await this.tasks.create({
+        title: `${task.id} job: ${job.split("\n")[0]!}`.slice(0, 200), description, agents: [agentId], createdBy: lead, git: task.git,
+        maxFixRounds: 0, ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}), ...(task.maxCostUsd !== undefined ? { maxCostUsd: task.maxCostUsd } : {}),
+        ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}), parentTaskId: task.id,
+      });
+      const started: Task = {
+        ...created, phase: "IMPLEMENT", phaseHistory: [...(created.phaseHistory ?? []), { phase: "IMPLEMENT", at }],
+        jobOf: { taskId: task.id, by: lead, subtask },
+        spawned: [{ id: agentId, template: template.name, by: lead, at, reason: job.slice(0, 1000), ...(role ? { role } : {}) }],
+      };
+      await this.tasks.save(started);
+      await this.agreements.save({ taskId: created.id, summary: job.slice(0, 500), assignments: [{ agentId, responsibility: job, files }], decisions: [], interfaces: [], approvedBy: [agentId], createdAt: at, proposedBy: lead, version: 1 });
+      await this.emit({ type: "TASK_CREATED", taskId: created.id, sourceAgent: lead, payload: { title: started.title, agents: [agentId], jobOf: task.id } });
+      await this.emit({ type: "JOB_DELEGATED", taskId: task.id, sourceAgent: lead, payload: { job: created.id, agentId, template: template.name, subtask } });
+      return { job: started, agentId, subtask };
+    });
+  }
+
+  /**
+   * "Done" means a green build the lead ran, not its word: with a verifyCommand, PASS needs the lead's latest build() to be
+   * that command, green, run in this INTEGRATE round on the merged commit it reports, with nothing uncommitted.
+   */
+  private async requireGreenBuild(task: Task, merged: string | undefined): Promise<void> {
+    if (!task.verifyCommand) return;
+    const b = await this.fs.readJson<{ command: string; ok: boolean; at: string; head?: string; dirty?: number; phase?: string; round?: number; timedOut?: boolean }>(["tasks", task.id, "builds", `${this.me}.json`]);
+    // the command as build() records it (a "2>&1 | tail" dropped, the arguments split)
+    let want = task.verifyCommand.trim().replace(/\s+/g, " ");
+    try {
+      want = parseBuildCommand(task.verifyCommand, buildTools()).argv.join(" ");
+    } catch {
+      /* not a build-tool command: compare it as written */
+    }
+    const why = !b
+      ? "you have not run it"
+      : b.command !== want
+        ? `your latest build was "${b.command}"`
+        : !b.ok
+          ? `your latest run of it ${b.timedOut ? "timed out" : "failed"}`
+          : b.phase !== "INTEGRATE" || b.round !== task.syncRound
+            ? "your latest green run was before this integration round"
+            : b.dirty
+              ? `it ran with ${b.dirty} uncommitted change(s): commit the merged result first`
+              : merged && b.head && !b.head.startsWith(merged) && !merged.startsWith(b.head)
+                ? `it ran on ${b.head.slice(0, 7)}, not on the merged commit ${merged.slice(0, 7)} you report`
+                : null;
+    if (why) {
+      throw new AppError(
+        "VERIFY_REQUIRED",
+        `PASS needs a green "${task.verifyCommand}" on the merged result, run by you in this integration: ${why}. Commit the merged result, call build() (no command runs verifyCommand), and complete({status: "PASS", result, commits: [<that HEAD>]}) once it is green; if it fails, fix it or complete with NEEDS_FIX.`,
+        { verifyCommand: task.verifyCommand },
+      );
+    }
+  }
+
+  /** A job is over (done or cancelled): its step in the lead's checklist closes, the lead gets the result in its task. */
+  private async finishJob(job: Task, outcome: "done" | "cancelled", reason?: string): Promise<void> {
+    if (!job.jobOf) return;
+    const { taskId, by, subtask } = job.jobOf;
+    const agentId = job.agents[0]!;
+    const impl = await this.implementations.find(job.id, agentId);
+    const list = await this.subtasks.get(taskId, by);
+    const note = outcome === "done" ? (impl?.summary ?? "done").slice(0, 300) : `cancelled${reason ? `: ${reason}` : ""}`;
+    await this.subtasks.save({ ...list, items: list.items.map((i) => (i.id === subtask ? { ...i, status: outcome === "done" ? ("DONE" as const) : ("DROPPED" as const), note, updatedAt: new Date().toISOString() } : i)) });
+    const commits = impl?.commits ?? [];
+    const content = outcome === "done"
+      ? `Your delegated job ${job.id} is done (${agentId}; your subtask ${subtask} is ticked).\nResult: ${impl?.summary ?? "(none)"}` +
+        (impl?.filesChanged.length ? `\nFiles: ${impl.filesChanged.join(", ")}` : "") +
+        (commits.length ? `\nCommits: ${commits.join(" ")} — bring them into your branch: git merge ${commits.at(-1)}` : "")
+      : `Your delegated job ${job.id} (${agentId}) was cancelled${reason ? `: ${reason}` : ""}; your subtask ${subtask} is dropped. Do that part yourself or leave it out and say so in your result.`;
+    const message = await this.messages.create({ taskId, from: agentId, to: by, type: "INFORMATION", content });
+    await this.emit({ type: "MESSAGE_CREATED", taskId, targetAgent: by, sourceAgent: agentId, payload: { messageId: message.id, from: agentId, type: message.type } });
+    await this.emit({ type: "JOB_FINISHED", taskId, sourceAgent: agentId, payload: { job: job.id, outcome, ...(commits.length ? { commits } : {}) } });
+  }
+
   async spawnAgent(input: { taskId: string; template: string; id?: string; reason: string; role?: string; instructions?: string }): Promise<{ task: Task; agentId: string }> {
     await this.requireMe();
     return this.mutate(input.taskId, async (task) => {
@@ -421,23 +703,7 @@ export class NetworkService {
       const spawned = task.spawned ?? [];
       if (spawned.length >= maxPerTask) throw new AppError("INVALID_INPUT", `This task added ${spawned.length} agent(s) already, the limit is ${maxPerTask}`);
       if (!input.reason?.trim()) throw new AppError("INVALID_INPUT", "reason: which part of the work the new agent takes and why the team needs it");
-      // its role: written by the lead now (role + instructions), or taken from the project's library by name
-      let role: SpawnRole | undefined;
-      const roleName = input.role?.trim();
-      if (roleName) {
-        if (!ROLE_NAME.test(roleName)) throw new AppError("INVALID_INPUT", "role: a name of lowercase letters, digits and -, e.g. 'architect'");
-        if (input.instructions?.trim()) {
-          const text = input.instructions.trim();
-          if (text.length < 40 || text.length > 6000) throw new AppError("INVALID_INPUT", "instructions: 40..6000 characters — what this agent does in the task, what it looks at, what it must not do, how it reports");
-          role = { name: roleName, instructions: text, source: "lead" };
-        } else {
-          const found = (await this.roles()).find((r) => r.name === roleName);
-          if (!found) throw new AppError("INVALID_INPUT", `No role "${roleName}" in the project's library; write it with instructions, or use one of: ${(await this.roles()).map((r) => r.name).join(", ") || "(none yet)"}`);
-          role = { name: roleName, instructions: found.instructions, source: "library" };
-        }
-      } else if (input.instructions?.trim()) {
-        throw new AppError("INVALID_INPUT", "instructions need a role name: role: 'architect', instructions: '...'");
-      }
+      const role = await this.roleOf(input);
       // a fresh id: never one of a registered agent or one already in a task
       const taken = new Set([...(await this.agents.list()).map((a) => a.id), ...(await this.tasks.list()).flatMap((t) => t.agents), OPERATOR]);
       let id = input.id?.trim();
@@ -472,6 +738,7 @@ export class NetworkService {
       if (task.status !== "ACTIVE" && task.status !== "BLOCKED") throw new AppError("ALREADY_COMPLETED", `Task ${taskId} is already ${task.status}`);
       const saved = await this.tasks.save({ ...task, status: "CANCELLED" });
       await this.emit({ type: "TASK_CANCELLED", taskId, sourceAgent: "operator", payload: { reason: reason ?? null } });
+      if (saved.jobOf) await this.finishJob(saved, "cancelled", reason);
       return saved;
     });
   }
@@ -562,8 +829,23 @@ export class NetworkService {
       if (task.clarify && !(await this.leadWroteOperator(task))) {
         throw new AppError(
           "CLARIFY_FIRST",
-          `${task.id} asks the lead to check the task first: ask the operator what is unclear (send_message({to: "operator", message, options, recommended})), or tell it how you understood the task (send_message({to: "operator", fyi: true, message: "How I understand it: ... No questions."})); then propose().`,
+          task.grill
+            ? `${task.id} asks the lead to grill the operator about the task first: rounds of questions (send_message({to: "operator", message, options, recommended}), one per question, each with your recommendation), then your summary as a question — send_message({to: "operator", message: "How I understand it: <the decisions>. Is that right?", options: [{label: "Yes, that's it"}, {label: "No, I will correct it"}], recommended: "Yes, that's it"}). propose() after the operator's yes.`
+            : `${task.id} asks the lead to check the task first: ask the operator what is unclear (send_message({to: "operator", message, options, recommended})), or tell it how you understood the task (send_message({to: "operator", fyi: true, message: "How I understand it: ... No questions."})); then propose().`,
         );
+      }
+      if (task.planReview) {
+        const plan = await this.planState(task.id);
+        if (!plan.approved) {
+          const st = planStatus(plan);
+          throw new AppError(
+            "PLAN_NOT_APPROVED",
+            st === "none"
+              ? `${task.id} asks for a plan first: write it with plan({html}) — the operator reviews and approves it on the page, then you propose().`
+              : `Plan v${plan.versions.at(-1)!.n} is not approved yet${st === "revising" ? ": work in the operator's feedback with plan({edits}) or plan({html})" : ": wait() for the operator"}; propose() after the approval.`,
+            { plan: st },
+          );
+        }
       }
       const ids = input.assignments.map((a) => assertAgentId(a.agentId));
       if (new Set(ids).size !== ids.length) throw new AppError("INVALID_INPUT", "Each agent may have only one assignment");
@@ -880,7 +1162,7 @@ export class NetworkService {
   }
 
   /** The build tool finished a run: recorded for the page only (addressed to the agent itself, so it wakes nobody). */
-  async recordBuild(taskId: string | null, payload: { command: string; ok: boolean; exitCode: number | null; timedOut: boolean; durationMs: number; logPath: string; tests?: { total: number; failed: number } }): Promise<void> {
+  async recordBuild(taskId: string | null, payload: { command: string; ok: boolean; exitCode: number | null; timedOut: boolean; durationMs: number; logPath: string; tests?: { total: number; failed: number }; head?: string; dirty?: number; phase?: string; round?: number }): Promise<void> {
     await this.emit({ type: "BUILD_RAN", ...(taskId ? { taskId } : {}), targetAgent: this.me, sourceAgent: this.me, payload: { agentId: this.me, ...payload } });
     // the page shows the latest run per agent without reading every event of the task
     if (taskId) await this.fs.writeJson(["tasks", taskId, "builds", `${this.me}.json`], { agentId: this.me, at: new Date().toISOString(), ...payload });
@@ -1126,6 +1408,12 @@ export class NetworkService {
     const commits = (input.commits ?? []).map(assertCommit);
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "INTEGRATE");
+      if (input.status === "PASS") await this.requireGreenBuild(task, commits[0]);
+      // the work delegated in this round comes back first: PASS without it would leave a job running for nothing
+      const open = (await this.jobsOf(task.id)).filter((j) => j.status === "ACTIVE" || j.status === "BLOCKED");
+      if (input.status === "PASS" && open.length) {
+        throw new AppError("JOBS_OPEN", `Your delegated jobs are not back yet: ${open.map((j) => `${j.id} (${j.agents[0]})`).join(", ")}. wait() for their results (they arrive in pendingMessages), merge them, then complete again.`, { jobs: open.map((j) => j.id) });
+      }
       this.requireIntegrator(task);
       if (input.status === "PASS") await this.requireReviewDone(task);
       for (const f of findings) {
@@ -1439,6 +1727,7 @@ export class NetworkService {
     if (t.to === "SYNC") await this.emit({ type: "SYNC_REQUIRED", taskId: task.id, payload: { round: saved.syncRound, reviewees: this.phases.reviewees(saved) } });
     if (t.to === "INTEGRATE") await this.emit({ type: "INTEGRATION_REQUIRED", taskId: task.id, payload: { round: saved.syncRound, integrator: this.phases.integrator(saved) } });
     if (t.to === "DONE") await this.emit({ type: "TASK_COMPLETED", taskId: task.id, payload: { title: saved.title } });
+    if (t.to === "DONE" && saved.jobOf) await this.finishJob(saved, "done");
     return saved;
   }
 

@@ -190,6 +190,10 @@ describe("checking the task first (clarify)", () => {
     // a note to the reviewer does not count: only writing to the operator
     await backend.sendMessage({ to: "reviewer", message: "hi" });
     expect(await failure(backend, backend.propose({ summary: "s", assignments }))).toMatchObject({ error: "CLARIFY_FIRST" });
+    // nor does any other note to the operator: an error report is not a check of the task
+    await backend.sendMessage({ to: "operator", fyi: true, message: "The build fails: ./mvnw is not executable" });
+    expect(await failure(backend, backend.propose({ summary: "s", assignments }))).toMatchObject({ error: "CLARIFY_FIRST" });
+    expect(String((await backend.context()).hint)).toContain("First check the task");
     await backend.sendMessage({ to: "operator", fyi: true, message: "How I understand it: refunds of part of a PAID order via POST /orders/{id}/refunds. No questions." });
     const after = await backend.context();
     expect(String(after.hint)).not.toContain("First check the task");
@@ -207,5 +211,78 @@ describe("checking the task first (clarify)", () => {
     expect(task.id).toBe("task-002");
     const plain = await operator.createTaskAsOperator({ title: "x", description: "d", agents: ["backend", "reviewer"] });
     expect(plain.clarify).toBeUndefined();
+  });
+});
+
+describe("grilling the operator about the task (grill)", () => {
+  const assignments = [
+    { agentId: "backend", responsibility: "api", files: ["src/main/**"] },
+    { agentId: "reviewer", responsibility: "review", files: [] },
+  ];
+
+  it("rounds of questions, then the summary; propose() opens with the operator's yes, a no is the next round", async () => {
+    const dir = join(await tmpDir(), ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const svc = async (id: string) => NetworkService.create(dir, { id, type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }) });
+    const backend = new Swarm(await svc("backend"));
+    const task = await operator.createTaskAsOperator({ title: "Promo limit", description: "a promo code may be used 100 times", agents: ["backend", "reviewer"], grill: true });
+    expect(task).toMatchObject({ clarify: true, grill: true });
+
+    const first = await backend.context();
+    expect(first).toMatchObject({ nextAction: "propose", allowedActions: ["send_message", "wait"] });
+    expect(String(first.hint)).toContain("grilled about the task");
+    expect(String(first.hint)).toContain("Work it in rounds");
+
+    // a question alone is not enough here, nor a plain note
+    const q1 = await backend.sendMessage({ to: "operator", message: "Q1: Per customer too?", options: [{ label: "Once per customer" }, { label: "No per-customer limit" }], recommended: "Once per customer" });
+    await operator.answerQuestion({ taskId: task.id, messageId: q1.messageId as string, answer: 'Chosen: "Once per customer"' });
+    await backend.sendMessage({ to: "operator", fyi: true, message: "How I understand it: 100 uses, once per customer." });
+    expect(await failure(backend, backend.propose({ summary: "s", assignments }))).toMatchObject({ error: "CLARIFY_FIRST" });
+
+    // the summary as a question: a "no" keeps it closed, a "yes" opens it
+    const yes = [{ label: "Yes, that's it" }, { label: "No, I will correct it" }];
+    const s1 = await backend.sendMessage({ to: "operator", message: "How I understand it: 100 uses in all, once per customer. Is that right?", options: yes, recommended: "Yes, that's it" });
+    await operator.answerQuestion({ taskId: task.id, messageId: s1.messageId as string, answer: 'Chosen: "No, I will correct it"\nalso a limit per day' });
+    expect(await failure(backend, backend.propose({ summary: "s", assignments }))).toMatchObject({ error: "CLARIFY_FIRST" });
+    expect(String((await backend.context()).hint)).toContain("Work it in rounds");
+    const s2 = await backend.sendMessage({ to: "operator", message: "Как я понял: 100 раз всего, один раз на покупателя, 10 в день. Всё так?", options: yes, recommended: "Yes, that's it" });
+    await operator.answerQuestion({ taskId: task.id, messageId: s2.messageId as string, answer: 'Chosen: "Yes, that\'s it"' });
+    expect(String((await backend.context()).hint)).not.toContain("Work it in rounds");
+    await backend.propose({ summary: "promo limits", assignments });
+  });
+
+  it("an unanswered question does not let the lead go ahead on its recommendation", async () => {
+    const dir = join(await tmpDir(), ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const backend = new Swarm(await NetworkService.create(dir, { id: "backend", type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }) }), undefined, { operatorTimeoutMs: 50 });
+    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], grill: true });
+    await backend.sendMessage({ to: "operator", message: "Q1: which?", options: [{ label: "a" }, { label: "b" }], recommended: "a" });
+    await new Promise((r) => setTimeout(r, 80));
+    const ctx = await backend.context();
+    expect(String(ctx.hint)).toContain("This task is a grilling: do not go ahead");
+  });
+});
+
+describe("the grilling summary as leads write it", () => {
+  it("markdown around 'How I understand it', other wordings, or just yes / no options: all count", async () => {
+    const { grillConfirmed } = await import("../../src/service.js");
+    const q = (id: string, content: string, labels?: string[]) => ({ id, from: "backend", to: "operator", type: "QUESTION" as const, content, ...(labels ? { choices: { options: labels.map((label) => ({ label })) } } : {}) });
+    const yes = (replyTo: string, content = 'Chosen: "Yes, that\'s it"') => ({ id: `${replyTo}-a`, from: "operator", to: "backend", type: "INFORMATION" as const, content, replyTo });
+    expect(grillConfirmed([q("m1", "**How I understand it:** 10% on the birthday. Right?"), yes("m1", "да")], "backend")).toBe(true);
+    expect(grillConfirmed([q("m2", "**Updated understanding:** 3 days. Is that correct?", ["Yes, that's it", "No, I will correct it"]), yes("m2")], "backend")).toBe(true);
+    expect(grillConfirmed([q("m3", "Summary: 3 days, best of all discounts.", ["Да, всё так", "Нет, поправлю"]), yes("m3", 'Chosen: "Да, всё так"')], "backend")).toBe(true);
+    // an ordinary question answered yes is not the summary
+    expect(grillConfirmed([q("m4", "Q1: Once per customer?", ["Yes", "Per day"]), yes("m4", 'Chosen: "Yes"')], "backend")).toBe(false);
+    expect(grillConfirmed([q("m5", "How I understand it: x. Right?", ["Yes, that's it", "No, I will correct it"]), yes("m5", 'Chosen: "No, I will correct it"')], "backend")).toBe(false);
+  });
+});
+
+describe("preparation presets", () => {
+  it("fast, standard and thorough set clarify, grill and the plan; anything else is refused", async () => {
+    const { depthFlags } = await import("../../src/service.js");
+    expect(depthFlags("fast")).toEqual({ clarify: false, grill: false, planReview: false });
+    expect(depthFlags("standard")).toEqual({ clarify: true, grill: false, planReview: false });
+    expect(depthFlags("thorough")).toEqual({ clarify: true, grill: true, planReview: true });
+    expect(() => depthFlags("deep")).toThrow(/fast, standard or thorough/);
   });
 });

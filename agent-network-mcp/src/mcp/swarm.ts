@@ -1,10 +1,11 @@
 import { buildTools, DEFAULT_BUILD_TIMEOUT_MIN, parseBuildCommand, runBuild } from "../build.js";
 import { AppError, isAppError } from "../errors.js";
-import { containsCommit, readGitContext } from "../git.js";
+import { containsCommit, filesChangedSince, readGitContext, workTreeState } from "../git.js";
 import { phaseEpoch } from "../handoff.js";
 import { changePath, readChange, validateChange, type ChangeInfo, type Exec } from "../openspec.js";
 import { normalizePath, ownersOf } from "../ownership.js";
-import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, OPERATOR_TIMEOUT_MS, isReviewOnly, type NetworkService } from "../service.js";
+import { planBrief, type PlanStatus } from "../plan.js";
+import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, OPERATOR_TIMEOUT_MS, clarifies, grillConfirmed, isReviewOnly, type NetworkService } from "../service.js";
 import type { Agent, Agreement, FollowUpRequest, GitContext, Implementation, IntegrationReport, Message, Phase, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
 
 /** What the agent should do next, computed by the server so the agent never reasons about the state machine. */
@@ -19,6 +20,8 @@ export interface Decision {
   exampleCall?: { tool: string; args: Record<string, unknown> };
   /** The task entered a phase a fresh session does: this session ends (nextAction done). */
   handoff?: Phase;
+  /** A runner's session with nothing to do but wait for the others: it ends; the runner waits without a model (park.ts). */
+  park?: true;
 }
 
 interface Snapshot {
@@ -62,6 +65,11 @@ interface Snapshot {
   mustClarify?: boolean;
   /** DISCUSS, the lead, no agreement yet: the agents it may add from templates. */
   spawnable?: { templates: { name: string; description: string; model?: string }[]; roles: { name: string; description: string }[]; left: number };
+  /** The lead in IMPLEMENT / INTEGRATE: templates it may delegate a job to, and its jobs so far. */
+  delegable?: { templates: { name: string; description: string; model?: string }[]; left: number };
+  jobs?: { task: string; agent: string; status: string; job: string; subtask: string }[];
+  /** A task with planReview, DISCUSS: where the lead's HTML plan stands. */
+  plan?: { status: PlanStatus; version: number | null; approvedVersion: number | null };
   /** A change-writing task: every answer of the operator to a question of this task (they belong in design.md). */
   operatorAnswers?: { question: string; askedBy: string; answer: string }[];
 }
@@ -114,6 +122,11 @@ export interface SwarmOptions {
   workdir?: string;
   /** Started by a runner (AGENT_NETWORK_RUNNER=1): on a BLOCKED task the session ends instead of waiting; the runner waits without a model. */
   underRunner?: boolean;
+  /**
+   * The task a runner started this session for (AGENT_NETWORK_TASK_ID). Once it is done, the session ends instead of going
+   * on to the agent's next task: the runner starts that one in a fresh session (a clean context, its own cost).
+   */
+  sessionTask?: string;
   /** How long a question to the operator blocks the asker (AGENT_NETWORK_OPERATOR_TIMEOUT_MIN); then it goes ahead with its own proposal. */
   operatorTimeoutMs?: number;
   /** The commands build() may start (default: BUILD_TOOLS plus AGENT_NETWORK_BUILD_TOOLS). */
@@ -144,6 +157,7 @@ export class Swarm {
   private readonly freshPhases: readonly Phase[];
   private readonly workdir: string;
   private readonly underRunner: boolean;
+  private readonly sessionTask: string | undefined;
   /** Git context of the working folder, read once per session. */
   private workGit?: Promise<GitContext | null>;
   readonly defaultWaitMs: number;
@@ -160,6 +174,7 @@ export class Swarm {
     this.freshPhases = opts.freshPhases ?? [];
     this.workdir = opts.workdir ?? process.cwd();
     this.underRunner = opts.underRunner ?? false;
+    this.sessionTask = opts.underRunner ? opts.sessionTask : undefined;
     this.operatorTimeoutMs = opts.operatorTimeoutMs ?? OPERATOR_TIMEOUT_MS;
     this.buildTools = opts.buildTools ?? buildTools();
     this.openspecExec = opts.openspecExec;
@@ -218,9 +233,14 @@ export class Swarm {
     const { argv, dropped } = parseBuildCommand(command, this.buildTools);
     const minutes = input.timeoutMin ?? DEFAULT_BUILD_TIMEOUT_MIN;
     if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 180) throw invalid("timeoutMin must be 1..180");
+    // what the build ran on: the integration accepts PASS only from a green run on the committed merged result
+    const tree = await workTreeState(this.workdir);
     const run = await runBuild({ cwd: this.workdir, argv, timeoutMs: minutes * 60_000, ...(signal ? { signal } : {}) });
     await this.service
-      .recordBuild(open?.id ?? null, { command: argv.join(" "), ok: run.ok, exitCode: run.exitCode, timedOut: run.timedOut, durationMs: run.durationMs, logPath: run.logPath, ...(run.tests ? { tests: run.tests } : {}) })
+      .recordBuild(open?.id ?? null, {
+        command: argv.join(" "), ok: run.ok, exitCode: run.exitCode, timedOut: run.timedOut, durationMs: run.durationMs, logPath: run.logPath, ...(run.tests ? { tests: run.tests } : {}),
+        ...(tree ? { head: tree.head, dirty: tree.dirty } : {}), ...(open ? { phase: open.phase, round: open.syncRound } : {}),
+      })
       .catch((e: Error) => this.log(`build event not recorded: ${e.message}`));
     return {
       status: run.timedOut ? "TIMEOUT" : run.ok ? "PASS" : "FAIL",
@@ -231,6 +251,21 @@ export class Swarm {
   }
 
   /** The lead adds an agent to the team from a template (DISCUSS, before propose); its runner starts by itself. */
+  /** The lead hands a self-contained piece of its work to a new runner, from its own committed code. */
+  async delegate(input: { template?: string; job?: string; files?: string[]; role?: string; instructions?: string }): Promise<SwarmContext> {
+    await this.begin(true);
+    const task = await this.requireTask();
+    const head = (await readGitContext(this.workdir).catch(() => null))?.commit;
+    const { job, agentId, subtask } = await this.service.delegate({
+      taskId: task.id, template: input.template ?? "", job: input.job ?? "", ...(input.files ? { files: input.files } : {}),
+      ...(input.role ? { role: input.role } : {}), ...(input.instructions ? { instructions: input.instructions } : {}), ...(head ? { baseCommit: head } : {}),
+    });
+    return {
+      ...this.reply(await this.contextNow()), ok: true, action: "JOB_DELEGATED", job: job.id, agentId, subtask,
+      note: `${agentId} starts on ${job.id} in a few seconds${head ? `, from your commit ${head.slice(0, 7)} (uncommitted changes are not in it)` : ""}. It is your open subtask ${subtask}: go on with your own work; the result comes in pendingMessages.`,
+    } as SwarmContext;
+  }
+
   async spawnAgent(input: { template?: string; id?: string; reason?: string; role?: string; instructions?: string }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
@@ -252,6 +287,19 @@ export class Swarm {
     const all = await this.service.resolveReviewComments(task.id, input.resolve);
     const open = all.filter((c) => c.status === "open").map((c) => c.id);
     return { ...this.reply(await this.contextNow()), ok: true, action: "COMMENTS_RESOLVED", stillOpen: open } as SwarmContext;
+  }
+
+  /** The lead's plan as an HTML page for the operator (task.planReview): a new version, or the current one to read. */
+  async plan(input: { html?: string; edits?: { find: string; replace: string }[]; note?: string; read?: boolean }): Promise<SwarmContext> {
+    await this.begin(true);
+    const task = await this.requireTask();
+    if (input.read) {
+      const current = await this.service.planHtml(task.id);
+      if (!current) throw invalid("there is no plan yet: write it with plan({html})");
+      return { ...this.reply(await this.contextNow()), ok: true, action: "PLAN_READ", version: current.version, html: current.html } as SwarmContext;
+    }
+    const saved = await this.service.writePlan({ taskId: task.id, ...input });
+    return { ...this.reply(await this.contextNow()), ok: true, action: "PLAN_SAVED", version: saved.version } as SwarmContext;
   }
 
   /** The agent's own checklist for its part. Compact answer: it is called after every step. */
@@ -385,11 +433,18 @@ export class Swarm {
             { notInYourBranch: Object.fromEntries(absent) },
           );
         }
-        const done = await this.service.completeImplementation({ taskId: task.id, summary: input.result, filesChanged: input.filesChanged, commits, tasksDone: input.tasksDone }).catch((e: unknown) => {
+        // in its own branch, what it changed is what its commits changed: ownership is checked on that, not on its list
+        const changed = await this.changedInBranch(task);
+        const unlisted = changed?.filter((f) => !(input.filesChanged ?? []).includes(f)) ?? [];
+        const filesChanged = changed ? [...new Set([...(input.filesChanged ?? []), ...changed])] : input.filesChanged;
+        const done = await this.service.completeImplementation({ taskId: task.id, summary: input.result, filesChanged, commits, tasksDone: input.tasksDone }).catch((e: unknown) => {
           if (isAppError(e) && e.code === "DEPENDENCY_NOT_READY") this.parkedOnDependency.add(`${task.id}:${task.syncRound}`); // wait for them, do not retry
           throw e;
         });
-        warnings = [...(done.warnings ?? []), ...(unreported ? [unreported.note] : []), ...(checked ? [checked] : []), ...this.ignoredFields(extra)];
+        warnings = [
+          ...(done.warnings ?? []), ...(unreported ? [unreported.note] : []), ...(checked ? [checked] : []), ...this.ignoredFields(extra),
+          ...(unlisted.length ? [`Your commits change files you did not list; they count as changed: ${unlisted.join(", ")}`] : []),
+        ];
         action = "IMPLEMENTATION_COMPLETED";
         break;
       }
@@ -571,6 +626,11 @@ export class Swarm {
 
   /** Oldest unfinished (ACTIVE or BLOCKED) task of this agent; otherwise the latest finished one; otherwise none. */
   private async currentTask(): Promise<Task | null> {
+    // a runner's session stays with the task it was started for: done, it ends (nextAction done) instead of taking the next one
+    if (this.sessionTask) {
+      const own = await this.service.tasks.find(this.sessionTask);
+      if (own?.status === "COMPLETED" || own?.status === "CANCELLED") return own;
+    }
     const tasks = (await this.service.tasks.listForAgent(this.me)).filter((t) => t.status !== "CANCELLED");
     return tasks.find((t) => t.status === "ACTIVE" || t.status === "BLOCKED") ?? tasks.at(-1) ?? null;
   }
@@ -613,20 +673,37 @@ export class Swarm {
         : {}),
       ...(task.openspec && task.phase !== "DONE" ? await this.readOpenspec(task.openspec.change) : {}),
       ...(task.phase === "DISCUSS" && task.agents[0] === this.me && !agreement ? await this.spawnableFor(task) : {}),
+      ...((task.phase === "IMPLEMENT" || task.phase === "INTEGRATE") && task.agents[0] === this.me && !task.jobOf ? await this.delegableFor(task) : {}),
       ...(task.agents[0] === this.me && task.phase !== "DONE"
         ? await this.service.reviewComments(task.id).then((all) => {
             const open = all.filter((c) => c.status === "open").map(({ id, file, line, code, text }) => ({ id, file, ...(line !== undefined ? { line } : {}), ...(code ? { code } : {}), text }));
             return open.length ? { openReview: open } : {};
           })
         : {}),
-      ...(task.clarify && task.phase === "DISCUSS" && !agreement && !messages.some((m) => m.from === task.agents[0] && m.to === OPERATOR) ? { mustClarify: true } : {}),
-      ...(task.proposes
+      ...(task.planReview && task.phase === "DISCUSS" && !agreement
+        ? await this.service.planState(task.id).then((st) => {
+            const b = planBrief(st);
+            return { plan: { status: b.status, version: b.version, approvedVersion: b.approvedVersion } };
+          })
+        : {}),
+      ...(task.clarify && task.phase === "DISCUSS" && !agreement && !(task.grill ? grillConfirmed(messages, task.agents[0]!) : messages.some((m) => clarifies(m, task.agents[0]!))) ? { mustClarify: true } : {}),
+      ...(task.proposes || task.grill
         ? {
             operatorAnswers: messages
               .filter((q) => q.to === OPERATOR && q.type === "QUESTION")
               .flatMap((q) => messages.filter((a) => a.from === OPERATOR && a.replyTo === q.id).map((a) => ({ question: q.content, askedBy: q.from, answer: a.content }))),
           }
         : {}),
+    };
+  }
+
+  private async delegableFor(task: Task): Promise<Pick<Snapshot, "delegable" | "jobs">> {
+    const { templates, maxPerTask } = await this.service.spawnTemplates();
+    const jobs = await this.service.jobsOf(task.id);
+    const left = maxPerTask - (task.spawned?.length ?? 0) - jobs.length;
+    return {
+      ...(templates.length && left > 0 ? { delegable: { templates, left } } : {}),
+      ...(jobs.length ? { jobs: jobs.map((j) => ({ task: j.id, agent: j.agents[0]!, status: j.status === "COMPLETED" ? "done" : j.status === "CANCELLED" ? "cancelled" : j.status === "BLOCKED" ? "blocked" : "running", job: j.title.replace(/^task-\d+ job: /, ""), subtask: j.jobOf!.subtask })) } : {}),
     };
   }
 
@@ -741,6 +818,13 @@ export class Swarm {
    * work there, and agents often commit and then forget the hash. Records the branch head (read now, not the cached
    * context) and says so; warns when nothing new is committed. Nothing for an agent in the task's checkout or a review-only one.
    */
+  /** Files the commits of this agent's own branch changed since the task's base (others' merged work left out); null without one. */
+  private async changedInBranch(task: Task): Promise<string[] | null> {
+    if (!task.git || !(await this.ownBranch(task))) return null;
+    const others = (await this.service.implementations.list(task.id)).filter((i) => i.agentId !== this.me).flatMap((i) => [...i.commits, ...(i.commitsBeforeFix ?? [])]);
+    return filesChangedSince(this.workdir, task.baseCommit ?? task.git.commit, others);
+  }
+
   private async unreportedWork(task: Task, reported: string[]): Promise<{ head?: string; note: string } | undefined> {
     const branch = await this.ownBranch(task);
     if (!branch || !task.git || (await this.service.ownership(task.id)).reviewOnly) return undefined;
@@ -787,6 +871,10 @@ export class Swarm {
     }
     const snap = await this.snapshot(task);
     const d = this.decide(snap);
+    if (d.park) {
+      await this.service.park(task);
+      return { task: { id: task.id, title: task.title, phase: task.phase, status: task.status }, agent, parked: true, waitingOn: d.waitingOn, allowedActions: d.allowedActions, nextAction: d.nextAction, hint: d.hint };
+    }
     if (d.handoff) {
       // nothing else: messages stay unread for the fresh session, and nothing here should tempt this one to go on
       return {
@@ -852,8 +940,13 @@ export class Swarm {
       ...(myAssignment ? { assignment: { responsibility: myAssignment.responsibility } } : {}),
       ...this.openspecView(snap, full),
       ...(snap.spawnable ? { spawnable: snap.spawnable } : {}),
+      ...(snap.delegable ? { delegable: snap.delegable } : {}),
+      ...(snap.jobs ? { jobs: snap.jobs } : {}),
       ...(snap.openReview ? { reviewComments: snap.openReview } : {}),
-      ...(snap.operatorAnswers?.length && phase !== "DISCUSS" && phase !== "DONE" ? { operatorAnswers: snap.operatorAnswers } : {}),
+      ...(snap.plan ? { plan: snap.plan } : {}),
+      ...(snap.operatorAnswers?.length && task.proposes && phase !== "DISCUSS" && phase !== "DONE" ? { operatorAnswers: snap.operatorAnswers } : {}),
+      // a grilled task with a plan: the decisions the plan must carry, while the plan is written
+      ...(snap.operatorAnswers?.length && task.grill && snap.plan && snap.plan.status !== "approved" ? { grillDecisions: snap.operatorAnswers } : {}),
       otherAgents: task.agents
         .filter((id) => id !== this.me)
         .map((id) => {
@@ -963,6 +1056,15 @@ export class Swarm {
         core.nextAction === "propose" || core.nextAction === "approve"
           ? { nextAction: "wait", allowedActions: [...new Set(["wait", ...core.allowedActions])], hint: `${what} Call wait(): the answer arrives in pendingMessages; propose or approve after it. ${left}`, waitingOn }
           : { ...core, hint: `${what} Continue with what does not depend on it. ${core.hint}`, waitingOn };
+    } else if (timedOut && s.mustClarify && s.task.grill) {
+      // a grilling waits for the operator: its answers are the point, so no going ahead on a recommendation
+      d = { ...core, hint: `The operator has not answered your question ${timedOut.id} for ${minutes} min. This task is a grilling: do not go ahead on your recommendation; ask the rest of the round if any is left, then wait(). ${core.hint}` };
+    } else if (timedOut && s.plan && s.plan.status !== "approved") {
+      // a plan the operator approves: no answer in time is no licence to go ahead, the recommendation goes into the plan
+      d = {
+        ...core,
+        hint: `The operator has not answered your question ${timedOut.id} for ${minutes} min. Do not go ahead past the plan: write your recommended option into it (plan({edits}), marked as your recommendation) and wait() — the operator decides when it reviews and approves the plan. ${core.hint}`,
+      };
     } else if (timedOut && s.task.phase !== "DONE" && !(s.myLastMessageAt && Date.parse(s.myLastMessageAt) >= dueAt(timedOut))) {
       d = {
         ...core,
@@ -980,7 +1082,29 @@ export class Swarm {
         hint: `The operator left ${s.openReview.length} review comment(s) on the diff ('reviewComments': ${s.openReview.map((c) => c.id).join(", ")}): fix each, or have the agent who owns the file fix it (send_message), then mark it resolve_comments({resolve: [{id, status: "fixed", note: "<what changed>"}]}); one you disagree with: status "declined" with the reason. complete() is refused while any is open. ${d.hint}`,
       };
     }
-    const example = this.example(s.task, d.nextAction, s.mustClarify);
+    // the lead may hand a self-contained piece to a new runner while it works or integrates
+    if (s.delegable && d.nextAction !== "done" && d.nextAction !== "wait") {
+      d = {
+        ...d,
+        allowedActions: [...new Set([...d.allowedActions, "delegate"])],
+        hint: `${d.hint} A self-contained piece you would otherwise do yourself or skip (a load or concurrency test, a diagnosis, a migration dry run, a benchmark) can go to a new runner: commit your work, then delegate({template, job, files}) ('delegable': ${s.delegable.templates.map((t) => t.name).join(", ")}; ${s.delegable.left} left). It becomes your open subtask; its result and commits come back in pendingMessages.`,
+      };
+    }
+    if (s.jobs?.some((j) => j.status === "running" || j.status === "blocked") && d.nextAction === "wait") {
+      d = { ...d, hint: `${d.hint} Your delegated jobs still run: ${s.jobs.filter((j) => j.status === "running" || j.status === "blocked").map((j) => `${j.task} (${j.agent})`).join(", ")}.` };
+    }
+    // under a runner, waiting for the other agents costs a model turn per wait(): park instead (not while a question of
+    // its own runs against the clock, and not with unread messages, which a fresh session must still see)
+    if (this.underRunner && d.nextAction === "wait" && s.task.status === "ACTIVE" && !s.myQuestions.length && !s.unread.length && !s.openFromMe.length) {
+      return {
+        nextAction: "done",
+        allowedActions: [],
+        hint: `Nothing for you to do until the others move (${d.waitingOn.join(", ") || "the team"}): end your session now, with no more tool calls. The runner waits without a model and starts a fresh session as soon as something changes for you (a phase, a message, a report).`,
+        waitingOn: d.waitingOn,
+        park: true,
+      };
+    }
+    const example = this.example(s.task, d.nextAction, s.mustClarify || !d.allowedActions.includes("propose"));
     return example ? { ...d, exampleCall: example } : d;
   }
 
@@ -1001,6 +1125,7 @@ export class Swarm {
     const lead = task.agents[0];
     const done = (nextAction: NextAction, allowed: string[], hint: string, waitingOn: string[]): Decision => ({ nextAction, allowedActions: allowed, hint, waitingOn });
 
+    if (task.status === "CANCELLED") return done("done", [], "The operator cancelled the task: end your session now, with no more tool calls. The runner starts your next task in a fresh session.", []);
     if (task.status === "BLOCKED") {
       const why = `BLOCKED: ${task.blockedReason ?? "the fix-round limit was reached"}. The operator decides`;
       return this.underRunner
@@ -1062,19 +1187,58 @@ export class Swarm {
           const grow = s.spawnable
             ? `If the work splits into more independent parts than the team has agents, or needs a specialist (architecture review, load tests, security...), add up to ${s.spawnable.left} agent(s) first with spawn_agent({template, reason, role?}) ('spawnable': templates ${s.spawnable.templates.map((t) => t.name).join(", ")}${s.spawnable.roles.length ? `; roles of the project's library: ${s.spawnable.roles.map((r) => r.name).join(", ")}` : ""}): the template is how it runs, the role what it does — a library role by name, or your own with role + instructions. Only when it really saves time, each agent costs tokens. `
             : "";
+          if (s.mustClarify && task.grill) {
+            return this.me === lead
+              ? done(
+                  "propose",
+                  ["send_message", "wait", ...(s.spawnable ? ["spawn_agent"] : [])],
+                  `The operator asked to be grilled about the task before anything else: reach a shared understanding, nothing silently assumed. Read task.description and the code it touches first: facts from the code are yours to find, never a question. ` +
+                    `Map the decisions as a tree (scope, behaviour, edge cases and errors, data and compatibility, what counts as done, what must not change). Work it in rounds: ask every question whose prerequisites are settled, now — a separate send_message({to: "operator", message, options: [{label, description}], recommended}) for EACH question (never several questions in one message: the operator answers each with its own options), numbered "Q1", "Q2"... in the message, labels of 1-5 words (details go in description), your recommended answer in recommended; never ask again what the operator already answered; a question that depends on an open one waits for the next round. Then wait() for the answers; each answer reshapes the tree, ask the next round. ` +
+                    `When no branch is left: send your summary as one question — send_message({to: "operator", message: "How I understand it: <every decision, short>. Is that right?", options: [{label: "Yes, that's it"}, {label: "No, I will correct it"}], recommended: "Yes, that's it"}). propose() is accepted after the operator's yes; a "no" with a correction is the next round. Use the grilling skill if you have it.`,
+                  ["operator"],
+                )
+              : done("wait", base, `${lead} (the lead) grills the operator about the task first; tell it what is unclear to you (send_message), then wait().`, [lead!]);
+          }
           if (s.mustClarify) {
             return this.me === lead
               ? done(
                   "propose",
                   ["send_message", "wait", ...(s.spawnable ? ["spawn_agent"] : [])],
                   `First check the task (the operator asked for it): read task.description and the code it touches. Anything unclear that would change the scope, the behaviour or what counts as done: ask the operator — send_message({to: "operator", message, options: [{label, description}], recommended}), one question per message, the options you see; then wait() for the answers. ` +
-                    `Everything clear: tell the operator in a few lines how you understood it — send_message({to: "operator", fyi: true, message: "How I understand it: <what changes, where, what stays as it is>. No questions."}). propose() is accepted after that.`,
+                    `Everything clear: tell the operator in a few lines how you understood it — send_message({to: "operator", fyi: true, message: "How I understand it: <what changes, where, what stays as it is>. No questions."}), starting with "How I understand it:". propose() is accepted after a question or that note; other notes (an error, a status) do not count.`,
                   ["operator"],
                 )
               : done("wait", base, `${lead} (the lead) checks the task with the operator first; tell it what is unclear to you (send_message), then wait().`, [lead!]);
           }
+          if (s.plan && s.plan.status !== "approved") {
+            const tools = ["send_message", "plan", "wait", ...(s.spawnable ? ["spawn_agent"] : [])];
+            if (this.me !== lead) return done("wait", ["send_message", "wait"], `${lead} (the lead) writes the plan for the operator, who approves it before the agreement. Tell ${lead} what you would take or what worries you (send_message), then wait().`, [lead!]);
+            if (s.plan.status === "none") {
+              return done(
+                "propose",
+                tools,
+                `${split}${grow}The operator asked for a plan before the agreement. Read task.description and the code it touches, talk it over with the others if it helps (send_message), then write the plan as ONE self-contained HTML page: plan({html, note}). ` +
+                  `What it shows: the goal in two lines; what changes, where (files, classes, endpoints); who of the team does what, with the files of each; contracts (method, path, body, status codes; types); the order of work and what depends on what; risks and how you check the result (tests, build). ` +
+                  `A decision for the operator: <div data-question="<the question>"> with <label><input type="radio" name="q1" value="<option>"> <option></label> per option (checkboxes when several fit), your recommendation in the text. ` +
+                  `Short and scannable: headings, lists, tables; inline <style> and inline <svg> only, no external files (a diagram may use <pre class="mermaid"> with <script type="module">import m from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";m.initialize({startOnLoad:true})</script>). ` +
+                  (task.grill ? `The grilling settled decisions ('grillDecisions'): put every one into the plan as a section "Decided in the grilling" (the question, the answer, what it means for the plan), and follow them everywhere else in it. ` : "") +
+                  `The operator comments on it, edits it in place and approves it on the page; their feedback reaches you in pendingMessages. propose() is accepted after the approval.`,
+                ["operator"],
+              );
+            }
+            if (s.plan.status === "revising") {
+              return done(
+                "propose",
+                tools,
+                `The operator sent feedback on plan v${s.plan.version} (in pendingMessages or messages: comments, in-place edits, answers). Work it in: plan({edits: [{find, replace}], note: "<what changed>"}) for local changes (read the current page with plan({read: true}) first if the operator edited it), plan({html, note}) to rewrite it. Nothing to change after all? plan({note: "<why it stays as it is>"}) sends the same page again for the operator to approve. A question you cannot settle: send_message({to: "operator"}).`,
+                ["operator"],
+              );
+            }
+            return done("wait", tools, `The operator reviews plan v${s.plan.version} on the page. wait(): comments, edits or the approval arrive in pendingMessages; propose() after the approval.`, ["operator"]);
+          }
+          const approved = s.plan?.approvedVersion ? `The operator approved plan v${s.plan.approvedVersion}: the agreement follows it (assignments, files, contracts). ` : "";
           return this.me === lead
-            ? done("propose", s.spawnable ? [...base, "spawn_agent"] : base, `${split}${grow}Agree with the others who changes which files (send_message), then propose(): one assignment per agent, every file with ONE owner; an agent with nothing of its own to change gets files: [] (review only). Write the exact contracts into interfaces (method, path, headers, body, status codes); an agent whose work calls another agent's new code (e.g. API tests) gets dependsOn: [that agent].`, [...task.agents])
+            ? done("propose", s.spawnable ? [...base, "spawn_agent"] : base, `${approved}${split}${grow}Agree with the others who changes which files (send_message), then propose(): one assignment per agent, every file with ONE owner; an agent with nothing of its own to change gets files: [] (review only). Write the exact contracts into interfaces (method, path, headers, body, status codes); an agent whose work calls another agent's new code (e.g. API tests) gets dependsOn: [that agent].`, [...task.agents])
             : done("wait", base, `Tell ${lead} which ${spec ? "tasks of tasks.md and which " : ""}files you will take, or that you only review (files: []), then wait() for the proposal.`, [...task.agents]);
         }
         const pending = agreement.assignments.map((a) => a.agentId).filter((id) => !agreement.approvedBy.includes(id));
@@ -1112,7 +1276,9 @@ export class Swarm {
             : deps.length
               ? `${deps.join(", ")} reported and your branch has that work: run your work against it before complete(). `
               : "";
-        const base = (task.baseCommit ? `Follow-up of ${task.parentTaskId}: in your own git branch, first git merge ${task.baseCommit}. ` : "") + dep;
+        const base = (task.jobOf
+          ? `A job ${task.jobOf.by} (the lead of ${task.jobOf.taskId}) delegated to you: you do it alone, nobody reviews it; your complete() ends it and sends your result to ${task.jobOf.by}. ${task.baseCommit ? `In your own git branch, first git merge ${task.baseCommit} (the lead's code). ` : ""}`
+          : task.baseCommit ? `Follow-up of ${task.parentTaskId}: in your own git branch, first git merge ${task.baseCommit}. ` : "") + dep;
         const steps = s.subtasks.find((l) => l.agentId === this.me)?.items ?? [];
         const open = steps.filter((i) => i.status === "TODO" || i.status === "DOING");
         const plan = open.length
@@ -1161,7 +1327,9 @@ export class Swarm {
       case "INTEGRATE": {
         const lead = phases.integrator(task);
         if (this.me !== lead) return done("wait", ["send_message", "wait"], `${lead} is integrating. Waiting for: ${lead}.`, [lead]);
-        const verify = task.verifyCommand ? `\`${task.verifyCommand}\` (build() runs it)` : "the build and all tests (with the build tool)";
+        const verify = task.verifyCommand
+          ? `\`${task.verifyCommand}\` with build() (no command) after you committed the merged result — PASS is accepted only from that green run on the commit you report (commits: [HEAD])`
+          : "the build and all tests (with the build tool)";
         const left = s.followUpBudget?.remaining ?? 0;
         const followUps = left ? ` With PASS, left-over work ('followUps.notes', things you noticed) can become up to ${left} follow-up task(s): followUps: [{title, description}], each concrete.` : "";
         return done(
@@ -1176,7 +1344,7 @@ export class Swarm {
         );
       }
       case "DONE":
-        return done("done", [], "The task is done.", []);
+        return done("done", [], this.sessionTask === task.id ? "The task is done: end your session now, with no more tool calls. The runner starts your next task in a fresh session." : "The task is done.", []);
     }
   }
 

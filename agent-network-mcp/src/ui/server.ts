@@ -6,7 +6,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { AppError, isAppError } from "../errors.js";
 import { readGitContext } from "../git.js";
 import { assertChangeName, changePath, hasChange, listChanges, type Exec } from "../openspec.js";
-import { NetworkService } from "../service.js";
+import { injectSdk, PLAN_CSP } from "../plan.js";
+import { NetworkService, depthFlags } from "../service.js";
 import type { Prices } from "../stats.js";
 import { FileStore } from "../storage/fileStore.js";
 import { MessageStore } from "../stores/messageStore.js";
@@ -24,6 +25,7 @@ import { nextRun, parseCron } from "../schedule/cron.js";
 import { branchDiff, fileDiff, gitRoot, mergeProjectInto, removeWorktrees, type MergeResult } from "../worktrees.js";
 import { ObserverStore } from "../observer/store.js";
 import type { Observer } from "../observer/observer.js";
+import { readCritiques, type PlanCritic } from "../planCritic.js";
 import { PACKAGE_DIR } from "./runners.js";
 
 export interface UiServer {
@@ -45,6 +47,8 @@ export interface UiProject {
   supervisor?: Supervisor;
   /** Looks back over closed tasks for the system's problems (runners.json "observer"). */
   observer?: Observer;
+  /** Reads each version of a lead's plan for production risks (runners.json "planCritic"). */
+  planCritic?: PlanCritic;
   /** Tasks created on a cron (runners.json "schedules"). */
   scheduler?: Scheduler;
   /** Cost limit (USD) of a task created on the page without one (runners.json "maxTaskCostUsd"). */
@@ -79,6 +83,7 @@ interface Project {
   supervisor?: Supervisor;
   /** Looks back over closed tasks for the system's problems (runners.json "observer"). */
   observer?: Observer;
+  planCritic?: PlanCritic;
   scheduler?: Scheduler;
   operator?: NetworkService;
   prices?: UiProject["prices"];
@@ -91,7 +96,7 @@ const MAX_BODY = 64 * 1024;
 const GIT_TTL_MS = 15_000;
 const DAY_MS = 24 * 3600 * 1000;
 
-type Reply = { status: number; type: string; body: string };
+type Reply = { status: number; type: string; body: string; csp?: string };
 const json = (status: number, value: unknown): Reply => ({ status, type: "application/json", body: JSON.stringify(value) });
 const text = (status: number, body: string): Reply => ({ status, type: "text/plain; charset=utf-8", body });
 
@@ -150,6 +155,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       ...(spec.prices ? { prices: spec.prices } : {}),
       ...(spec.runners && spec.supervisor ? { supervisor: spec.supervisor } : {}),
       ...(spec.runners && spec.observer ? { observer: spec.observer } : {}),
+      ...(spec.runners && spec.planCritic ? { planCritic: spec.planCritic } : {}),
       ...(spec.runners && spec.scheduler ? { scheduler: spec.scheduler } : {}),
       ...(spec.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: spec.maxTaskCostUsd } : {}),
       ...(spec.mergeStrategy ? { mergeStrategy: spec.mergeStrategy } : {}),
@@ -277,8 +283,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
 
   const server = createServer((req, res) => {
     void handle(req).then(
-      ({ status, type, body }) => {
-        res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'" });
+      ({ status, type, body, csp }) => {
+        res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": csp ?? "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-src 'self'" });
         res.end(body);
       },
       (e: unknown) => {
@@ -343,6 +349,23 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         // the agents whose branch can be shown (an own branch, not the project folder)
         const branches = (await Promise.all(task.agents.map(async (a) => ((await leadBranch(p, task, a).catch(() => null)) ? a : null)))).filter((a): a is string => !!a);
         return json(200, { ...(await branchDiff(range.project, range.base, head, range.mode)), branch: range.branch, merged: range.merged, agents: branches });
+      }
+      const planOf = /^\/api\/tasks\/([^/]+)\/plan(?:\/(\d+)(\/view)?)?$/.exec(path);
+      if (planOf) {
+        // the lead's HTML plan: its versions and feedback, one version's page (raw for the "what changed" view),
+        // and /view: the page to review, with the review script, sandboxed by its own CSP
+        const reader = p.operator ?? (await NetworkService.create(p.networkDir, { id: "operator", type: "ui" }));
+        const id = decodeURIComponent(planOf[1]!);
+        if (!planOf[2]) {
+          return json(200, {
+            plan: await reader.planState(id),
+            critiques: await readCritiques(p.fs, id),
+            critic: p.planCritic ? { enabled: true, running: p.planCritic.running(id), model: p.planCritic.modelName } : { enabled: false },
+          });
+        }
+        const v = await reader.planHtml(id, Number(planOf[2]));
+        if (!v) return text(404, "no such version of the plan");
+        return planOf[3] ? { status: 200, type: "text/html; charset=utf-8", body: injectSdk(v.html), csp: PLAN_CSP } : json(200, v);
       }
       if (path === "/api/schedules/preview") {
         // the form shows when a cron would run before it is saved
@@ -414,7 +437,9 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const body = await readJson(req);
 
     if (path === "/api/tasks") {
-      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; clarify?: unknown };
+      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown };
+      // a preset (fast / standard / thorough) sets the three; without one, each comes as it is
+      const prep = typeof b.depth === "string" && b.depth !== "custom" ? depthFlags(b.depth) : { clarify: b.clarify === true, grill: b.grill === true, planReview: b.planReview === true };
       // the page sends "" for "no limit"; a field it leaves out gets the config's maxTaskCostUsd
       const maxCostUsd = b.maxCostUsd === undefined ? p.maxTaskCostUsd : b.maxCostUsd === "" || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd);
       const agents = Array.isArray(b.agents) ? b.agents.map(String) : [];
@@ -426,7 +451,9 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         agents,
         ...(openspec ? { openspec } : {}),
         ...(typeof b.proposes === "string" && b.proposes.trim() ? { proposes: b.proposes.trim() } : {}),
-        ...(b.clarify === true ? { clarify: true } : {}),
+        ...(prep.clarify ? { clarify: true } : {}),
+        ...(prep.planReview ? { planReview: true } : {}),
+        ...(prep.grill ? { grill: true } : {}),
         ...(typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? { verifyCommand: b.verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
@@ -439,6 +466,23 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const acted = async (taskId: string, text: string) => {
       if (bySupervisor) await p.journal.add({ kind: "action", by: "supervisor", taskId, text });
     };
+    const criticAgain = /^\/api\/tasks\/([^/]+)\/plan\/critique$/.exec(path);
+    if (criticAgain) {
+      if (!p.planCritic) return text(404, 'no plan critic: add a "planCritic" section to runners.json');
+      const version = Number((body as { version?: unknown }).version);
+      if (!Number.isInteger(version) || version < 1) throw new AppError("INVALID_INPUT", "version: the plan version to read again");
+      await p.planCritic.again(decodeURIComponent(criticAgain[1]!), version);
+      return json(200, { again: version });
+    }
+    const planAction = /^\/api\/tasks\/([^/]+)\/plan\/(feedback|approve)$/.exec(path);
+    if (planAction) {
+      // the operator's notes, edits and answers on the plan go to the lead; approve opens propose() to it
+      const id = decodeURIComponent(planAction[1]!);
+      const b = body as { version?: unknown; comments?: unknown; edits?: unknown; answers?: unknown; html?: unknown };
+      const r = await operator.planFeedback({ taskId: id, version: Number(b.version), comments: b.comments, edits: b.edits, answers: b.answers, ...(typeof b.html === "string" ? { html: b.html } : {}), approve: planAction[2] === "approve" });
+      await acted(id, planAction[2] === "approve" ? `approved plan v${r.state.approved!.version}` : `plan feedback to ${r.message?.to}`);
+      return json(201, { plan: r.state, to: r.message?.to ?? null });
+    }
     const taskAction = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel|message|merge|review|revert)$/.exec(path);
     if (taskAction) {
       const id = decodeURIComponent(taskAction[1]!);

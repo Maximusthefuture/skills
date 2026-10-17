@@ -22,7 +22,9 @@
     "maxTaskCostUsd: the cost limit of a task created on the page or by a schedule (all its sessions together, priced with \"prices\" since Qwen reports no cost); reached, the task is BLOCKED until you raise it (+$ on the page) or cancel it. Remove it for no limit.",
     "run_shell_command(openspec): the author of a change-writing task (task create --propose, or «+ написать новый change…» on the page) creates and validates the change with the openspec CLI (openspec new change, instructions, validate).",
     "spawn: agents a task's lead may add to its team (spawn_agent, in DISCUSS before propose) when the work splits into more parts than the team has: templates are agents without an id (defaults apply), each spawned agent gets its own id (backend-2) and worktree, and its runner starts and stops by itself; maxPerTask bounds it, the task's cost limit too. Remove the section to switch it off.",
-    "observer: an agent that looks back over closed tasks for the system's own problems (refused calls, turn limits, give-ups, slow answers, costly phases) and writes a report with proposals; the page's Наблюдатель tab shows them, Accept turns one into a swarm task (in agent-network-mcp's own network for target agent-network). Digests of closed tasks are collected without a model; the session runs on its cron (Mondays 9:00 here) or from the button. Read-only tools plus its own MCP server (observer-mcp), which writes only into <network>/observer/."
+    "observer: an agent that looks back over closed tasks for the system's own problems (refused calls, turn limits, give-ups, slow answers, costly phases) and writes a report with proposals; the page's Наблюдатель tab shows them, Accept turns one into a swarm task (in agent-network-mcp's own network for target agent-network). Digests of closed tasks are collected without a model; the session runs on its cron (Mondays 9:00 here) or from the button. Read-only tools plus its own MCP server (observer-mcp), which writes only into <network>/observer/.",
+    "planCritic: reads every version of a plan the lead writes for a task with «План на утверждение» (task create --plan) and lists what would break in production (data, deploy and rollback, contracts, races, load, security); the risks show next to the plan, «В замечания» sends one to the lead. Read-only tools on {projectDir} (the project) and {planDir} (the plan's folder), one session per plan version, about $0.05-0.3 on sonnet. Remove the section to switch it off.",
+    "planCritic.skillSets: the skills the critic gets for a kind of project. A set applies when one of its \"when\" files is in the project's root (\"*\" = any project: \"always\" here gives every plan the pre-mortem of ~/.claude/agents/critic.md); several sets may apply. \"skills\": a skill folder (SKILL.md), a folder of skills (backend-design-java: migration-safety, idempotency, error handling, ...) or one .md file. Missing ones are skipped. The critic reads only the skills whose description fits the plan."
   ],
   "maxTaskCostUsd": 10,
   "defaults": {
@@ -298,5 +300,81 @@
     "promptFile": "{agentNetworkMcp}/examples/runner/observer-prompt.md",
     "systemPromptFile": "{agentNetworkMcp}/examples/runner/observer-system-prompt.md",
     "cron": "0 9 * * 1"
+  },
+  "planCritic": {
+    "command": [
+      "qwen",
+      "{prompt}",
+      "-o",
+      "stream-json",
+      "--system-prompt",
+      "{systemPrompt}",
+      "--exclude-tools",
+      "run_shell_command",
+      "write_file",
+      "edit",
+      "notebook_edit",
+      "web_fetch",
+      "web_search",
+      "agent",
+      "list_agents",
+      "send_message",
+      "get_goal",
+      "update_goal",
+      "manage_memory",
+      "search_memory",
+      "save_memory",
+      "todo_write",
+      "skill",
+      "monitor",
+      "cron_create",
+      "cron_delete",
+      "cron_list",
+      "ask_user_question",
+      "-m",
+      "{model}",
+      "--auth-type",
+      "openai",
+      "--openai-base-url",
+      "http://127.0.0.1:1234/v1",
+      "--openai-api-key",
+      "lm-studio",
+      "--max-session-turns",
+      "30",
+      "--max-wall-time",
+      "20m",
+      "--include-directories",
+      "{projectDir},{planDir}"
+    ],
+    "model": "qwen/qwen3.5-9b",
+    "models": [
+      "qwen/qwen3.5-9b",
+      "qwen/qwen3-coder-30b"
+    ],
+    "promptFile": "{agentNetworkMcp}/examples/runner/plan-critic-prompt.md",
+    "systemPromptFile": "{agentNetworkMcp}/examples/runner/plan-critic-system-prompt.md",
+    "skillSets": [
+      {
+        "name": "always",
+        "when": [
+          "*"
+        ],
+        "skills": [
+          "~/.claude/agents/critic.md"
+        ]
+      },
+      {
+        "name": "java-spring",
+        "when": [
+          "pom.xml",
+          "build.gradle",
+          "build.gradle.kts"
+        ],
+        "skills": [
+          "{agentNetworkMcp}/../backend-design-java",
+          "{agentNetworkMcp}/../java-extensibility-review"
+        ]
+      }
+    ]
   }
 }

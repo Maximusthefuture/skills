@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isHandedOver } from "./handoff.js";
+import { isParked } from "./park.js";
 import { progressMark, uncommittedCount, workBrief } from "./progress.js";
 import { NetworkService } from "./service.js";
 import { SessionOutput, type ActivityItem, type SessionResult } from "./sessionOutput.js";
@@ -340,6 +341,12 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       await sleep(pollMs, signal);
       continue;
     }
+    // the last session parked on this state (nothing to do but wait for the others): wait here, without a model
+    if (await isParked(fs, agent, task).catch(() => false)) {
+      say(`${task.id}: parked in ${task.phase}, waiting without a model until something changes for ${agent}`);
+      await sleep(pollMs, signal);
+      continue;
+    }
     const given = gaveUp.get(task.id);
     if (given !== undefined) {
       if (given === (await signature(task))) {
@@ -455,6 +462,11 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       attempts.delete(task.id);
       plannedEnds.delete(task.id);
       if (opts.once) return 0;
+      continue;
+    }
+    if (await isParked(fs, agent, after).catch(() => false)) {
+      // a planned end: the top of the loop waits without a model and starts a fresh session when something changes
+      plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
       continue;
     }
     if (after.status === "BLOCKED") {

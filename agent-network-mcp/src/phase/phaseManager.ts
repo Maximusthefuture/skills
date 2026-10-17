@@ -94,6 +94,8 @@ export class PhaseManager {
       case "IMPLEMENT": {
         const ready = (id: string) => s.implementations.some((i) => i.agentId === id && i.status === "READY_FOR_SYNC");
         if (task.agents.length > 0 && task.agents.every(ready)) {
+          // a delegated job has nobody to review it: its result goes back to the lead who delegated it
+          if (task.jobOf) return { from: "IMPLEMENT", to: "DONE", reason: "the delegated job is done" };
           return { from: "IMPLEMENT", to: "SYNC", reason: "all agents are READY_FOR_SYNC" };
         }
         return null;
@@ -119,7 +121,8 @@ export class PhaseManager {
 
   /** Apply a transition to a task (pure). */
   apply(task: Task, t: Transition): Task {
-    this.assertTransition(task.phase, t.to);
+    // a delegated job is the one task that ends straight from IMPLEMENT: nobody reviews it, its lead takes the result
+    if (!(task.jobOf && task.phase === "IMPLEMENT" && t.to === "DONE")) this.assertTransition(task.phase, t.to);
     return {
       ...task,
       phase: t.to,
