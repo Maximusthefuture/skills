@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createObserverServer } from "./observer/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { runCli } from "./cli.js";
 import { loadConfig } from "./config.js";
@@ -20,6 +21,15 @@ async function main(): Promise<void> {
     const server = createSupervisorServer(supervisorOptionsFromEnv(process.env));
     await server.connect(new StdioServerTransport());
     log("supervisor tools started");
+    process.stdin.on("end", () => process.exit(0));
+    return;
+  }
+  if (process.argv[2] === "observer-mcp") {
+    // the observer's tools for its CLI session (see src/observer): digests in, a report out; NETWORK_DIR names the network
+    const dir = process.env.NETWORK_DIR;
+    if (!dir) throw new Error("observer-mcp needs NETWORK_DIR");
+    await createObserverServer(dir).connect(new StdioServerTransport());
+    log("observer tools started");
     process.stdin.on("end", () => process.exit(0));
     return;
   }

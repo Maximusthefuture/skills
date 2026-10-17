@@ -164,3 +164,48 @@ describe("questions with choices", () => {
     expect(woke.hint).toContain('go ahead with your recommended option "Service layer"');
   });
 });
+
+describe("checking the task first (clarify)", () => {
+  const assignments = [
+    { agentId: "backend", responsibility: "api", files: ["src/main/**"] },
+    { agentId: "reviewer", responsibility: "review", files: [] },
+  ];
+
+  it("the lead asks or says how it understood the task before it may propose", async () => {
+    const dir = join(await tmpDir(), ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const svc = async (id: string) => NetworkService.create(dir, { id, type: "test" }, { hub: new EventHub(dir, { fallbackPollMs: 50 }) });
+    const backend = new Swarm(await svc("backend"));
+    const reviewer = new Swarm(await svc("reviewer"));
+    const task = await operator.createTaskAsOperator({ title: "Refunds", description: "partial refunds", agents: ["backend", "reviewer"], clarify: true });
+    expect(task.clarify).toBe(true);
+
+    const first = await backend.context();
+    expect(first).toMatchObject({ nextAction: "propose", allowedActions: ["send_message", "wait"] });
+    expect(String(first.hint)).toContain("First check the task");
+    expect(first.exampleCall).toBeUndefined();
+    expect(String((await reviewer.context()).hint)).toContain("checks the task with the operator first");
+    expect(await failure(backend, backend.propose({ summary: "s", assignments }))).toMatchObject({ error: "CLARIFY_FIRST" });
+
+    // a note to the reviewer does not count: only writing to the operator
+    await backend.sendMessage({ to: "reviewer", message: "hi" });
+    expect(await failure(backend, backend.propose({ summary: "s", assignments }))).toMatchObject({ error: "CLARIFY_FIRST" });
+    await backend.sendMessage({ to: "operator", fyi: true, message: "How I understand it: refunds of part of a PAID order via POST /orders/{id}/refunds. No questions." });
+    const after = await backend.context();
+    expect(String(after.hint)).not.toContain("First check the task");
+    expect(after.exampleCall).toBeDefined();
+    await backend.propose({ summary: "s", assignments });
+  });
+
+  it("a question to the operator counts too; a task without clarify is not held", async () => {
+    const { operator, backend, task: first } = await setup();
+    await operator.cancelTask(first.id); // the agent's task is the clarify one
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], clarify: true });
+    expect(String((await backend.context()).hint)).toContain("First check the task");
+    await backend.sendMessage({ to: "operator", message: "Full or partial refunds?", options: [{ label: "Partial" }, { label: "Full" }], recommended: "Partial" });
+    expect((await backend.context()).hint).not.toContain("First check the task");
+    expect(task.id).toBe("task-002");
+    const plain = await operator.createTaskAsOperator({ title: "x", description: "d", agents: ["backend", "reviewer"] });
+    expect(plain.clarify).toBeUndefined();
+  });
+});

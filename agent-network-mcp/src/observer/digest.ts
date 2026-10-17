@@ -1,0 +1,138 @@
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { sessionCost, taskStats, type Prices } from "../stats.js";
+import { FileStore } from "../storage/fileStore.js";
+import { EventStore } from "../stores/eventStore.js";
+import { MessageStore } from "../stores/messageStore.js";
+import { SessionStore } from "../stores/sessionStore.js";
+import { SyncStore } from "../stores/syncStore.js";
+import { TaskStore } from "../stores/taskStore.js";
+import { Journal } from "../supervisor/journal.js";
+import type { Task } from "../types.js";
+
+/** One closed task in short: what the observer reads to find the system's problems across tasks (no model needed). */
+export interface TaskDigest {
+  taskId: string;
+  title: string;
+  status: Task["status"];
+  kind: "code" | "openspec" | "propose";
+  finishedAt: string;
+  elapsedMin: number | null;
+  phases: Record<string, number>;
+  fixRounds: { used: number; max: number };
+  costUsd: number | null;
+  agents: { id: string; model: string | null; sessions: number; failed: number; turnLimit: number; costUsd: number | null; spawned?: true }[];
+  /** Why the task stopped on the way, in order. */
+  blocks: { kind: string; reason: string }[];
+  findings: { ERROR: number; WARNING: number; INFO: number };
+  questions: { asked: number; answered: number; answerMinAvg: number | null; withChoices: number };
+  /** Refused tool calls: code -> count (from the agents' error logs). */
+  protocolErrors: Record<string, number>;
+  builds: { runs: number; red: number };
+  supervisor: { incidents: Record<string, number>; needsYou: number };
+}
+
+const minutes = (ms: number) => Math.round(ms / 6000) / 10;
+
+/** Refused calls of the task's agents: <network>/observer/errors/<agent>.jsonl lines for this task. */
+async function protocolErrors(root: string, taskId: string): Promise<Record<string, number>> {
+  const dir = join(root, "observer", "errors");
+  const out: Record<string, number> = {};
+  for (const f of await readdir(dir).catch(() => [] as string[])) {
+    const text = await readFile(join(dir, f), "utf8").catch(() => "");
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const e = JSON.parse(line) as { taskId?: string; code: string; tool: string };
+        if (e.taskId === taskId) out[`${e.tool}:${e.code}`] = (out[`${e.tool}:${e.code}`] ?? 0) + 1;
+      } catch {
+        // a torn line
+      }
+    }
+  }
+  return out;
+}
+
+export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): Promise<TaskDigest> {
+  const sessions = await new SessionStore(fs).list(task.id);
+  const stats = taskStats(task, sessions, [], new Date(), prices);
+  const events = (await new EventStore(fs).list(task.id)).map((e) => e.event);
+  const messages = await new MessageStore(fs).list(task.id);
+  const reports = await new SyncStore(fs).list(task.id);
+  const journal = (await new Journal(fs).list(1000)).filter((j) => j.taskId === task.id);
+
+  const agents = task.agents.map((id) => {
+    const mine = sessions.filter((s) => s.agentId === id);
+    const cost = mine.map((s) => sessionCost(s, prices).usd).filter((x): x is number => x !== undefined);
+    return {
+      id,
+      model: mine.at(-1)?.model ?? null,
+      sessions: mine.length,
+      failed: mine.filter((s) => s.exitCode !== 0 && !s.turnLimit).length,
+      turnLimit: mine.filter((s) => s.turnLimit).length,
+      costUsd: cost.length ? Math.round(cost.reduce((a, b) => a + b, 0) * 1000) / 1000 : null,
+      ...(task.spawned?.some((s) => s.id === id) ? { spawned: true as const } : {}),
+    };
+  });
+  const questions = messages.filter((m) => m.to === "operator" && m.type === "QUESTION");
+  const latencies = questions.flatMap((q) => {
+    const a = messages.find((m) => m.from === "operator" && m.replyTo === q.id);
+    return a ? [Date.parse(a.createdAt) - Date.parse(q.createdAt)] : [];
+  });
+  const findings = { ERROR: 0, WARNING: 0, INFO: 0 };
+  for (const r of reports) for (const f of r.findings) findings[f.severity] += 1;
+  const builds = events.filter((e) => e.type === "BUILD_RAN").map((e) => e.payload as { ok: boolean });
+  const incidents: Record<string, number> = {};
+  for (const j of journal.filter((j) => j.kind === "incident")) {
+    const kind = (j.data as { kind?: string } | undefined)?.kind ?? "incident";
+    incidents[kind] = (incidents[kind] ?? 0) + 1;
+  }
+  return {
+    taskId: task.id,
+    title: task.title,
+    status: task.status,
+    kind: task.proposes ? "propose" : task.openspec ? "openspec" : "code",
+    finishedAt: task.updatedAt,
+    elapsedMin: stats ? minutes(stats.elapsedMs) : null,
+    phases: Object.fromEntries((stats?.phases ?? []).map((p) => [p.phase, minutes(p.ms)])),
+    fixRounds: { used: task.syncRound > 0 ? task.syncRound - 1 : 0, max: task.maxFixRounds ?? 3 },
+    costUsd: stats?.costUsd !== null && stats?.costUsd !== undefined ? Math.round(stats.costUsd * 1000) / 1000 : null,
+    agents,
+    blocks: events.filter((e) => e.type === "TASK_BLOCKED").map((e) => {
+      const p = e.payload as { kind?: string; reason?: string };
+      return { kind: p.kind ?? "fix-rounds", reason: String(p.reason ?? "").slice(0, 200) };
+    }),
+    findings,
+    questions: {
+      asked: questions.length,
+      answered: latencies.length,
+      answerMinAvg: latencies.length ? minutes(latencies.reduce((a, b) => a + b, 0) / latencies.length) : null,
+      withChoices: questions.filter((q) => q.choices).length,
+    },
+    protocolErrors: await protocolErrors(fs.root, task.id),
+    builds: { runs: builds.length, red: builds.filter((b) => !b.ok).length },
+    supervisor: { incidents, needsYou: journal.filter((j) => j.kind === "needs-you").length },
+  };
+}
+
+/** Digests of closed tasks: <network>/observer/digests/<task>.json, written once each task is COMPLETED or CANCELLED. */
+export async function collectDigests(networkDir: string, prices?: Prices): Promise<string[]> {
+  const fs = await FileStore.open(networkDir);
+  const written: string[] = [];
+  for (const task of await new TaskStore(fs).list()) {
+    if (task.status !== "COMPLETED" && task.status !== "CANCELLED") continue;
+    if (await fs.readJson(["observer", "digests", `${task.id}.json`])) continue;
+    await fs.writeJson(["observer", "digests", `${task.id}.json`], await buildDigest(fs, task, prices));
+    written.push(task.id);
+  }
+  return written;
+}
+
+/** All digests, oldest first. */
+export async function readDigests(networkDir: string): Promise<TaskDigest[]> {
+  const dir = join(networkDir, "observer", "digests");
+  const files = (await readdir(dir).catch(() => [] as string[])).filter((f) => f.endsWith(".json")).sort();
+  const out: TaskDigest[] = [];
+  for (const f of files) out.push(JSON.parse(await readFile(join(dir, f), "utf8")) as TaskDigest);
+  return out.sort((a, b) => a.finishedAt.localeCompare(b.finishedAt));
+}

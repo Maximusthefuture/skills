@@ -112,6 +112,44 @@ export interface RunnersConfig {
   project?: string;
   /** Cost limit (USD) of tasks created on the page or by a schedule when they set none; absent = no limit. */
   maxTaskCostUsd?: number;
+  /** Agents a task's lead may add to its team from templates (spawn_agent); their runners start by themselves. */
+  spawn?: SpawnConfig;
+  /** The agent that looks back over finished tasks for the system's problems and proposes improvements (src/observer). */
+  observer?: ObserverConfig;
+  /** "Влить в проект": squash (default, one commit per task) or merge (a merge commit keeping the agents' commits). */
+  mergeStrategy?: "squash" | "merge";
+}
+
+export interface ObserverConfig {
+  /** A CLI like the supervisor's, with {prompt} and, for a choice of model, {model}. */
+  command: string[];
+  model?: string;
+  models?: string[];
+  promptFile: string;
+  systemPromptFile?: string;
+  /** When it runs by itself (5-field cron, local time); without it only the page's button starts it. */
+  cron?: string;
+}
+
+export interface SpawnTemplate {
+  name: string;
+  /** What this kind of agent is for, shown to the lead. */
+  description: string;
+  /** The runner of an agent spawned from it, under the template's name (spawnedAgent gives it its own id and folder). */
+  config: RunnerAgentConfig;
+}
+
+export interface SpawnConfig {
+  templates: SpawnTemplate[];
+  /** How many agents one task may add. Default 2. */
+  maxPerTask: number;
+}
+
+/** The runner config of an agent spawned from a template: its own id, and its own worktree <project>-<id> when the template has one. */
+export function spawnedAgent(t: SpawnTemplate, id: string): RunnerAgentConfig {
+  const { worktree, cwd, ...rest } = t.config;
+  if (worktree) return { ...rest, id, worktree: { project: worktree.project, branch: `swarm-${id}` }, cwd: join(dirname(worktree.project), `${basename(worktree.project)}-${id}`), autostart: true };
+  return { ...rest, id, ...(cwd ? { cwd } : {}), autostart: true };
 }
 
 /** The shipped runners configs a project's own config is copied from (`ui --template`). */
@@ -152,7 +190,7 @@ function costLimit(value: unknown, what: string): number {
 
 export async function loadRunnersConfig(path: string, opts: { projectDir?: string } = {}): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown };
+  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; spawn?: unknown; observer?: unknown; mergeStrategy?: unknown };
   try {
     // {agentNetworkMcp} anywhere in the file is this package's folder
     raw = JSON.parse((await readFile(file, "utf8")).replaceAll("{agentNetworkMcp}", PACKAGE_DIR.replaceAll("\\", "/")));
@@ -166,11 +204,8 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
   const project = typeof raw.project === "string" ? abs(raw.project) : opts.projectDir;
   const seen = new Set<string>();
   const agents: RunnersConfig["agents"] = [];
-  for (const a of raw.agents) {
-    const merged = { ...raw.defaults, ...a };
-    const id = assertAgentId(String(merged.id ?? ""), "agents[].id");
-    if (seen.has(id)) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" is listed twice`);
-    seen.add(id);
+  // one agent (or a spawn template under its name): command, model, files, worktree; checked the same way
+  const parseAgent = async (merged: RawAgent & { worktree?: unknown }, id: string): Promise<RunnerAgentConfig> => {
     if (!Array.isArray(merged.command) || merged.command.length === 0 || !merged.command.every((c) => typeof c === "string")) {
       throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" needs "command": the agent CLI as an array, e.g. ["qwen", "{prompt}", "-m", "qwen/qwen3.5-9b"]`);
     }
@@ -191,7 +226,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     if (wantsWorktree && !project) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" gets its own worktree, but the project is unknown: start ui inside the project's git repository or set "project"`);
     const worktree: AgentWorktree | undefined = wantsWorktree ? { project: project!, branch: `swarm-${id}` } : undefined;
     const cwd = merged.cwd ? abs(merged.cwd) : worktree ? join(dirname(worktree.project), `${basename(worktree.project)}-${id}`) : undefined;
-    agents.push({
+    return {
       id,
       command: merged.command,
       ...(cwd ? { cwd } : {}),
@@ -204,8 +239,71 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
       ...(merged.maxRestarts !== undefined ? { maxRestarts: Number(merged.maxRestarts) } : {}),
       ...(freshPhases.length ? { freshPhases } : {}),
       autostart: merged.autostart !== false,
-    });
+    };
+  };
+  // "spawn": {"templates": {"backend": {"description": "...", ...agent fields}}, "maxPerTask": 2}; a template is an agent without an id
+  async function parseSpawn(rawSpawn: unknown): Promise<SpawnConfig> {
+    const bad = (what: string): never => {
+      throw new AppError("INVALID_CONFIG", `${file}: "spawn" ${what}`);
+    };
+    if (!rawSpawn || typeof rawSpawn !== "object" || Array.isArray(rawSpawn)) bad('must be an object: {"templates": {"<name>": {...}}, "maxPerTask": 2}');
+    const sp = rawSpawn as { templates?: unknown; maxPerTask?: unknown };
+    if (!sp.templates || typeof sp.templates !== "object" || Array.isArray(sp.templates)) bad('needs "templates": {"<name>": {"description": "...", ...agent fields}}');
+    const maxPerTask = sp.maxPerTask === undefined ? 2 : Number(sp.maxPerTask);
+    if (!Number.isInteger(maxPerTask) || maxPerTask < 1 || maxPerTask > 10) bad('"maxPerTask" must be a whole number 1..10');
+    const templates: SpawnTemplate[] = [];
+    for (const [name, t] of Object.entries(sp.templates as Record<string, unknown>)) {
+      if (!/^[a-z][a-z0-9-]{0,20}$/.test(name)) bad(`template "${name}": a name of lowercase letters, digits and -`);
+      if (!t || typeof t !== "object" || Array.isArray(t)) bad(`template "${name}" must be an object`);
+      const { description, ...fields } = t as RawAgent & { description?: unknown; worktree?: unknown };
+      if (typeof description !== "string" || !description.trim()) bad(`template "${name}" needs "description": what this kind of agent does (the lead reads it)`);
+      templates.push({ name, description: (description as string).trim(), config: await parseAgent({ ...raw.defaults, ...fields }, name) });
+    }
+    return { templates, maxPerTask };
   }
+
+  async function parseObserver(rawObserver: unknown): Promise<ObserverConfig> {
+    const bad = (what: string): never => {
+      throw new AppError("INVALID_CONFIG", `${file}: "observer" ${what}`);
+    };
+    if (!rawObserver || typeof rawObserver !== "object" || Array.isArray(rawObserver)) bad("must be an object");
+    const o = rawObserver as Record<string, unknown>;
+    if (!Array.isArray(o.command) || !o.command.length || !o.command.every((c) => typeof c === "string") || !o.command.some((c) => (c as string).includes("{prompt}"))) bad('needs "command": the CLI as an array with {prompt}');
+    const command = o.command as string[];
+    if (o.model !== undefined && !isValidModel(o.model)) bad('"model" must be a model name');
+    if (usesModel(command) && !o.model) bad('command has {model}: set "model"');
+    if (o.models !== undefined && (!Array.isArray(o.models) || !o.models.every(isValidModel))) bad('"models" must be a list of model names');
+    if (typeof o.promptFile !== "string") bad('needs "promptFile" (e.g. "{agentNetworkMcp}/examples/runner/observer-prompt.md")');
+    const promptFile = abs(o.promptFile as string);
+    await readFile(promptFile, "utf8").catch((e: Error) => bad(`promptFile ${promptFile}: ${e.message}`));
+    const systemPromptFile = typeof o.systemPromptFile === "string" ? abs(o.systemPromptFile) : undefined;
+    if (o.cron !== undefined) {
+      if (typeof o.cron !== "string") bad('"cron" must be a cron string, e.g. "0 9 * * 1"');
+      try {
+        parseCron(o.cron as string);
+      } catch (e) {
+        bad(`"cron": ${(e as Error).message}`);
+      }
+    }
+    return {
+      command, promptFile,
+      ...(typeof o.model === "string" ? { model: o.model } : {}),
+      ...(Array.isArray(o.models) ? { models: o.models as string[] } : {}),
+      ...(systemPromptFile ? { systemPromptFile } : {}),
+      ...(typeof o.cron === "string" ? { cron: o.cron } : {}),
+    };
+  }
+
+  for (const a of raw.agents) {
+    const merged = { ...raw.defaults, ...a };
+    const id = assertAgentId(String(merged.id ?? ""), "agents[].id");
+    if (seen.has(id)) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" is listed twice`);
+    seen.add(id);
+    agents.push(await parseAgent(merged, id));
+  }
+  const spawn = raw.spawn === undefined ? undefined : await parseSpawn(raw.spawn);
+  const observer = raw.observer === undefined ? undefined : await parseObserver(raw.observer);
+  if (raw.mergeStrategy !== undefined && raw.mergeStrategy !== "squash" && raw.mergeStrategy !== "merge") throw new AppError("INVALID_CONFIG", `${file}: "mergeStrategy" is "squash" (one commit per task) or "merge"`);
   const prices = parsePrices(raw.prices, file);
   const maxTaskCostUsd = raw.maxTaskCostUsd === undefined || raw.maxTaskCostUsd === null ? undefined : costLimit(raw.maxTaskCostUsd, `${file}: "maxTaskCostUsd"`);
   const supervisor = raw.supervisor === undefined ? undefined : await parseSupervisor(raw.supervisor, file, abs);
@@ -215,6 +313,9 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     ...(project ? { project } : {}), agents, path: file,
     ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(schedules?.length ? { schedules } : {}),
     ...(maxTaskCostUsd !== undefined ? { maxTaskCostUsd } : {}),
+    ...(spawn?.templates.length ? { spawn } : {}),
+    ...(observer ? { observer } : {}),
+    ...(raw.mergeStrategy ? { mergeStrategy: raw.mergeStrategy as "squash" | "merge" } : {}),
   };
 }
 
@@ -440,6 +541,8 @@ export interface RunnerView {
   models: string[];
   /** The agent session the runner has open right now, if any. */
   session: RunningSession | null;
+  /** Added by a task's lead (spawn_agent): the task and the template; it is not in runners.json. */
+  spawned: { taskId: string; template: string } | null;
 }
 
 export interface RunnerDetails extends RunnerView {
@@ -473,6 +576,8 @@ interface Managed {
   stopSession: (() => void) | null;
   /** An interrupt waits for the tool call in flight to finish (not mid-write), at most a while. */
   interruptAt: number | null;
+  /** Spawned by a task's lead (not in runners.json). */
+  spawnedFor?: { taskId: string; template: string };
 }
 
 /** How long an interrupt waits for the tool call in flight before stopping the session anyway. */
@@ -488,7 +593,7 @@ export class RunnerPool {
   constructor(
     private readonly networkDir: string,
     agents: RunnersConfig["agents"],
-    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string; onSessionEnd?: (agentId: string, taskId: string) => Promise<void> } = {},
+    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string; onSessionEnd?: (agentId: string, taskId: string) => Promise<void>; onGiveUp?: (agentId: string, taskId: string, reason: string) => Promise<void> } = {},
   ) {
     for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [], urgent: [], stopSession: null, interruptAt: null });
   }
@@ -516,7 +621,16 @@ export class RunnerPool {
       model: usesModel(m.config.command) ? m.config.model ?? null : null,
       models: usesModel(m.config.command) ? [...new Set([...(m.config.models ?? []), ...(m.config.model ? [m.config.model] : [])])] : [],
       session: m.session,
+      spawned: m.spawnedFor ?? null,
     }));
+  }
+
+  /** An agent a lead spawned: its runner joins the pool (not runners.json) and starts. Returns false when it is there already. */
+  add(config: RunnersConfig["agents"][number], spawnedFor: { taskId: string; template: string }): boolean {
+    if (this.managed.has(config.id)) return false;
+    this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [], urgent: [], stopSession: null, interruptAt: null, spawnedFor });
+    this.start(config.id);
+    return true;
   }
 
   /** list() plus a look into each instructions file, for the page. */
@@ -551,7 +665,7 @@ export class RunnerPool {
     }
     if (path) m.config.instructionsFile = path;
     else delete m.config.instructionsFile;
-    if (this.opts.configPath) await saveAgentField(this.opts.configPath, id, "instructionsFile", given);
+    if (this.opts.configPath && !this.managed.get(id)?.spawnedFor) await saveAgentField(this.opts.configPath, id, "instructionsFile", given);
     this.say(m, `[ui] instructions file: ${path ?? "none"} (applies from the next session)`);
     return this.view(id);
   }
@@ -566,7 +680,7 @@ export class RunnerPool {
     if (!usesModel(m.config.command)) throw new AppError("INVALID_INPUT", `The command of '${id}' has no {model}: put "{model}" where it names the model (e.g. "-m", "{model}") and set "model"`);
     if (!isValidModel(model)) throw new AppError("INVALID_INPUT", `Not a model name: ${JSON.stringify(raw)} (no spaces, not starting with "-")`);
     m.config.model = model;
-    if (this.opts.configPath) await saveAgentField(this.opts.configPath, id, "model", model);
+    if (this.opts.configPath && !this.managed.get(id)?.spawnedFor) await saveAgentField(this.opts.configPath, id, "model", model);
     this.say(m, `[ui] model: ${model}${m.controller ? " (applies from the next session)" : ""}`);
     return this.view(id);
   }
@@ -628,6 +742,7 @@ export class RunnerPool {
       },
       onActivity: (e) => this.record(m, e),
       ...(this.opts.onSessionEnd ? { onSessionEnd: (taskId: string) => this.opts.onSessionEnd!(m.config.id, taskId) } : {}),
+      ...(this.opts.onGiveUp ? { onGiveUp: (taskId: string, reason: string) => this.opts.onGiveUp!(m.config.id, taskId, reason) } : {}),
       // an auto worktree removed after a task ("Убрать worktree") comes back from the project's HEAD before the next session
       ...(m.config.worktree ? { prepare: async () => void (await ensureWorktrees([m.config])).forEach((line) => this.say(m, `[ui] worktree created again: ${line}`)) } : {}),
       urgent: {

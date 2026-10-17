@@ -50,7 +50,7 @@ tr.click{cursor:pointer}tr.click:hover td{background:var(--card2)}tr.sel td:firs
 details{margin-top:8px}summary{cursor:pointer;color:var(--muted)}
 .msg{padding:4px 0;border-bottom:1px solid var(--line)}.msg:last-child{border:0}
 .empty{color:var(--muted);padding:12px 14px}
-form.card{display:grid;gap:10px;margin-bottom:14px}form label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
+form.card{display:grid;gap:10px;margin-bottom:14px}form label.inline{display:flex;gap:8px;align-items:center;color:var(--text);font-size:13px}form label.inline input{width:auto;margin:0}form label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
 input,textarea,select{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:6px 8px;width:100%}
 textarea{min-height:90px;resize:vertical}.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
 .checks{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;color:var(--text);font-size:13px}.checks input{width:auto}
@@ -152,11 +152,19 @@ button.warnbtn{background:var(--warn);border-color:var(--warn);color:#fff}
 .acard .find{display:flex;gap:8px;align-items:flex-start;margin-top:5px;font-size:13px}.acard .find .badge{flex:none;margin-top:1px}.acard .find>*:last-child{min-width:0;flex:1}
 .acard .scroll.subs{margin-top:0;max-height:170px}
 .chip.bok{color:var(--ok);border-color:var(--ok)}
+.oprop{padding:10px 14px;border-top:1px solid var(--line)}.oprop.decided{opacity:.7}.oprop .ah{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.oprop .orow{display:grid;grid-template-columns:130px minmax(0,1fr);gap:10px;margin-top:6px;font-size:13px}
+.oprop .lbl{font:10.5px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.oissue{padding:8px 14px;border-top:1px solid var(--line);font-size:13px}.oissue .badge{margin-right:6px}
+.orep{border-top:1px solid var(--line)}.orep summary{padding:8px 14px;cursor:pointer;font-size:13px}.omd{white-space:pre-wrap;padding:6px 14px 12px;font-size:13px;line-height:1.55}
+#o-body .panel{margin-top:14px}@media (max-width:820px){.oprop .orow{grid-template-columns:1fr}}.tag.spawned{color:var(--violet);border-color:var(--violet)}.spawnbox{margin:8px 0;padding:8px 12px;border-left:3px solid var(--violet);background:var(--bg);font-size:13px}.spawnbox .srow2{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}.spawnbox .why{margin-left:16px}
 .qopts{display:grid;gap:6px;margin:8px 0}.qopt{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;background:var(--card);color:var(--text);font-size:13px}
 .qopt:has(input:checked){border-color:var(--accent);background:var(--accbg)}.qopt input{width:auto;margin:3px 0 0}.qopt .tag{margin-left:8px;font:11px var(--mono);color:var(--accent)}.qopt .muted{margin-top:2px}
 .diff{margin-top:8px}.diff .dcommits{font-size:12px;color:var(--muted);margin:4px 0 6px}.dfile{border:1px solid var(--line);border-radius:6px;margin:4px 0;background:var(--card)}
 .dfile summary{cursor:pointer;padding:4px 8px;font-size:12.5px}.dpatch{margin:0;padding:6px 8px;font:12px/1.45 var(--mono);overflow-x:auto;max-height:480px;border-top:1px solid var(--line);white-space:pre}
-.dpatch span{display:block}.dpad{padding:4px 8px}button.small{padding:2px 8px;font-size:12px;margin-top:4px}.dadd{color:var(--ok)}.ddel{color:var(--bad)}.dhunk{color:var(--accent)}.dpatch .dadd{background:var(--okbg)}.dpatch .ddel{background:var(--badbg)}
+.dpatch span{display:block}.dpatch .dln{display:inline-block;width:3.2em;color:var(--muted);font-style:normal;user-select:none;opacity:.7}.dpatch .dclick{cursor:pointer}.dpatch .dclick:hover{outline:1px dashed var(--accent)}
+.dpatch .dcm{white-space:pre-wrap;background:var(--qbg);border-left:3px solid var(--warn);padding:4px 8px;margin:2px 0 2px 3.2em;font-family:inherit}.dpatch .dcm button{margin-left:8px;padding:0 6px}
+.dpatch .dcm.sent.fixed{background:var(--okbg);border-color:var(--ok)}.dpatch .dcm.sent.declined{background:var(--card2);border-color:var(--idle)}
+.reviewbox{margin:8px 0;padding:8px 12px;border-left:3px solid var(--warn);background:var(--bg);font-size:13px}.reviewbox .rrow{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}.reviewbox .rrow.fixed,.reviewbox .rrow.declined{opacity:.75}.reviewbox .rnote{color:var(--accent);margin-top:2px}
+.dpatch .dcomment{white-space:normal;display:flex;gap:6px;align-items:flex-start;margin:4px 0 4px 3.2em}.dpatch .dcomment textarea{min-height:44px;flex:1;font:12px var(--mono)}.dbar{margin:4px 0 6px}.dpad{padding:4px 8px}button.small{padding:2px 8px;font-size:12px;margin-top:4px}.dadd{color:var(--ok)}.ddel{color:var(--bad)}.dhunk{color:var(--accent)}.dpatch .dadd{background:var(--okbg)}.dpatch .ddel{background:var(--badbg)}
 .costbar{height:4px;border-radius:2px;background:var(--line);margin:4px 0 2px;max-width:320px;overflow:hidden}.costbar i{display:block;height:100%;background:var(--accent)}.costbar.near i{background:var(--warn)}.costbar.over i{background:var(--bad)}.chip.bbad{color:var(--bad);border-color:var(--bad)}
 .icard{border-left:3px solid var(--accent);margin-bottom:10px}
 details.more{margin:0}details.more>summary{list-style:none;cursor:pointer;color:var(--text);font-size:13px;line-height:1.5}details.more>summary::-webkit-details-marker{display:none}
@@ -182,9 +190,10 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     <a href="#/activity" data-tab="activity"><span class="n">04</span>Активность<span class="c" id="c-activity"></span></a>
     <div class="grp">Инфраструктура</div>
     <a href="#/supervisor" data-tab="supervisor"><span class="n">05</span>Надзор<span class="c" id="c-supervisor"></span></a>
-    <a href="#/runners" data-tab="runners"><span class="n">06</span>Runner'ы<span class="c" id="c-runners"></span></a>
-    <a href="#/projects" data-tab="projects"><span class="n">07</span>Проекты<span class="c" id="c-projects"></span></a>
-    <a href="#/events" data-tab="events"><span class="n">08</span>События</a>
+    <a href="#/observer" data-tab="observer"><span class="n">06</span>Наблюдатель<span class="c" id="c-observer"></span></a>
+    <a href="#/runners" data-tab="runners"><span class="n">07</span>Runner'ы<span class="c" id="c-runners"></span></a>
+    <a href="#/projects" data-tab="projects"><span class="n">08</span>Проекты<span class="c" id="c-projects"></span></a>
+    <a href="#/events" data-tab="events"><span class="n">09</span>События</a>
   </nav>
   <div class="foot">сеть<br><span id="dir"></span></div>
 </aside>
@@ -218,6 +227,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
           <label>Раундов исправлений<input name="maxFixRounds" type="number" min="0" max="20" value="3"></label>
           <label title="Сумма всех сессий агентов задачи. Достигнута — задача встаёт в BLOCKED, решаете вы: добавить денег или отменить. Пусто — без лимита.">Лимит стоимости, $<input name="maxCostUsd" type="number" min="0" step="0.5" placeholder="без лимита"></label>
         </div>
+        <label class="inline" title="Lead сначала читает задачу и код и либо задаёт вам вопросы (с вариантами), либо пишет, как понял задачу; соглашение — только после этого"><input type="checkbox" name="clarify" checked> Сначала уточнить постановку: lead задаст вопросы или напишет, как понял задачу</label>
         <div class="checks"><button type="submit">Создать задачу</button><span class="note" id="formnote"></span></div>
       </form>
       <div class="panel" id="schedules" hidden></div>
@@ -238,6 +248,16 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
       <div class="total" id="a-total"></div>
     </section>
 
+    <section data-panel="observer" hidden>
+      <div class="hrow"><div><h1>Наблюдатель</h1><div class="lead">Смотрит на закрытые задачи и ищет проблемы самой системы: отказы протокола, лимиты ходов, сдавшиеся runner'ы, долгие ответы, дорогие фазы. Пишет отчёт с предложениями; принятое предложение становится задачей для роя.</div></div><button class="end" id="o-run" type="button" hidden>Запустить сейчас</button></div>
+      <div class="card" id="o-none" hidden>Наблюдатель не настроен: добавьте секцию "observer" в runners.json (есть в примерах) и перезапустите ui.</div>
+      <div id="o-body" hidden>
+        <div class="kpis" id="o-kpis"></div>
+        <div class="panel"><div class="ph">Предложения<span class="end" id="o-pcount"></span></div><div id="o-props"></div></div>
+        <div class="panel"><div class="ph">Известные проблемы<span class="end" id="o-icount"></span></div><div id="o-issues"></div></div>
+        <div class="panel"><div class="ph">Отчёты</div><div id="o-reports"></div></div>
+      </div>
+    </section>
     <section data-panel="supervisor" hidden>
       <div class="hrow"><div><h1>Надзор</h1><div class="lead">Помощник оператора. Детектор без модели раз в 10 с смотрит на рой; когда находит инцидент, запускает сессию надзора: она разбирается, чинит, что может, и отдаёт вам то, что решаете только вы.</div></div><button class="end" id="s-toggle" type="button" hidden></button></div>
       <div class="card" id="s-none" hidden></div>
@@ -255,6 +275,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     <section data-panel="runners" hidden>
       <h1>Runner'ы</h1><div class="lead" id="runners-lead">Агенты проекта: запуск, модель, инструкции, лог.</div>
       <div class="grid" id="runners"></div>
+      <h2>Роли проекта</h2><div class="lead">Что делают агенты, которых lead добавляет сам: роль по имени из библиотеки (.agent-network/roles) или своя, написанная под задачу. На чём агент работает (CLI, модель, права), решает шаблон в runners.json.</div><div class="grid" id="roles"></div>
       <h2>Агенты в сети</h2><div class="grid" id="agents"></div>
     </section>
 
@@ -274,7 +295,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 </div>
 <script>
 const PHASES=["DISCUSS","IMPLEMENT","SYNC","INTEGRATE","DONE"];
-const TABS=["overview","tasks","runs","activity","supervisor","runners","projects","events"];
+const TABS=["overview","tasks","runs","activity","supervisor","observer","runners","projects","events"];
 const WIN={"24h":864e5,"7d":7*864e5,"30d":30*864e5};
 const $=id=>document.getElementById(id);
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
@@ -316,12 +337,13 @@ async function tick(){
     if(route.tab==="projects"||n%3===0)PROJ=(await getJSON("/api/projects")).projects;
     if(["activity","runners","tasks","overview"].includes(route.tab))await fetchActivity();
     if(route.tab==="supervisor")SUP=await getJSON(q("/api/supervisor"+(supAll?"?all=1":"")));
+    if(route.tab==="observer")OBS=await getJSON(q("/api/observer"));
     n++;render();
   }catch(e){$("topbar").textContent="нет связи с сервером"}
 }
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
-  if(route.tab==="runners"){renderControl(S);renderAgents(S)}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();
+  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();
   if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y)} // a refresh never moves the page
 
 function current(){return PROJ.find(p=>p.id===route.project)}
@@ -518,6 +540,39 @@ function renderOpenspec(t){
   const st=archiveState.get(key);if(st&&(st.output||st.error))box.append(el("pre","log"+(st.error?" err":""),st.error||st.output));
   return box;
 }
+// agents the lead added to the team (spawn_agent): who, from which template, why, and what their runner does now
+function renderSpawned(t){
+  const box=el("div","spawnbox");box.append(el("b","","Добавлены lead'ом ("+t.spawned.length+")"));const rs=S.control?S.control.runners:[];
+  t.spawned.forEach(x=>{const r=rs.find(y=>y.id===x.id);const row=el("div","srow2");
+    const state=!r?"runner не запущен (нет шаблона «"+x.template+"» в runners.json?)":r.session?"работает · сессия #"+r.session.attempt:r.running?"ждёт":"runner остановлен";
+    row.append(dot(r&&r.session?"ok":r&&r.running?"warn":""),el("b","",x.id),el("span","muted mono"," "+x.template+(r&&r.model?" · "+r.model:"")),el("span","muted"," · добавил "+x.by+" "+time(x.at).slice(0,5)+" · "+state));
+    const why=el("div","muted why",x.reason);box.append(row,why);
+    if(x.role){const rd=el("details","why role");rd.dataset.key="role-"+t.id+"-"+x.id;rd.append(el("summary","","роль: "+x.role.name+(x.role.source==="library"?" (из библиотеки)":" (написал lead)")),el("pre","log",x.role.instructions));
+      if(x.role.source==="lead"&&S.control){const sv=el("button","ghost small","Сохранить роль в библиотеку");sv.type="button";
+        sv.onclick=async()=>{const name=prompt("Имя роли в библиотеке проекта (.agent-network/roles/<имя>.md):",x.role.name);if(!name)return;
+          try{const r=await post("/api/roles/save",{taskId:t.id,agentId:x.id,name});toast("ok","Роль сохранена",r.role.name)}
+          catch(e){if(/exists already|has a role/.test(e.message)&&confirm(e.message+"\nПерезаписать?")){try{await post("/api/roles/save",{taskId:t.id,agentId:x.id,name,overwrite:true});toast("ok","Роль перезаписана",name)}catch(e2){alert(e2.message)}}else alert(e.message)}};rd.append(sv)}
+      box.append(rd)}});
+  return box;
+}
+// the operator's review comments as a checklist: open ones first, the lead's answer under each
+function renderReview(t){
+  const open=t.review.filter(c=>c.status==="open").length;const box=el("div","reviewbox");
+  box.append(el("b","","Замечания к диффу: "+(open?open+" открыто из "+t.review.length:"все "+t.review.length+" обработаны")));
+  [...t.review].sort((a,b)=>(a.status==="open"?0:1)-(b.status==="open"?0:1)).forEach(c=>{const row=el("div","rrow "+c.status);
+    row.append(el("span","badge "+(c.status==="open"?"WARNING":c.status==="fixed"?"PASS":"INFO"),c.status==="open"?"открыто":c.status==="fixed"?"исправлено":"отклонено"),el("span","mono"," "+c.id+" "+c.file+(c.line?":"+c.line:"")),el("div","",c.text));
+    if(c.code)row.append(el("div","mono muted",c.code));if(c.note)row.append(el("div","rnote","lead: "+c.note));box.append(row)});
+  if(open)box.append(el("div","muted","Lead не сдаст задачу, пока каждое не исправлено или не отклонено с причиной."));
+  return box;
+}
+// the project's role library on the Runners tab: what leads can give spawned agents by name
+let ROLES=null,rolesAt=0;
+async function renderRoles(){const box=$("roles");if(!box)return;if(Date.now()-rolesAt>15000){rolesAt=Date.now();try{ROLES=(await getJSON(q("/api/roles"))).roles}catch(e){ROLES=[]}}
+  const sig=JSON.stringify(ROLES);if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.replaceChildren();
+  if(!ROLES||!ROLES.length){box.append(el("div","muted","Ролей пока нет. Роль, которую lead написал для добавленного агента, сохраняется кнопкой в карточке задачи; дальше lead берёт её по имени."));return}
+  ROLES.forEach(r=>{const d=el("details","card");d.append(el("summary","",r.name+" — "+r.description),el("pre","log",r.instructions));
+    if(S.control){const x=el("button","ghost small","Удалить");x.type="button";x.onclick=async()=>{if(!confirm("Удалить роль "+r.name+"?"))return;try{await post("/api/roles/"+r.name+"/delete",{});rolesAt=0;renderRoles()}catch(e){alert(e.message)}};d.append(x)}
+    box.append(d)})}
 // a change-writing task: what it writes, and after DONE + merge the way to implement it
 function renderProposes(t){
   const box=el("div","openspec");box.append(el("b","","Пишет OpenSpec change "),el("span","mono","openspec/changes/"+t.proposes.change+"/"),el("span","muted"," · "+t.agents[0]+" пишет, "+t.agents.slice(1).join(", ")+" ревьюят; код не меняется"));
@@ -548,38 +603,59 @@ async function implementChange(name){const f=$("newtask");f.hidden=false;const l
 const branchState=new Map();
 function renderBranch(t){
   const key=route.project+"/"+t.id;const st=branchState.get(key)||{};const lead=t.agents[0];const wts=S.control.worktrees;
-  const box=el("div","openspec");box.append(el("b","","Ветка lead'а"));
+  const box=el("div","openspec");const done=t.status==="COMPLETED";box.append(el("b","",done?"Ветка lead'а":"Изменения в работе"));
   const m=t.merged;
-  if(m)box.append(el("div","muted",(m.already?"уже была в ":"влита в ")+m.into+" · "+m.commit.slice(0,7)+" · "+time(m.at)));
+  if(!done){ // while the task runs: only the diff (any agent's branch) and comments to the lead
+    box.append(el("div","muted","Что агенты уже закоммитили в своих ветках. Клик по строке — замечание; замечания уходят lead'у одним сообщением."));
+    const r=el("div","checks");r.append(diffButton(t,key));box.append(r);appendDiff(box,t,key);return box}
+  if(m)box.append(el("div","muted",(m.already?"уже была в ":"влита в ")+m.into+(m.strategy==="squash"?" одним коммитом ":m.strategy==="merge"?" коммитом слияния ":" · ")+m.commit.slice(0,7)+" · "+time(m.at)+(m.reverted?" · откачена "+m.reverted.commit.slice(0,7)+" "+time(m.reverted.at):"")));
   else box.append(el("div","muted","Итог задачи — в ветке "+(wts.includes(lead)?"swarm-"+lead:lead)+". Влить её в текущую ветку проекта (без push)."));
   const r=el("div","checks");
   const run=async(url,body,question,done)=>{if(!confirm(question))return;branchState.set(key,{pending:true});render();
     try{const res=await post(url,body);branchState.set(key,{output:done(res)})}catch(e){branchState.set(key,{error:e.message})}await tick()};
+  if(m&&!m.already&&!m.reverted){const rv=el("button","ghost",st.pending?"…":"Откатить");rv.type="button";rv.disabled=!!st.pending;rv.title="git revert "+m.commit.slice(0,7)+": новый коммит, который отменяет изменения задачи; при конфликте ничего не меняется";
+    rv.onclick=()=>run("/api/tasks/"+encodeURIComponent(t.id)+"/revert",{},"Откатить изменения задачи "+t.id+" в "+m.into+"? Будет новый коммит «Revert "+t.id+"», история не переписывается.",res=>"откачено: "+res.task.merged.reverted.commit.slice(0,7));r.append(rv)}
   if(!m){const b=el("button","",st.pending?"…":"Влить в проект");b.type="button";b.disabled=!!st.pending;
-    b.onclick=()=>run("/api/tasks/"+encodeURIComponent(t.id)+"/merge",{},"Влить ветку lead'а ("+lead+") в текущую ветку проекта? Сначала проверю конфликты: при конфликте ничего не изменится.",res=>"влито: "+res.task.merged.branch+" → "+res.task.merged.into+" ("+res.task.merged.commit.slice(0,7)+")");r.append(b)}
+    b.onclick=()=>run("/api/tasks/"+encodeURIComponent(t.id)+"/merge",{},"Влить ветку lead'а ("+lead+") в текущую ветку проекта одним коммитом «"+t.id+": …»? Сначала проверю конфликты: при конфликте ничего не изменится.",res=>"влито: "+res.task.merged.branch+" → "+res.task.merged.into+" ("+res.task.merged.commit.slice(0,7)+")");r.append(b)}
   const c=el("button","ghost",st.pending?"…":"Убрать worktree агентов");c.type="button";c.disabled=!!st.pending;
   c.title="git worktree remove и git branch -d для "+wts.join(", ")+": без --force, невлитая ветка и папка с изменениями останутся. Перед следующей задачей worktree создадутся заново от HEAD проекта.";
   c.onclick=()=>run("/api/worktrees/clean",{},"Убрать worktree и ветки агентов ("+wts.join(", ")+")?"+(m?"":" Ветка lead'а ещё не влита: git её не удалит.")+" Перед следующей задачей они создадутся заново от текущего HEAD проекта.",
     res=>res.result.map(x=>x.id+": "+(x.removed?"папка убрана":"папка осталась")+(x.branchDeleted?", ветка удалена":"")+(x.note?" — "+x.note:"")).join("\n"));
-  const dv=diffState.get(key)||{};const d=el("button","ghost",dv.loading?"загружаю…":dv.open?"Скрыть изменения":"Посмотреть изменения");d.type="button";
-  d.onclick=async()=>{if(dv.open){diffState.set(key,{...dv,open:false});render();return}
-    diffState.set(key,{loading:true,open:true});render();
-    try{const r=await fetch(q("/api/tasks/"+encodeURIComponent(t.id)+"/diff"),{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message||r.status);diffState.set(key,{open:true,data:j})}
-    catch(e){diffState.set(key,{open:true,error:e.message})}render()};
-  r.prepend(d);
+  r.prepend(diffButton(t,key));
   r.append(c);box.append(r);
   if(st.output||st.error)box.append(el("pre","log"+(st.error?" err":""),st.error||st.output));
-  if(dv.open&&dv.error)box.append(el("pre","log err",dv.error));
-  if(dv.open&&dv.data)box.append(renderDiff(dv.data,t.id));
+  appendDiff(box,t,key);
   return box;
 }
 const diffState=new Map();
+// the diff list of a task: the lead's branch (or ?agent=), after the merge what the merge brought
+async function loadDiff(t,key,agent){const prev=diffState.get(key)||{};diffState.set(key,{...prev,loading:true,open:true,agent});render();
+  try{const r=await fetch(q("/api/tasks/"+encodeURIComponent(t.id)+"/diff"+(agent?"?agent="+encodeURIComponent(agent):"")),{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message||r.status);
+    diffState.set(key,{open:true,data:j,agent,comments:prev.comments||[]})}
+  catch(e){diffState.set(key,{open:true,error:e.message,agent,comments:prev.comments||[]})}render()}
+function diffButton(t,key){const dv=diffState.get(key)||{};const d=el("button","ghost",dv.loading?"загружаю…":dv.open?"Скрыть изменения":"Посмотреть изменения");d.type="button";
+  d.onclick=()=>{if(dv.open){diffState.set(key,{...dv,open:false});render();return}loadDiff(t,key,dv.agent)};return d}
+function appendDiff(box,t,key){const dv=diffState.get(key)||{};
+  if(dv.open&&dv.error)box.append(el("pre","log err",dv.error));
+  if(dv.open&&dv.data)box.append(renderDiff(dv.data,t.id,t))}
 // the lead's branch against the project: commits and files with +/- (50 at a time), a file's diff loaded when it is opened
 const DIFF_PAGE=50;
-function renderDiff(x,taskId){
+function renderDiff(x,taskId,t){
   const key=route.project+"/"+taskId;const dv=diffState.get(key);
   const ui=dv.ui||(dv.ui={files:DIFF_PAGE,commits:20,open:new Set(),patches:{},scroll:{}});
+  const comments=dv.comments||(dv.comments=[]);
   const box=el("div","diff");
+  // whose branch (while the task runs) and the comments waiting to be sent
+  const bar=el("div","checks dbar");
+  if(!x.merged&&x.agents&&x.agents.length>1){const sel=document.createElement("select");x.agents.forEach(a=>sel.append(new Option("ветка "+a+(a===t.agents[0]?" (lead)":""),a)));sel.value=dv.agent||t.agents[0];sel.style.width="auto";
+    sel.onchange=()=>{dv.ui=null;loadDiff(t,key,sel.value)};bar.append(sel)}
+  if(S.control){const done=t.status==="COMPLETED";bar.append(el("span","muted",comments.length?"замечаний: "+comments.length:"клик по строке — замечание"));
+    if(comments.length){const send=el("button","",done?"Создать задачу по замечаниям":"Отправить lead'у");send.type="button";
+      send.onclick=async()=>{if(!confirm(done?"Создать задачу для роя «исправить по замечаниям» ("+comments.length+")?":"Отправить "+comments.length+" замечаний lead'у ("+t.agents[0]+")?"))return;send.disabled=true;
+        try{const r=await post("/api/tasks/"+encodeURIComponent(taskId)+"/review",{comments,branch:x.branch});dv.comments=[];toast("ok",r.sent==="task"?"Создана "+r.task.id:"Замечания отправлены "+r.to,r.sent==="task"?r.task.title:comments.length+" шт.",r.sent==="task"?r.task.id:taskId)}
+        catch(e){alert(e.message);send.disabled=false}render()};
+      const clr=el("button","ghost small","очистить");clr.type="button";clr.onclick=()=>{if(confirm("Удалить все замечания?")){dv.comments=[];render()}};bar.append(send,clr)}}
+  box.append(bar);
   box.append(el("div","muted",(x.merged?"влитые изменения ":"изменения ветки ")+x.branch+": "+x.commitsTotal+" коммит(ов), "+x.files.length+" файл(ов), +"+x.files.reduce((a,f)=>a+f.added,0)+" −"+x.files.reduce((a,f)=>a+f.deleted,0)));
   const more=(left,step,go)=>{const b=el("button","ghost small","ещё "+Math.min(left,step)+" из "+left);b.type="button";b.onclick=()=>{go();render()};return b};
   if(x.commits.length){const c=el("div","mono dcommits");x.commits.slice(0,ui.commits).forEach(l=>c.append(el("div","",l)));
@@ -587,7 +663,7 @@ function renderDiff(x,taskId){
     if(x.commitsTotal>x.commits.length)c.append(el("div","","… и ещё "+(x.commitsTotal-x.commits.length)+": git log в папке проекта"));box.append(c)}
   if(!x.files.length){box.append(el("div","muted","изменений нет: ветка уже в проекте"));return box}
   const load=async f=>{ui.patches[f.path]={loading:true};render();
-    try{const r=await fetch(q("/api/tasks/"+encodeURIComponent(taskId)+"/diff?file="+encodeURIComponent(f.path)),{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message||r.status);ui.patches[f.path]=j}
+    try{const r=await fetch(q("/api/tasks/"+encodeURIComponent(taskId)+"/diff?file="+encodeURIComponent(f.path)+(dv.agent?"&agent="+encodeURIComponent(dv.agent):"")),{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message||r.status);ui.patches[f.path]=j}
     catch(e){ui.patches[f.path]={error:e.message}}render()};
   x.files.slice(0,ui.files).forEach(f=>{const det=el("details","dfile");det.open=ui.open.has(f.path);
     const sm=el("summary","");sm.append(el("span","mono",f.path)," ",f.binary?el("span","muted","двоичный"):el("span","dadd","+"+f.added)," ",f.binary?"":el("span","ddel","−"+f.deleted));det.append(sm);
@@ -596,7 +672,20 @@ function renderDiff(x,taskId){
     if(det.open&&pt){
       if(pt.loading)det.append(el("div","muted dpad","загружаю…"));
       else if(pt.error)det.append(el("pre","log err",pt.error));
-      else{const pre=el("pre","dpatch");pt.patch.split("\n").forEach(l=>{if(/^(diff --git|index |--- |\+\+\+ )/.test(l))return;pre.append(el("span",l.startsWith("@@")?"dhunk":l.startsWith("+")?"dadd":l.startsWith("-")?"ddel":"",l||" "))});
+      else{const pre=el("pre","dpatch");let o=0,n=0;
+        pt.patch.split("\n").forEach(l=>{if(/^(diff --git|index |--- |\+\+\+ )/.test(l))return;
+          if(l.startsWith("@@")){const m=/@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(l);if(m){o=+m[1];n=+m[2]}pre.append(el("span","dhunk",l));return}
+          const side=l.startsWith("-")?"old":"new";const no=side==="old"?o:n;if(l.startsWith("+"))n++;else if(l.startsWith("-"))o++;else{o++;n++}
+          const row=el("span",l.startsWith("+")?"dadd":l.startsWith("-")?"ddel":"");row.append(el("i","dln",String(no)),l||" ");pre.append(row);
+          const here=c=>c.file===f.path&&c.side===side&&c.line===no;
+          (t&&t.review||[]).filter(c=>c.file===f.path&&side==="new"&&c.line===no).forEach(c=>{const cm=el("span","dcm sent "+c.status);cm.append(el("b","",c.id+" "+(c.status==="open"?"открыто":c.status==="fixed"?"исправлено":"отклонено")+": "),c.text+(c.note?" — lead: "+c.note:""));pre.append(cm)});
+          comments.filter(here).forEach(c=>{const cm=el("span","dcm");cm.append(el("b","","замечание: "),c.text);const x2=el("button","ghost small","×");x2.type="button";x2.title="убрать";x2.onclick=e=>{e.stopPropagation();dv.comments=comments.filter(y=>y!==c);render()};cm.append(x2);pre.append(cm)});
+          if(S.control){row.classList.add("dclick");row.title="замечание к строке "+no;
+            row.onclick=()=>{ui.editing={file:f.path,side,line:no,code:l.slice(1).trim()};if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();render();setTimeout(()=>{const ta=document.querySelector(".dcomment textarea");if(ta)ta.focus()},0)}}
+          const ed=ui.editing;if(ed&&ed.file===f.path&&ed.side===side&&ed.line===no){const form=el("span","dcomment");const ta=document.createElement("textarea");ta.rows=2;ta.placeholder="Что поменять в этой строке…";ta.value=ed.text||"";ta.oninput=()=>{ed.text=ta.value};
+            const add=el("button","small","Добавить");add.type="button";add.onclick=()=>{if(!ta.value.trim())return;comments.push({file:f.path,side,line:no,code:ed.code,text:ta.value.trim()});ui.editing=null;ta.blur();render()};
+            const cancel=el("button","ghost small","Отмена");cancel.type="button";cancel.onclick=()=>{ui.editing=null;ta.blur();render()};
+            ta.onkeydown=e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey))add.click();if(e.key==="Escape")cancel.click()};form.append(ta,add,cancel);pre.append(form)}});
         // the card is rebuilt on every refresh: the file's diff keeps where you scrolled it (down and sideways)
         const at=ui.scroll[f.path];pre.addEventListener("scroll",()=>{ui.scroll[f.path]={top:pre.scrollTop,left:pre.scrollLeft}},{passive:true});
         if(at)requestAnimationFrame(()=>{pre.scrollTop=at.top;pre.scrollLeft=at.left});
@@ -612,6 +701,15 @@ function renderBlocked(t){
   const key=route.project+"/"+t.id;const st=unblockState.get(key)||{};
   const act=async(what,body,question)=>{if(!confirm(question))return;unblockState.set(key,{pending:true});render();
     try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/"+what,body);unblockState.delete(key)}catch(e){unblockState.set(key,{error:e.message})}await tick()};
+  if(t.blockedBy==="runner"){
+    box.append(el("div","","Сессии агента подряд заканчивались, не доделав его часть, и runner сдался — без него остальные ждали бы вечно. Посмотрите лог runner'а на вкладке «Runner'ы» (причина обычно там), поправьте и попробуйте снова: runner начнёт с новой сессии."));
+    const r=el("div","checks");const again=el("button","","Попробовать снова");again.type="button";again.disabled=!!st.pending;
+    again.onclick=()=>act("unblock",{rounds:1},t.id+": вернуть задачу в работу? Runner, который сдался, начнёт заново.");r.append(again);
+    const c=el("button","ghost","Отменить задачу");c.type="button";c.disabled=!!st.pending;
+    c.onclick=()=>act("cancel",{reason:"cancelled on the page (a runner gave up)"},t.id+": отменить задачу? Агенты перейдут к следующей.");r.append(c);
+    box.append(r);if(st.error)box.append(el("pre","log err",st.error));
+    return box;
+  }
   if(t.blockedBy==="cost"){
     const spent=t.stats&&t.stats.costUsd!==null?t.stats.costUsd:null;
     box.append(el("div","","Задача потратила "+(spent!==null?fmtUsd(spent,t.stats.costEstimated):"?")+" при лимите $"+t.maxCostUsd+". Агенты остановились; надзор такие решения не принимает."));
@@ -666,7 +764,7 @@ function renderTask(t){
   if(chain.length)hd.append(el("div","muted",chain.join(" · ")));
   if(t.openspec)hd.append(renderOpenspec(t));
   if(t.proposes)hd.append(renderProposes(t));
-  if(t.status==="COMPLETED"&&controlMode&&S.control.worktrees&&S.control.worktrees.length)hd.append(renderBranch(t));
+  if(t.status!=="CANCELLED"&&controlMode&&S.control.worktrees&&S.control.worktrees.length)hd.append(renderBranch(t));
   hd.append(renderStats(t));
   if(t.status==="BLOCKED")hd.append(renderBlocked(t));
   if(t.takeover&&t.status!=="BLOCKED")hd.append(el("div","muted","Lead взял исправление "+t.takeover.from.join(", ")+" в раунде "+t.takeover.round+" ("+(t.takeover.by==="timeout"?"оператор не ответил вовремя":"передал оператор")+")."));
@@ -677,6 +775,8 @@ function renderTask(t){
     c.append(steps)}
   if(t.status==="ACTIVE"||t.status==="BLOCKED")c.append(progressBlock(t));
   if(S.control&&(t.status==="ACTIVE"||t.status==="BLOCKED"))c.append(renderCompose(t));
+  if(t.spawned&&t.spawned.length)c.append(renderSpawned(t));
+  if(t.review&&t.review.length)c.append(renderReview(t));
   if(t.waitingOn.length){const w=el("div","chips");w.append(el("span","muted","ждём:"));t.waitingOn.forEach(x=>w.append(el("span","chip",x)));c.append(w)}
   // one card per agent: who, statuses at a glance, its part and its plan side by side, its report and the review short (full on click)
   const cards=el("div","acards");const lead=t.agents[0];const rs=S.control?S.control.runners:[];
@@ -686,7 +786,8 @@ function renderTask(t){
     const im=t.implementations.find(i=>i.agentId===id);const rep=t.syncReports.filter(x=>x.agentId===id&&x.round===t.syncRound).pop();
     const subs=(t.subtasks&&t.subtasks[id])||[];const live=subs.filter(x=>x.status!=="DROPPED");const r=rs.find(x=>x.id===id);
     const model=r&&r.model||(t.stats&&(t.stats.agents.find(a=>a.agentId===id)||{models:[]}).models[0])||"";
-    hd.append(el("b","",id));if(id===lead)hd.append(el("span","tag","lead"));if(model)hd.append(el("span","muted mono",model));
+    hd.append(el("b","",id));if(id===lead)hd.append(el("span","tag","lead"));
+    const sp=(t.spawned||[]).find(x=>x.id===id);if(sp){const g=el("span","tag spawned","добавлен lead'ом · "+sp.template);g.title=sp.reason;hd.append(g)}if(model)hd.append(el("span","muted mono",model));
     if(S.control&&id===t.agents[0]&&(t.status==="ACTIVE"||t.status==="BLOCKED")){const m=el("button","mail");m.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>';m.type="button";m.title="написать lead'у "+id+": он передаст остальным";m.setAttribute("aria-label",m.title);
       m.onclick=()=>{const key=route.project+"/"+t.id;composeOpen.add(key);render();const ta=document.querySelector('[data-compose="'+key+'"] textarea');if(ta){ta.scrollIntoView({block:"center",behavior:"smooth"});ta.focus({preventScroll:true})}};hd.append(m)}
     const st=el("span","stats2");
@@ -791,7 +892,7 @@ function renderSchedules(s){
 function scheduleOf(t){for(const x of (S.schedules||[]))if(x.runs.some(r=>r.taskId===t.id))return x.id;return null}
 function renderTasks(){
   renderSchedules(S);
-  if(document.activeElement&&document.activeElement.matches&&document.activeElement.matches("#tasks .compose textarea"))return; // you are writing to a lead: the refresh waits
+  if(document.activeElement&&document.activeElement.matches&&document.activeElement.matches("#tasks .compose textarea, #tasks .dcomment textarea"))return; // you are writing to a lead: the refresh waits
   const s=S;$("newbtn").hidden=!s.control;if(!s.control)$("newtask").hidden=true;
   $("tasks-lead").textContent="Текущие и завершённые задачи проекта "+s.project.name+"."+(s.control?"":" Только чтение: чтобы ставить задачи, запустите UI с --runners.");
   updateForm(s);
@@ -828,7 +929,7 @@ $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev
   const others=[...$("others").querySelectorAll("input:checked")].map(i=>i.value);const v=n=>f.elements.namedItem(n);
   if(!v("openspec").value&&(!v("title").value.trim()||!v("description").value.trim())){note.className="note err";note.textContent="Нужны название и описание (или выберите OpenSpec change).";return}
   btn.disabled=true;note.className="note";note.textContent="создаю…";
-  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,...(v("openspec").value==="__new__"?{proposes:v("proposes").value}:{openspec:v("openspec").value})});
+  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,clarify:v("clarify").checked,...(v("openspec").value==="__new__"?{proposes:v("proposes").value}:{openspec:v("openspec").value})});
     note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("openspec").value="";v("proposes").value="";$("proposes-row").hidden=true;await tick()}
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
 
@@ -890,7 +991,7 @@ function renderControl(s){
     c.badge.className="badge "+(r.running?"RUNNING":"STOPPED");c.badge.textContent=r.running?"RUNNING":"STOPPED";
     c.btn.textContent=r.running?"Стоп":"Старт";c.btn.className=r.running?"ghost":"";c.btn.dataset.action=r.running?"stop":"start";
     const mine=day.filter(x=>x.agentId===r.id);
-    c.info.textContent=(r.session?"сейчас: "+r.session.taskId+" · сессия #"+r.session.attempt+" · "+since(r.session.startedAt):r.running&&r.startedAt?"ждёт задачу · запущен "+ago(r.startedAt):r.stoppedAt?"остановлен "+ago(r.stoppedAt):"не запускался")+(mine.length?" · за 24ч "+fmtUsd(mine.reduce((a,x)=>a+x.costUsd,0),mine.some(x=>x.costEstimated)):"");
+    c.info.textContent=(r.session?"сейчас: "+r.session.taskId+" · сессия #"+r.session.attempt+" · "+since(r.session.startedAt):r.running&&r.startedAt?"ждёт задачу · запущен "+ago(r.startedAt):r.stoppedAt?"остановлен "+ago(r.stoppedAt):"не запускался")+(mine.length?" · за 24ч "+fmtUsd(mine.reduce((a,x)=>a+x.costUsd,0),mine.some(x=>x.costEstimated)):"")+(r.spawned?" · добавлен lead'ом для "+r.spawned.taskId+" (шаблон "+r.spawned.template+"), нет в runners.json":"");
     c.cwd.textContent=r.cwd?"папка: "+r.cwd:"папка: текущая";c.cwd.title=r.cwd||"";
     c.cmd.textContent=r.command;c.cmd.title=r.command;
     miniFeed(r.id,c.feed);
@@ -1119,6 +1220,47 @@ function makeSupUi(){
   KINDS_J.forEach(([k,label])=>{const b=el("button","",label);b.type="button";b.dataset.k=k;b.onclick=()=>{supKind=k;renderSupervisor()};$("s-kinds").append(b)});
   return {modelState,form,sel,hint,rules,limits,tlist}}
 const KINDS_J=[["all","all"],["incident","incident"],["action","action"],["needs-you","needs-you"],["note","note"],["session","session"]];
+/* ---------- observer ---------- */
+let OBS=null;const obsOpen=new Set(),obsReports=new Map(),obsState=new Map();
+function renderObserver(){
+  const o=OBS;$("o-none").hidden=!!(o&&o.observer);$("o-body").hidden=!(o&&o.observer);$("o-run").hidden=!(o&&o.observer&&S&&S.control);if(!o||!o.observer)return;
+  const ob=o.observer;const btn=$("o-run");btn.disabled=!!ob.running;btn.textContent=ob.running?"работает…":"Запустить сейчас";
+  btn.onclick=async()=>{btn.disabled=true;try{await post("/api/observer/run",{});await tick()}catch(e){alert(e.message);btn.disabled=false}};
+  const sig=JSON.stringify([o.reports,o.proposals,o.issues,ob.running&&ob.running.at,ob.runs.length,ob.digests,[...obsState]]);if($("o-body").dataset.sig===sig)return;$("o-body").dataset.sig=sig;
+  const k=$("o-kpis");k.replaceChildren();const kpi=(label,value,sub)=>{const d=el("div","kpi");d.append(el("div","lbl",label),el("div","v",value),el("div","sub",sub||""));k.append(d)};
+  const last=ob.runs[0];
+  kpi("сейчас",ob.running?"работает":"ждёт",ob.running?"с "+time(ob.running.at).slice(0,5):ob.cron?"по cron "+ob.cron+(ob.nextRunAt?" · следующий "+new Date(ob.nextRunAt).toLocaleString([],{weekday:"short",hour:"2-digit",minute:"2-digit"}):""):"только кнопкой");
+  kpi("новых закрытых задач",String(ob.digests.uncovered),"всего итогов: "+ob.digests.total);
+  kpi("последний запуск",last?time(last.at).slice(0,5):"—",last?(last.reportId?last.reportId:"без отчёта")+(last.costUsd!==undefined?" · $"+last.costUsd:"")+" · "+ob.cli+(ob.model?" "+ob.model:""):ob.cli+(ob.model?" "+ob.model:""));
+  // proposals: open ones first, each can become a swarm task or be rejected with a reason the observer remembers
+  const props=$("o-props");props.replaceChildren();const open=o.proposals.filter(p=>p.status==="open");$("o-pcount").textContent=open.length+" ждут решения · всего "+o.proposals.length;
+  if(!o.proposals.length)props.append(el("div","muted spad","Предложений пока нет."));
+  [...open,...o.proposals.filter(p=>p.status!=="open")].forEach(p=>{const c=el("div","oprop"+(p.status==="open"?"":" decided"));const st=obsState.get(p.id)||{};
+    const hd=el("div","ah");hd.append(el("b","",p.title),el("span","badge "+(p.priority==="high"?"ERROR":p.priority==="medium"?"WARNING":"INFO"),p.priority),el("span","chip",p.target==="agent-network"?"agent-network-mcp":"проект"),el("span","muted",p.id+" · "+p.reportId));c.append(hd);
+    [["Проблема",p.problem],["Где видно",p.evidence],["Во что обходится",p.impact],["Что сделать",p.fix]].forEach(([l,v])=>{const r=el("div","orow");r.append(el("div","lbl",l),longText(v,"op-"+p.id+l,300));c.append(r)});
+    if(p.status==="accepted")c.append(el("div","note ok","принято: задача "+p.taskId+(p.network?" · "+p.network:"")));
+    else if(p.status==="rejected")c.append(el("div","note","отклонено: "+p.rejectReason));
+    else if(S&&S.control){const r=el("div","checks");const ag=document.createElement("input");ag.value=st.agents||(p.target==="agent-network"?"backend,reviewer":S.control.runners.map(x=>x.id).slice(0,2).join(","));ag.title="агенты задачи через запятую, первый — lead";ag.style.maxWidth="220px";
+      ag.oninput=()=>obsState.set(p.id,{...st,agents:ag.value});
+      const acc=el("button","","Принять → задача");acc.type="button";acc.disabled=!!st.pending;
+      acc.onclick=async()=>{const where=p.target==="agent-network"?"в сети agent-network-mcp ("+o.agentNetworkNetwork+"): там должны работать runner'ы этих агентов":"в этом проекте";
+        if(!confirm("Создать задачу «"+p.title+"» "+where+"? Агенты: "+ag.value))return;obsState.set(p.id,{pending:true});render();
+        try{const r=await post("/api/observer/proposals/"+p.id+"/accept",{agents:ag.value.split(",").map(x=>x.trim()).filter(Boolean)});obsState.delete(p.id);toast("ok","Создана "+r.task.id,r.task.here?"в этом проекте":"в "+r.task.network)}catch(e){obsState.set(p.id,{error:e.message})}await tick()};
+      const rej=el("button","ghost","Отклонить");rej.type="button";rej.disabled=!!st.pending;
+      rej.onclick=async()=>{const why=prompt("Почему? Наблюдатель прочтёт и больше это не предложит.");if(!why||!why.trim())return;
+        try{await post("/api/observer/proposals/"+p.id+"/reject",{reason:why.trim()})}catch(e){obsState.set(p.id,{error:e.message})}await tick()};
+      r.append(el("span","muted","агенты:"),ag,acc,rej);c.append(r);if(st.error)c.append(el("pre","log err",st.error))}
+    props.append(c)});
+  const iss=$("o-issues");iss.replaceChildren();$("o-icount").textContent=o.issues.filter(i=>i.status!=="fixed").length+" открыто";
+  if(!o.issues.length)iss.append(el("div","muted spad","Пока ничего не отслеживается."));
+  o.issues.slice().reverse().forEach(i=>{const r=el("div","oissue");r.append(el("span","badge "+(i.status==="open"?"WARNING":i.status==="fixed"?"PASS":"INFO"),i.status),el("b","",i.title),el("span","muted"," · "+i.id+" · задачи: "+i.seenIn.join(", ")),el("div","muted",i.note));iss.append(r)});
+  const reps=$("o-reports");const keep=[...reps.querySelectorAll("details[open]")].map(d=>d.dataset.id);keep.forEach(x=>obsOpen.add(x));reps.replaceChildren();
+  if(!o.reports.length)reps.append(el("div","muted spad","Отчётов пока нет. Наблюдатель запустится по cron или кнопкой «Запустить сейчас»."));
+  o.reports.forEach(r=>{const d=el("details","orep");d.dataset.id=r.id;d.open=obsOpen.has(r.id);d.append(el("summary","",r.id+" · "+new Date(r.at).toLocaleString([],{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})+" · "+r.title+" ("+r.covers.length+" задач)"));
+    const body=el("div","omd",obsReports.get(r.id)||"загружаю…");d.append(body);
+    const load=async()=>{if(obsReports.has(r.id))return;try{const j=await getJSON(q("/api/observer/reports/"+r.id));obsReports.set(r.id,j.report.markdown);body.textContent=j.report.markdown}catch(e){body.textContent=e.message}};
+    d.addEventListener("toggle",()=>{if(d.open){obsOpen.add(r.id);load()}else obsOpen.delete(r.id)});if(d.open)load();reps.append(d)});
+}
 function renderSupervisor(){
   const st=SUP&&SUP.status,journal=(SUP&&SUP.journal)||[],ctl=!!S.control;if(!supUi)supUi=makeSupUi();const u=supUi;
   const none=$("s-none");none.hidden=!!st;

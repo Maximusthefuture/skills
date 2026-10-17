@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { AppError, isAppError } from "../errors.js";
 import { readGitContext } from "../git.js";
 import { assertChangeName, changePath, hasChange, listChanges, type Exec } from "../openspec.js";
@@ -21,7 +21,10 @@ import type { Supervisor } from "../supervisor/supervisor.js";
 import type { Scheduler } from "../schedule/scheduler.js";
 import { buildUiState } from "./state.js";
 import { nextRun, parseCron } from "../schedule/cron.js";
-import { branchDiff, fileDiff, mergeProjectInto, removeWorktrees, type MergeResult } from "../worktrees.js";
+import { branchDiff, fileDiff, gitRoot, mergeProjectInto, removeWorktrees, type MergeResult } from "../worktrees.js";
+import { ObserverStore } from "../observer/store.js";
+import type { Observer } from "../observer/observer.js";
+import { PACKAGE_DIR } from "./runners.js";
 
 export interface UiServer {
   server: Server;
@@ -40,10 +43,14 @@ export interface UiProject {
   prices?: () => Promise<{ prices?: Prices; error?: string }>;
   /** The agent that looks after the others when something goes wrong (runners.json "supervisor"). */
   supervisor?: Supervisor;
+  /** Looks back over closed tasks for the system's problems (runners.json "observer"). */
+  observer?: Observer;
   /** Tasks created on a cron (runners.json "schedules"). */
   scheduler?: Scheduler;
   /** Cost limit (USD) of a task created on the page without one (runners.json "maxTaskCostUsd"). */
   maxTaskCostUsd?: number;
+  /** "Влить в проект": squash (default) or merge. */
+  mergeStrategy?: "squash" | "merge";
 }
 
 export interface UiOptions {
@@ -55,6 +62,8 @@ export interface UiOptions {
   prices?: UiProject["prices"];
   /** Runs the openspec CLI for "archive" (tests replace it). */
   openspecExec?: Exec;
+  /** Tests: the network where accepted agent-network proposals become tasks (default: agent-network-mcp's own repository). */
+  agentNetworkDir?: string;
   /** Tests: the git merge of "Влить в проект". */
   merge?: (project: string, branch: string, message: string) => Promise<MergeResult>;
 }
@@ -68,10 +77,13 @@ interface Project {
   journal: Journal;
   pool?: RunnerPool;
   supervisor?: Supervisor;
+  /** Looks back over closed tasks for the system's problems (runners.json "observer"). */
+  observer?: Observer;
   scheduler?: Scheduler;
   operator?: NetworkService;
   prices?: UiProject["prices"];
   maxTaskCostUsd?: number;
+  mergeStrategy?: "squash" | "merge";
   git?: { at: number; value: Promise<GitContext | null> };
 }
 
@@ -84,8 +96,8 @@ const json = (status: number, value: unknown): Reply => ({ status, type: "applic
 const text = (status: number, body: string): Reply => ({ status, type: "text/plain; charset=utf-8", body });
 
 /** The lead's own branch of a task: its auto worktree's, else the branch checked out in its own folder. */
-async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { agents: string[] }): Promise<{ project: string; branch: string }> {
-  const lead = task.agents[0]!;
+async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { agents: string[] }, agentId?: string): Promise<{ project: string; branch: string }> {
+  const lead = agentId && task.agents.includes(agentId) ? agentId : task.agents[0]!;
   const folder = p.pool?.agentFolder(lead);
   const project = folder?.worktree?.project ?? p.projectDir;
   const branch = folder?.worktree?.branch ?? (folder?.cwd && resolve(folder.cwd) !== p.projectDir ? (await readGitContext(folder.cwd))?.branch : undefined);
@@ -93,6 +105,11 @@ async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { 
     throw new AppError("INVALID_INPUT", `${lead} (the lead) has no branch of its own: it works in the project folder${folder?.cwd ? ` or on no branch in ${folder.cwd}` : ""}, so its commits are there already`);
   }
   return { project, branch };
+}
+
+/** The network of agent-network-mcp's own repository: where accepted improvements of the swarm itself become tasks. */
+async function agentNetworkNetwork(): Promise<string> {
+  return join((await gitRoot(PACKAGE_DIR)) ?? PACKAGE_DIR, ".agent-network");
 }
 
 /** A path for the page: the home folder as "~". */
@@ -132,8 +149,10 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       ...(spec.runners ? { pool: spec.runners, operator: await NetworkService.create(networkDir, { id: "operator", type: "ui" }) } : {}),
       ...(spec.prices ? { prices: spec.prices } : {}),
       ...(spec.runners && spec.supervisor ? { supervisor: spec.supervisor } : {}),
+      ...(spec.runners && spec.observer ? { observer: spec.observer } : {}),
       ...(spec.runners && spec.scheduler ? { scheduler: spec.scheduler } : {}),
       ...(spec.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: spec.maxTaskCostUsd } : {}),
+      ...(spec.mergeStrategy ? { mergeStrategy: spec.mergeStrategy } : {}),
     });
   }
   const host = opts.host ?? "127.0.0.1";
@@ -312,15 +331,18 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       if (diffOf && p.pool) {
         // what "Влить в проект" brings: the lead's branch since it left the project's branch (after the merge: the merge itself)
         // the list first (commits, files with +/-); one file's diff with ?file=<path>, when the page opens it
+        // ?agent=<id>: while the task runs, any agent's own branch (the lead's by default)
         const task = await new TaskStore(p.fs).get(decodeURIComponent(diffOf[1]!));
-        const lead = task.merged && !task.merged.already ? null : await leadBranch(p, task);
+        const lead = task.merged && !task.merged.already ? null : await leadBranch(p, task, url.searchParams.get("agent") ?? undefined);
         const range: { project: string; base: string; head: string; mode: "two-dot" | "three-dot"; branch: string; merged: boolean } = lead
           ? { project: lead.project, base: "HEAD", head: lead.branch, mode: "three-dot", branch: lead.branch, merged: false }
           : { project: p.projectDir, base: `${task.merged!.commit}^1`, head: task.merged!.commit, mode: "two-dot", branch: task.merged!.branch, merged: true };
         const head = range.head;
         const file = url.searchParams.get("file");
         if (file !== null) return json(200, await fileDiff(range.project, range.base, head, range.mode, file));
-        return json(200, { ...(await branchDiff(range.project, range.base, head, range.mode)), branch: range.branch, merged: range.merged });
+        // the agents whose branch can be shown (an own branch, not the project folder)
+        const branches = (await Promise.all(task.agents.map(async (a) => ((await leadBranch(p, task, a).catch(() => null)) ? a : null)))).filter((a): a is string => !!a);
+        return json(200, { ...(await branchDiff(range.project, range.base, head, range.mode)), branch: range.branch, merged: range.merged, agents: branches });
       }
       if (path === "/api/schedules/preview") {
         // the form shows when a cron would run before it is saved
@@ -345,6 +367,26 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         const agent = url.searchParams.get("agent");
         const events = p.pool?.activity(after, limit, agent ?? undefined) ?? [];
         return json(200, { events, lastSeq: events.at(-1)?.seq ?? after });
+      }
+      if (path === "/api/roles") {
+        const reader = p.operator ?? (await NetworkService.create(p.networkDir, { id: "operator", type: "ui" }));
+        return json(200, { roles: await reader.roles() });
+      }
+      if (path === "/api/observer") {
+        if (!p.observer) return json(200, { observer: null });
+        const store = await ObserverStore.open(p.networkDir);
+        return json(200, {
+          observer: await p.observer.status(),
+          reports: (await store.reports()).map(({ id, at, title, covers }) => ({ id, at, title, covers })).reverse(),
+          proposals: (await store.proposals()).reverse(),
+          issues: await store.issues(),
+          agentNetworkNetwork: tilde((opts.agentNetworkDir ?? (await agentNetworkNetwork()))),
+        });
+      }
+      const rep = /^\/api\/observer\/reports\/(report-\d+)$/.exec(path);
+      if (rep) {
+        const r = await (await ObserverStore.open(p.networkDir)).report(rep[1]!);
+        return r ? json(200, { report: r }) : text(404, "no such report");
       }
       if (path === "/api/supervisor") {
         // ?all=1: the whole journal, for looking back; by default the latest 100
@@ -372,7 +414,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const body = await readJson(req);
 
     if (path === "/api/tasks") {
-      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown };
+      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; clarify?: unknown };
       // the page sends "" for "no limit"; a field it leaves out gets the config's maxTaskCostUsd
       const maxCostUsd = b.maxCostUsd === undefined ? p.maxTaskCostUsd : b.maxCostUsd === "" || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd);
       const agents = Array.isArray(b.agents) ? b.agents.map(String) : [];
@@ -384,6 +426,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         agents,
         ...(openspec ? { openspec } : {}),
         ...(typeof b.proposes === "string" && b.proposes.trim() ? { proposes: b.proposes.trim() } : {}),
+        ...(b.clarify === true ? { clarify: true } : {}),
         ...(typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? { verifyCommand: b.verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
@@ -396,12 +439,46 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const acted = async (taskId: string, text: string) => {
       if (bySupervisor) await p.journal.add({ kind: "action", by: "supervisor", taskId, text });
     };
-    const taskAction = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel|message|merge)$/.exec(path);
+    const taskAction = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel|message|merge|review|revert)$/.exec(path);
     if (taskAction) {
       const id = decodeURIComponent(taskAction[1]!);
+      if (taskAction[2] === "revert") {
+        const task = await operator.tasks.get(id);
+        const reverted = await operator.revertTask({ taskId: id, project: task.merged ? (await leadBranch(p, task).catch(() => null))?.project ?? p.projectDir : p.projectDir });
+        await acted(id, `reverted the merge of ${id}`);
+        return json(200, { task: reverted });
+      }
+      if (taskAction[2] === "review") {
+        // the operator's comments on lines of a diff: to the lead while the task runs, a follow-up task once it is done
+        const b = body as { comments?: unknown; branch?: unknown };
+        const comments = (Array.isArray(b.comments) ? b.comments : []).map((c) => c as { file?: unknown; line?: unknown; code?: unknown; text?: unknown })
+          .filter((c) => typeof c.file === "string" && typeof c.text === "string" && c.text.trim());
+        if (!comments.length) throw new AppError("INVALID_INPUT", "No comments: click a line of the diff and write what to change");
+        if (comments.length > 50) throw new AppError("INVALID_INPUT", "At most 50 comments at once");
+        const lines = comments.map((c) => `- ${String(c.file)}${Number.isInteger(c.line) ? `:${c.line}` : ""}${typeof c.code === "string" && c.code.trim() ? ` \`${c.code.trim().slice(0, 160)}\`` : ""} — ${String(c.text).trim()}`);
+        const task = await operator.tasks.get(id);
+        const where = typeof b.branch === "string" && b.branch ? ` (branch ${b.branch})` : "";
+        const list = comments.map((c) => ({ file: String(c.file), ...(Number.isInteger(c.line) ? { line: c.line as number } : {}), ...(typeof c.code === "string" ? { code: c.code } : {}), text: String(c.text) }));
+        if (task.status === "ACTIVE" || task.status === "BLOCKED") {
+          const added = await operator.addReviewComments(id, list);
+          const numbered = added.map((c) => `- ${c.id} ${c.file}${c.line ? `:${c.line}` : ""}${c.code ? ` \`${c.code}\`` : ""} — ${c.text}`);
+          const message = await operator.messageLead({ taskId: id, content: `Review comments on the diff${where}: fix each (or have its owner fix it) and mark it with resolve_comments — fixed, or declined with the reason; complete() waits for them:\n${numbered.join("\n")}` });
+          await acted(id, `review comments to ${message.to}: ${comments.length}`);
+          return json(201, { message, sent: "lead", to: message.to, comments: added });
+        }
+        const followUp = await operator.createTaskAsOperator({
+          title: `Fix the review comments on ${task.id}: ${task.title}`.slice(0, 200),
+          description: `The operator reviewed the result of ${task.id} ("${task.title}")${where} and asks for these changes:\n${lines.join("\n")}\n\nFix each one in the same branches as ${task.id}; if one is wrong, say why in the result.`,
+          agents: task.agents.filter((a) => !task.spawned?.some((s) => s.id === a)).length >= 2 ? task.agents.filter((a) => !task.spawned?.some((s) => s.id === a)) : task.agents,
+          ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+          ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
+        });
+        await operator.addReviewComments(followUp.id, list); // the follow-up's lead answers them like any review comments
+        return json(201, { task: followUp, sent: "task" });
+      }
       if (taskAction[2] === "merge") {
         const { project, branch } = await leadBranch(p, await operator.tasks.get(id));
-        const merged = await operator.mergeTask({ taskId: id, project, branch }, opts.merge);
+        const merged = await operator.mergeTask({ taskId: id, project, branch, strategy: p.mergeStrategy ?? "squash" }, opts.merge);
         await acted(id, `merged ${branch} into ${merged.merged!.into}`);
         return json(200, { task: merged });
       }
@@ -435,6 +512,51 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const task = await operator.unblockTask(id, rounds === undefined ? 1 : Number(rounds), usd === undefined ? undefined : Number(usd));
       await acted(id, `unblocked with ${task.maxFixRounds} fix rounds in all`);
       return json(200, { task });
+    }
+    if (path === "/api/roles/save") {
+      const b = body as { taskId?: unknown; agentId?: unknown; name?: unknown; overwrite?: unknown };
+      return json(201, { role: await operator.saveRole({ taskId: String(b.taskId ?? ""), agentId: String(b.agentId ?? ""), ...(typeof b.name === "string" ? { name: b.name } : {}), overwrite: b.overwrite === true }) });
+    }
+    const delRole = /^\/api\/roles\/([a-z][a-z0-9-]*)\/delete$/.exec(path);
+    if (delRole) {
+      await operator.deleteRole(delRole[1]!);
+      return json(200, { roles: await operator.roles() });
+    }
+    if (path === "/api/observer/run" || path === "/api/observer/model") {
+      if (!p.observer) return text(404, 'no observer: add an "observer" section to runners.json');
+      if (path === "/api/observer/model") {
+        p.observer.setModel(String((body as { model?: unknown }).model ?? ""));
+        return json(200, { observer: await p.observer.status() });
+      }
+      return json(202, { run: await p.observer.runNow("button") });
+    }
+    const prop = /^\/api\/observer\/proposals\/(prop-\d+)\/(accept|reject)$/.exec(path);
+    if (prop) {
+      const store = await ObserverStore.open(p.networkDir);
+      const id = prop[1]!;
+      if (prop[2] === "reject") {
+        const reason = String((body as { reason?: unknown }).reason ?? "").trim();
+        if (!reason) throw new AppError("INVALID_INPUT", "Say why: the observer reads it and does not propose this again");
+        return json(200, { proposal: await store.decide(id, { status: "rejected", rejectReason: reason }) });
+      }
+      // accepted: a task for the swarm, in this project's network or in agent-network-mcp's own
+      const proposal = (await store.proposals()).find((x) => x.id === id);
+      if (!proposal) throw new AppError("INVALID_INPUT", `No proposal ${id}`);
+      if (proposal.status !== "open") throw new AppError("ALREADY_COMPLETED", `${id} is ${proposal.status} already`);
+      const b = body as { agents?: unknown };
+      const agents = Array.isArray(b.agents) ? b.agents.map(String).filter(Boolean) : [];
+      const target = proposal.target === "agent-network" ? (opts.agentNetworkDir ?? (await agentNetworkNetwork())) : p.networkDir;
+      const creator = target === p.networkDir ? operator : await NetworkService.create(target, { id: "operator", type: "ui" });
+      const task = await creator.createTaskAsOperator({
+        title: proposal.title,
+        description:
+          `From the observer (${proposal.reportId}, ${proposal.id}, priority ${proposal.priority}).\n\nProblem: ${proposal.problem}\n\nEvidence: ${proposal.evidence}\n\nImpact: ${proposal.impact}\n\nFix: ${proposal.fix}` +
+          (proposal.target === "agent-network" ? "\n\nThis is the agent-network-mcp repository itself: keep the tests green (npm test) and the README in step." : ""),
+        agents,
+        clarify: true,
+        ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
+      });
+      return json(201, { proposal: await store.decide(id, { status: "accepted", taskId: task.id, network: target }), task: { id: task.id, network: tilde(target), here: target === p.networkDir } });
     }
     if (path === "/api/worktrees/clean") {
       // remove the agents' auto worktrees and merged branches: only while none of them works on anything

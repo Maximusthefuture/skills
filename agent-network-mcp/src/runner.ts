@@ -193,6 +193,8 @@ export interface RunnerOptions {
   urgent?: UrgentChannel;
   /** Before a session starts: e.g. create the agent's worktree again after the operator removed it. Throwing = not now. */
   prepare?: () => Promise<void>;
+  /** The runner gave up on a task (maxRestarts sessions failed): the page blocks the task, so the operator sees it. */
+  onGiveUp?: (taskId: string, reason: string) => Promise<void> | void;
   /** After a session is recorded, before the runner looks at the task again (the page checks the task's cost limit here). */
   onSessionEnd?: (taskId: string) => Promise<void> | void;
 }
@@ -478,6 +480,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       gaveUp.set(task.id, await signature(after));
       plannedEnds.delete(task.id);
       say(`${task.id}: ${attempt} sessions ended before the task was done (last exit ${code}); giving up until the task changes`);
+      // the others would wait for this agent forever: the operator has to see it (unblocking it changes the task: we try again)
+      await Promise.resolve(opts.onGiveUp?.(task.id, `${attempt} sessions ended before its part was done (last exit ${code})`)).catch((e: Error) => log(`after giving up: ${e.message}`));
       if (opts.once) return 1;
       continue;
     }

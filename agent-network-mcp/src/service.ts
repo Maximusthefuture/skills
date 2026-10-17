@@ -1,9 +1,9 @@
-import { stat } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { AppError } from "./errors.js";
 import { EventHub } from "./events/eventHub.js";
 import { readGitContext } from "./git.js";
-import { mergeBranch, type MergeResult } from "./worktrees.js";
+import { mergeBranch, revertCommit, type MergeResult, type MergeStrategy } from "./worktrees.js";
 import { writeHandoffMarker } from "./handoff.js";
 import { archiveChange, assertChangeName, changePath, hasChange, readChange, type Exec } from "./openspec.js";
 import { anyDeclared, covers, findOverlaps, matches, normalizePath, overlaps, ownersOf } from "./ownership.js";
@@ -32,6 +32,8 @@ import type {
   MessageType,
   NetworkEvent,
   QuestionChoices,
+  ReviewComment,
+  SpawnRole,
   SubtaskList,
   SyncFinding,
   SyncReport,
@@ -79,7 +81,11 @@ export interface NewTaskInput {
   maxCostUsd?: number;
   /** The task writes this new OpenSpec change (openspec/changes/<name>/): the lead writes it, the others review it. */
   proposes?: string;
+  /** The lead first asks what is unclear, or says how it understood the task, before it may propose. */
+  clarify?: boolean;
 }
+
+const ROLE_NAME = /^[a-z][a-z0-9-]{1,30}$/;
 
 /** A cost limit: a positive amount in USD (cents are kept). */
 export function checkCostLimit(value: unknown, what = "maxCostUsd"): number {
@@ -285,9 +291,166 @@ export class NetworkService {
     const task = await this.tasks.create({
       title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps,
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}), ...(change ? { openspec: change.name } : {}), ...(proposes ? { proposes } : {}),
+      ...(input.clarify ? { clarify: true } : {}),
     });
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
+  }
+
+  /** The operator's review comments on the task's diff: tasks/<id>/review.json. */
+  async reviewComments(taskId: string): Promise<ReviewComment[]> {
+    return (await this.fs.readJson<ReviewComment[]>(["tasks", assertTaskId(taskId), "review.json"])) ?? [];
+  }
+
+  /** Operator: comments on lines of the diff, open until the lead marks each fixed or declined. */
+  async addReviewComments(taskId: string, comments: { file: string; line?: number; code?: string; text: string }[]): Promise<ReviewComment[]> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator writes review comments");
+    return this.fs.withLock(this.tasks.lockPath(assertTaskId(taskId)), async () => {
+      const all = await this.reviewComments(taskId);
+      let n = all.reduce((m, c) => Math.max(m, Number(c.id.slice(3))), 0);
+      const at = new Date().toISOString();
+      const added: ReviewComment[] = comments.map((c) => ({
+        id: `rc-${++n}`, file: c.file, ...(Number.isInteger(c.line) ? { line: c.line } : {}), ...(c.code?.trim() ? { code: c.code.trim().slice(0, 200) } : {}), text: c.text.trim(), at, status: "open" as const,
+      }));
+      await this.fs.writeJson(["tasks", taskId, "review.json"], [...all, ...added]);
+      await this.emit({ type: "REVIEW_COMMENTS", taskId, sourceAgent: OPERATOR, payload: { ids: added.map((c) => c.id) } });
+      return added;
+    });
+  }
+
+  /** The lead: each open comment fixed (what was done) or declined (why); the task cannot be handed in while any is open. */
+  async resolveReviewComments(taskId: string, resolve: { id: string; status: string; note?: string }[]): Promise<ReviewComment[]> {
+    await this.requireMe();
+    return this.fs.withLock(this.tasks.lockPath(assertTaskId(taskId)), async () => {
+      const task = await this.requireMember(taskId);
+      if (this.phases.integrator(task) !== this.me) throw new AppError("FORBIDDEN", `The lead (${this.phases.integrator(task)}) answers the operator's review comments`);
+      const all = await this.reviewComments(taskId);
+      const at = new Date().toISOString();
+      for (const r of resolve) {
+        const c = all.find((x) => x.id === r.id);
+        if (!c) throw new AppError("INVALID_INPUT", `No review comment ${r.id}; the open ones: ${all.filter((x) => x.status === "open").map((x) => x.id).join(", ") || "none"}`);
+        if (r.status !== "fixed" && r.status !== "declined") throw new AppError("INVALID_INPUT", `${r.id}: status is "fixed" or "declined"`);
+        if (r.status === "declined" && !r.note?.trim()) throw new AppError("INVALID_INPUT", `${r.id}: declining needs a note — why it stays as it is`);
+        Object.assign(c, { status: r.status, ...(r.note?.trim() ? { note: r.note.trim().slice(0, 1000) } : {}), resolvedAt: at });
+      }
+      await this.fs.writeJson(["tasks", taskId, "review.json"], all);
+      await this.emit({ type: "REVIEW_RESOLVED", taskId, sourceAgent: this.me, payload: { resolved: resolve.map((r) => `${r.id}:${r.status}`) } });
+      return all;
+    });
+  }
+
+  /** The lead may not hand its part or the integration in while the operator's comments are open. */
+  private async requireReviewDone(task: Task): Promise<void> {
+    if (this.phases.integrator(task) !== this.me) return;
+    const open = (await this.reviewComments(task.id)).filter((c) => c.status === "open");
+    if (open.length) {
+      throw new AppError(
+        "REVIEW_OPEN",
+        `The operator's review comments are open: ${open.map((c) => `${c.id} (${c.file}${c.line ? `:${c.line}` : ""})`).join(", ")}. Fix each (or have its owner fix it) and mark it with resolve_comments({resolve: [{id, status: "fixed", note}]}), or decline it with a reason (status "declined"); then complete() again.`,
+        { open: open.map((c) => c.id) },
+      );
+    }
+  }
+
+  /** An agent's tool call was refused: <network>/observer/errors/<agent>.jsonl, for the observer's look across tasks. */
+  async recordProtocolError(e: { tool: string; code: string; taskId?: string; phase?: string }): Promise<void> {
+    const dir = join(this.fs.root, "observer", "errors");
+    await mkdir(dir, { recursive: true });
+    await appendFile(join(dir, `${assertAgentId(this.me)}.jsonl`), `${JSON.stringify({ at: new Date().toISOString(), agentId: this.me, ...e })}\n`);
+  }
+
+  /** Operator (the page): keep a role a lead wrote in the project's library, so later leads take it by name. */
+  async saveRole(input: { taskId: string; agentId: string; name?: string; overwrite?: boolean }): Promise<{ name: string; path: string }> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator adds roles to the library");
+    const task = await this.tasks.get(assertTaskId(input.taskId));
+    const s = task.spawned?.find((x) => x.id === input.agentId);
+    if (!s?.role) throw new AppError("INVALID_INPUT", `${input.agentId} of ${task.id} has no role of its own`);
+    const name = (input.name?.trim() || s.role.name).toLowerCase();
+    if (!ROLE_NAME.test(name)) throw new AppError("INVALID_INPUT", "A role name of lowercase letters, digits and -");
+    const path = join(this.fs.root, "roles", `${name}.md`);
+    if (!input.overwrite && (await stat(path).then(() => true, () => false))) throw new AppError("ALREADY_COMPLETED", `The library has a role "${name}" already: overwrite it or pick another name`);
+    await mkdir(join(this.fs.root, "roles"), { recursive: true });
+    const text = s.role.instructions.startsWith("#") ? s.role.instructions : `# ${name}: ${s.reason.split("\n")[0]!.slice(0, 160)}\n\n${s.role.instructions}`;
+    await writeFile(path, `${text}\n`);
+    return { name, path };
+  }
+
+  /** Operator: remove a role from the library. */
+  async deleteRole(name: string): Promise<void> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator changes the role library");
+    if (!ROLE_NAME.test(name)) throw new AppError("INVALID_INPUT", "No such role");
+    await rm(join(this.fs.root, "roles", `${name}.md`));
+  }
+
+  /** The lead of the task has written to the operator in it (a question or a note): the task was checked (clarify). */
+  async leadWroteOperator(task: Task): Promise<boolean> {
+    const lead = this.phases.integrator(task);
+    return (await this.messages.list(task.id)).some((m) => m.from === lead && m.to === OPERATOR);
+  }
+
+  /** What the page lets leads spawn (<network>/spawn.json, written from runners.json "spawn" when the page starts). */
+  async spawnTemplates(): Promise<{ templates: { name: string; description: string; model?: string }[]; maxPerTask: number }> {
+    return (await this.fs.readJson<{ templates: { name: string; description: string; model?: string }[]; maxPerTask: number }>(["spawn.json"])) ?? { templates: [], maxPerTask: 0 };
+  }
+
+  /**
+   * The lead adds an agent to its task's team from a template (DISCUSS, before the agreement): the agent joins the task,
+   * and the page starts its runner (in its own worktree when the template has one). Bounded by the template's maxPerTask.
+   */
+  /** The project's role library: <network>/roles/<name>.md (the first line describes it). */
+  async roles(): Promise<{ name: string; description: string; instructions: string }[]> {
+    const dir = join(this.fs.root, "roles");
+    const out: { name: string; description: string; instructions: string }[] = [];
+    for (const f of (await readdir(dir).catch(() => [] as string[])).filter((x) => x.endsWith(".md")).sort()) {
+      const instructions = (await readFile(join(dir, f), "utf8")).trim();
+      out.push({ name: f.slice(0, -3), description: instructions.split("\n")[0]!.replace(/^#+\s*/, "").slice(0, 200), instructions });
+    }
+    return out;
+  }
+
+  async spawnAgent(input: { taskId: string; template: string; id?: string; reason: string; role?: string; instructions?: string }): Promise<{ task: Task; agentId: string }> {
+    await this.requireMe();
+    return this.mutate(input.taskId, async (task) => {
+      if (this.phases.integrator(task) !== this.me) throw new AppError("FORBIDDEN", `Only the lead (${this.phases.integrator(task)}) adds agents to ${task.id}`);
+      this.requirePhase(task, "DISCUSS");
+      if (await this.agreements.find(task.id)) throw new AppError("INVALID_PHASE", "Add agents before you propose: the agreement needs an assignment for every agent of the task");
+      const { templates, maxPerTask } = await this.spawnTemplates();
+      if (!templates.length) throw new AppError("INVALID_INPUT", 'Nothing to spawn from: the operator has no "spawn" templates in runners.json');
+      const template = templates.find((t) => t.name === input.template);
+      if (!template) throw new AppError("INVALID_INPUT", `No template "${input.template}"; the templates: ${templates.map((t) => t.name).join(", ")}`, { templates: templates.map((t) => t.name) });
+      const spawned = task.spawned ?? [];
+      if (spawned.length >= maxPerTask) throw new AppError("INVALID_INPUT", `This task added ${spawned.length} agent(s) already, the limit is ${maxPerTask}`);
+      if (!input.reason?.trim()) throw new AppError("INVALID_INPUT", "reason: which part of the work the new agent takes and why the team needs it");
+      // its role: written by the lead now (role + instructions), or taken from the project's library by name
+      let role: SpawnRole | undefined;
+      const roleName = input.role?.trim();
+      if (roleName) {
+        if (!ROLE_NAME.test(roleName)) throw new AppError("INVALID_INPUT", "role: a name of lowercase letters, digits and -, e.g. 'architect'");
+        if (input.instructions?.trim()) {
+          const text = input.instructions.trim();
+          if (text.length < 40 || text.length > 6000) throw new AppError("INVALID_INPUT", "instructions: 40..6000 characters — what this agent does in the task, what it looks at, what it must not do, how it reports");
+          role = { name: roleName, instructions: text, source: "lead" };
+        } else {
+          const found = (await this.roles()).find((r) => r.name === roleName);
+          if (!found) throw new AppError("INVALID_INPUT", `No role "${roleName}" in the project's library; write it with instructions, or use one of: ${(await this.roles()).map((r) => r.name).join(", ") || "(none yet)"}`);
+          role = { name: roleName, instructions: found.instructions, source: "library" };
+        }
+      } else if (input.instructions?.trim()) {
+        throw new AppError("INVALID_INPUT", "instructions need a role name: role: 'architect', instructions: '...'");
+      }
+      // a fresh id: never one of a registered agent or one already in a task
+      const taken = new Set([...(await this.agents.list()).map((a) => a.id), ...(await this.tasks.list()).flatMap((t) => t.agents), OPERATOR]);
+      let id = input.id?.trim();
+      if (id) {
+        assertAgentId(id, "id");
+        if (taken.has(id)) throw new AppError("INVALID_INPUT", `The id ${id} is taken: leave id out for a fresh one`);
+      } else {
+        for (let n = 2; ; n++) if (!taken.has((id = `${template.name}-${n}`))) break;
+      }
+      const saved = await this.tasks.save({ ...task, agents: [...task.agents, id!], spawned: [...spawned, { id: id!, template: template.name, by: this.me, at: new Date().toISOString(), reason: input.reason.trim(), ...(role ? { role } : {}) }] });
+      await this.emit({ type: "AGENT_SPAWNED", taskId: task.id, sourceAgent: this.me, payload: { agentId: id, template: template.name, reason: input.reason.trim(), ...(role ? { role: role.name, roleSource: role.source } : {}) } });
+      return { task: saved, agentId: id! };
+    });
   }
 
   /** A change-writing task: a free name in a project that uses OpenSpec (openspec/ exists; we never create it). */
@@ -332,6 +495,13 @@ export class NetworkService {
         await this.emit({ type: "TASK_UNBLOCKED", taskId, sourceAgent: "operator", payload: { extraUsd: usd, maxCostUsd } });
         return this.advance(taskId);
       }
+      if (task.blockedBy === "runner") {
+        // the runner that gave up sees the task changed and tries again from a fresh session
+        const { blockedReason: _r, blockedBy: _b, ...open } = task;
+        await this.tasks.save({ ...open, status: "ACTIVE" });
+        await this.emit({ type: "TASK_UNBLOCKED", taskId, sourceAgent: "operator", payload: { kind: "runner" } });
+        return this.advance(taskId);
+      }
       if (usd !== undefined) throw new AppError("INVALID_INPUT", `Task ${taskId} is blocked by its fix rounds, not by money: give it rounds`);
       const { blockedReason: _drop, handover: _handover, takeover: _takeover, ...rest } = task;
       // unblockedAtRound: the fix held back in this round goes ahead even if it was stopped as a stalled fix
@@ -359,6 +529,20 @@ export class NetworkService {
     });
   }
 
+  /** Operator (the page): an agent's runner gave up on the task; without it the others wait forever, so it goes to the operator. */
+  async blockForRunner(taskId: string, agentId: string, reason: string): Promise<Task | null> {
+    assertTaskId(taskId);
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator blocks a task for a runner");
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      if (task.status !== "ACTIVE") return null;
+      const why = `${agentId}'s runner gave up: ${reason}; see its log on the Runners tab. Try again (the runner starts afresh) or cancel`;
+      const saved = await this.tasks.save({ ...task, status: "BLOCKED", blockedReason: why, blockedBy: "runner" });
+      await this.emit({ type: "TASK_BLOCKED", taskId, sourceAgent: OPERATOR, payload: { phase: task.phase, reason: why, kind: "runner", agentId, round: task.syncRound } });
+      return saved;
+    });
+  }
+
   async getTask(taskId: string): Promise<Task> {
     await this.requireMe();
     return this.requireMember(taskId);
@@ -375,6 +559,12 @@ export class NetworkService {
   }): Promise<{ agreement: Agreement; phase: Task["phase"] }> {
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "DISCUSS");
+      if (task.clarify && !(await this.leadWroteOperator(task))) {
+        throw new AppError(
+          "CLARIFY_FIRST",
+          `${task.id} asks the lead to check the task first: ask the operator what is unclear (send_message({to: "operator", message, options, recommended})), or tell it how you understood the task (send_message({to: "operator", fyi: true, message: "How I understand it: ... No questions."})); then propose().`,
+        );
+      }
       const ids = input.assignments.map((a) => assertAgentId(a.agentId));
       if (new Set(ids).size !== ids.length) throw new AppError("INVALID_INPUT", "Each agent may have only one assignment");
       for (const id of ids) if (!task.agents.includes(id)) throw new AppError("NOT_ASSIGNED", `Agent '${id}' is not part of ${task.id}`);
@@ -722,6 +912,7 @@ export class NetworkService {
     const commits = (input.commits ?? []).map(assertCommit);
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "IMPLEMENT");
+      await this.requireReviewDone(task);
       const existing = await this.implementations.find(task.id, this.me);
       if (!existing) throw new AppError("NOT_STARTED", "Call implementation_start before implementation_complete");
       if (existing.status === "READY_FOR_SYNC") throw new AppError("ALREADY_COMPLETED", "Your implementation is already READY_FOR_SYNC");
@@ -796,8 +987,8 @@ export class NetworkService {
    * Refused, with nothing changed, on conflicts or uncommitted changes in the project (see worktrees.mergeBranch).
    */
   async mergeTask(
-    input: { taskId: string; project: string; branch: string },
-    merge: (project: string, branch: string, message: string) => Promise<MergeResult> = mergeBranch,
+    input: { taskId: string; project: string; branch: string; strategy?: MergeStrategy },
+    merge: (project: string, branch: string, message: string, strategy?: MergeStrategy) => Promise<MergeResult> = mergeBranch,
   ): Promise<Task> {
     if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator merges a task's branch into the project");
     const taskId = assertTaskId(input.taskId);
@@ -805,10 +996,28 @@ export class NetworkService {
       const task = await this.tasks.get(taskId);
       if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `Merge once the task is DONE; ${taskId} is ${task.phase} (${task.status})`);
       if (task.merged) throw new AppError("ALREADY_COMPLETED", `${task.merged.branch} was merged into ${task.merged.into} at ${task.merged.at} (${task.merged.commit.slice(0, 7)})`);
-      const r = await merge(input.project, input.branch, `Merge ${input.branch}: ${taskId} ${task.title}`.slice(0, 200));
-      const merged = { at: new Date().toISOString(), branch: input.branch, into: r.into, commit: r.commit, already: r.already };
+      const strategy = input.strategy ?? "squash";
+      // one commit per task by default: "task-001: <title>" — the history reads by task, and one revert undoes one
+      const message = (strategy === "squash" ? `${taskId}: ${task.title}` : `Merge ${input.branch}: ${taskId} ${task.title}`).slice(0, 200);
+      const r = await merge(input.project, input.branch, message, strategy);
+      const merged = { at: new Date().toISOString(), branch: input.branch, into: r.into, commit: r.commit, already: r.already, ...(r.already ? {} : { strategy }) };
       const saved = await this.tasks.save({ ...task, merged });
       await this.emit({ type: "TASK_MERGED", taskId, sourceAgent: OPERATOR, payload: merged });
+      return saved;
+    });
+  }
+
+  /** Operator: undo a merged task with one revert commit (refused, with nothing changed, on conflicts). */
+  async revertTask(input: { taskId: string; project: string }, revert: (project: string, commit: string, message: string) => Promise<{ commit: string }> = revertCommit): Promise<Task> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator reverts a merged task");
+    const taskId = assertTaskId(input.taskId);
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      if (!task.merged || task.merged.already) throw new AppError("INVALID_INPUT", `${taskId} was not merged by the page: nothing to revert`);
+      if (task.merged.reverted) throw new AppError("ALREADY_COMPLETED", `${taskId} was reverted at ${task.merged.reverted.at} (${task.merged.reverted.commit.slice(0, 7)})`);
+      const r = await revert(input.project, task.merged.commit, `Revert ${taskId}: ${task.title}`.slice(0, 200));
+      const saved = await this.tasks.save({ ...task, merged: { ...task.merged, reverted: { at: new Date().toISOString(), commit: r.commit } } });
+      await this.emit({ type: "TASK_REVERTED", taskId, sourceAgent: OPERATOR, payload: { commit: r.commit, of: task.merged.commit } });
       return saved;
     });
   }
@@ -918,6 +1127,7 @@ export class NetworkService {
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "INTEGRATE");
       this.requireIntegrator(task);
+      if (input.status === "PASS") await this.requireReviewDone(task);
       for (const f of findings) {
         if (f.relatedAgent && !task.agents.includes(f.relatedAgent)) throw new AppError("NOT_ASSIGNED", `relatedAgent '${f.relatedAgent}' is not part of ${task.id}`);
       }

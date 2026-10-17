@@ -1,8 +1,10 @@
+import { writeFileSync } from "node:fs";
 import { mkdir, readdir, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { AppError } from "../../src/errors.js";
 import { FileStore } from "../../src/storage/fileStore.js";
+import { AgentStore } from "../../src/stores/agentStore.js";
 import { tmpDir } from "../helpers/tmp.js";
 
 async function open() {
@@ -128,5 +130,16 @@ describe("FileStore lock", () => {
     const old = new Date(Date.now() - 120_000);
     await utimes(path, old, old);
     await expect(fs.withLock(["stale-lock"], async () => "ok")).resolves.toBe("ok");
+  });
+});
+
+describe("FileStore and a file left empty by an old crash", () => {
+  it("reads it as absent, so one broken agent file does not stop the network", async () => {
+    const dir = await tmpDir();
+    const fs = await FileStore.open(dir);
+    await fs.writeJson(["agents", "backend.json"], { id: "backend", type: "test", status: "ONLINE", registeredAt: "t", lastSeenAt: "t" });
+    writeFileSync(join(dir, "agents", "qwen-developer.json"), "");
+    expect(await fs.readJson(["agents", "qwen-developer.json"])).toBeNull();
+    expect((await new AgentStore(fs).list()).map((a) => a.id)).toEqual(["backend"]);
   });
 });

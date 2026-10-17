@@ -21,7 +21,7 @@ describe("swarm tool surface", () => {
   it("exposes exactly swarm_context, create_task, send_message, propose, subtasks, complete, wait", async () => {
     const networkDir = await network();
     const backend = await spawnAgent({ id: "backend", networkDir });
-    expect(await backend.listTools()).toEqual(["build", "complete", "create_task", "propose", "send_message", "subtasks", "swarm_context", "wait"]);
+    expect(await backend.listTools()).toEqual(["build", "complete", "create_task", "propose", "resolve_comments", "send_message", "spawn_agent", "subtasks", "swarm_context", "wait"]);
   });
 
   it("registers the agent at startup, so the other agent sees it without any tool call", async () => {

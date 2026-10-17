@@ -187,3 +187,17 @@ describe("runHookCli", () => {
     expect(await runHookCli("nope", [], {}, () => undefined)).toBe(2);
   });
 });
+
+describe("pre-shell (Qwen's PreToolUse on run_shell_command)", () => {
+  it("denies compound commands and builds in the shell with what to do instead; lets the rest run", async () => {
+    const { preShellDecision } = await import("../../src/hook.js");
+    const deny = (c: string) => (preShellDecision(c) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string } } | null)?.hookSpecificOutput;
+    expect(deny("cd src && ls")).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("One plain command") });
+    expect(deny("ls | head")).toMatchObject({ permissionDecision: "deny" });
+    expect(deny("./mvnw -q test -Dtest=OrderTest")).toMatchObject({ permissionDecisionReason: expect.stringContaining('build({command: "./mvnw -q test -Dtest=OrderTest"})') });
+    expect(deny("npm test")).toMatchObject({ permissionDecision: "deny" });
+    expect(preShellDecision("git status")).toBeNull();
+    expect(preShellDecision('grep -rn "a | b" src')).toBeNull(); // a pipe inside quotes is text
+    expect(preShellDecision("npm install")).toBeNull();
+  });
+});

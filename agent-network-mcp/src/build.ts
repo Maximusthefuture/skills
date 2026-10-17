@@ -148,6 +148,6 @@ export async function runBuild(opts: { cwd: string; argv: string[]; timeoutMs: n
   const durationMs = Date.now() - started;
   const output = await readFile(logFile, "utf8");
   const logPath = relative(opts.cwd, logFile);
-  const s = summarizeBuild(output.slice(output.indexOf("\n") + 1), exitCode, durationMs, { logPath, timedOut });
+  const s = summarizeBuild(output.slice(output.indexOf("\n") + 1), exitCode, durationMs, { logPath, timedOut, cwd: opts.cwd });
   return { ok: s.ok, exitCode, timedOut, durationMs, logPath, summary: s.text, ...(s.tests ? { tests: s.tests } : {}) };
 }

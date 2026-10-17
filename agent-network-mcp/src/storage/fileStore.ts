@@ -74,6 +74,8 @@ export class FileStore {
       if (isErrno(e, "ENOENT", "ENOTDIR")) return null;
       throw e;
     }
+    // an empty file is a write that never finished (writes are atomic now; an old crash can leave one): as if absent
+    if (!raw.trim()) return null;
     return JSON.parse(raw) as T;
   }
 

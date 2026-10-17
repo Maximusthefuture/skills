@@ -30,6 +30,8 @@ export type ErrorCode =
   | "OPENSPEC_FAILED"
   | "MERGE_CONFLICT"
   | "SPEC_ONLY"
+  | "CLARIFY_FIRST"
+  | "REVIEW_OPEN"
   | "OPENSPEC_INVALID"
   | "LOCK_TIMEOUT"
   | "INTERNAL_ERROR";

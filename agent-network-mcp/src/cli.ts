@@ -17,12 +17,15 @@ import { Journal, type JournalEntry } from "./supervisor/journal.js";
 import { formatSessionLog, listSessionLogs, readSessionLog } from "./supervisor/sessionLog.js";
 import { Supervisor } from "./supervisor/supervisor.js";
 import { Scheduler } from "./schedule/scheduler.js";
+import { Spawner, writeSpawnFile } from "./spawner.js";
+import { Observer } from "./observer/observer.js";
 import { ensureWorktrees, gitRoot } from "./worktrees.js";
 
 const USAGE = `Usage:
   agent-network-mcp task create --title <t> --agents <a,b[,c]> [--description <d>] [--verify <build/test command>]
                                 [--max-fix-rounds 3] [--follow-ups 0] [--max-cost <usd>] [--openspec <change> | --propose <new-change>] [--network-dir <abs path>]
                                 --propose: the agents WRITE that OpenSpec change (the lead writes, the others review), no code
+                                --clarify: the lead first asks what is unclear (or says how it understood the task), then proposes
   agent-network-mcp task list [--network-dir <abs path>]
   agent-network-mcp task stats [--id <task-001>] [--runners runners.json] [--network-dir <abs path>]
                                 time per phase, sessions, tokens, cost (--runners: price sessions without a CLI cost with its "prices")
@@ -83,6 +86,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       "follow-ups": { type: "string" },
       openspec: { type: "string" },
       propose: { type: "string" },
+      clarify: { type: "boolean" },
       runners: { type: "string" },
       rounds: { type: "string" },
       usd: { type: "string" },
@@ -164,6 +168,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       description: values.description ?? (values.openspec || values.propose ? "" : values.title!),
       ...(values.openspec ? { openspec: values.openspec } : {}),
       ...(values.propose ? { proposes: values.propose } : {}),
+      ...(values.clarify ? { clarify: true } : {}),
       agents: values.agents.split(",").map((a) => a.trim()).filter(Boolean),
       ...(values["max-fix-rounds"] !== undefined ? { maxFixRounds: Number(values["max-fix-rounds"]) } : {}),
       ...(values.verify ? { verifyCommand: values.verify } : {}),
@@ -177,6 +182,13 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
     return 1;
   }
 }
+
+const operators = new Map<string, Promise<NetworkService>>();
+/** One operator service per network, made when first needed. */
+const operatorOf = (networkDir: string): Promise<NetworkService> => {
+  if (!operators.has(networkDir)) operators.set(networkDir, NetworkService.create(networkDir, { id: "operator", type: "ui" }));
+  return operators.get(networkDir)!;
+};
 
 async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string): Promise<number> {
   const { values } = parseArgs({
@@ -245,7 +257,12 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
       const prices = config?.path ? watchPrices(config.path) : undefined;
       // after every agent session: a task over its cost limit (maxCostUsd) is BLOCKED for the operator
       const onSessionEnd = config ? costGuard({ networkDir: dir, ...(prices ? { prices } : {}), log: (line) => out(line) }) : undefined;
-      const runners = config ? new RunnerPool(dir, config.agents, { ...(config.path ? { configPath: config.path } : {}), ...(onSessionEnd ? { onSessionEnd } : {}) }) : undefined;
+      // a runner that gave up blocks its task: the others would wait for it forever
+      const onGiveUp = async (agentId: string, taskId: string, reason: string) => {
+        const blocked = await (await operatorOf(dir)).blockForRunner(taskId, agentId, reason);
+        if (blocked) out(`[runner] ${taskId}: BLOCKED, ${agentId}'s runner gave up (${reason})`);
+      };
+      const runners = config ? new RunnerPool(dir, config.agents, { ...(config.path ? { configPath: config.path } : {}), ...(onSessionEnd ? { onSessionEnd } : {}), onGiveUp }) : undefined;
       // the supervisor watches this project's runners; it acts through the page, so it is attached once the page is up
       const supervisor =
         runners && config?.supervisor
@@ -256,19 +273,37 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         runners && config
           ? new Scheduler({ networkDir: dir, schedules: config.schedules ?? [], ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(config.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}), log: (line) => out(line) })
           : undefined;
+      // looks back over closed tasks; its calls show in the activity feed like the supervisor's
+      const observer =
+        runners && config?.observer
+          ? new Observer({ networkDir: dir, config: config.observer, ...(prices ? { prices } : {}), log: (line) => out(line), onActivity: (e) => runners.recordActivity("observer", e) })
+          : undefined;
       return {
-        networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}),
+        networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}), ...(observer ? { observer } : {}),
         ...(config?.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}),
+        ...(config?.mergeStrategy ? { mergeStrategy: config.mergeStrategy } : {}),
       };
     });
     const ui = await startUiServer(specs, { port });
     out(`Agent Network UI: ${ui.url}  (${projects.length === 1 ? `network: ${projects[0]!.dir}` : `projects: ${projects.map((p) => basename(dirname(p.dir))).join(", ")}`})  Ctrl+C to stop`);
-    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)), supervisor: s.supervisor, scheduler: s.scheduler, projectId: ui.projects[i]!.id }] : []));
-    for (const { pool, config, name, supervisor, scheduler, projectId } of pools) {
+    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)), supervisor: s.supervisor, scheduler: s.scheduler, projectId: ui.projects[i]!.id, networkDir: s.networkDir, spawner: undefined as Spawner | undefined, observer: s.observer }] : []));
+    for (const entry of pools) {
+      const { pool, config, name, supervisor, scheduler, projectId, networkDir } = entry;
+      // the templates leads may spawn from, for their MCP servers; and the loop that starts the spawned runners
+      await writeSpawnFile(networkDir, config.spawn);
+      if (config.spawn) {
+        entry.spawner = new Spawner({ networkDir, spawn: config.spawn, pool, log: (line) => out(line) });
+        entry.spawner.start();
+      }
       const auto = config.agents.filter((a) => a.autostart !== false).map((a) => a.id);
       for (const id of auto) pool.start(id);
       const where = pools.length > 1 ? ` (${name})` : "";
       out(`runners${where}: ${config.agents.map((a) => a.id).join(", ")}${auto.length ? `; started: ${auto.join(", ")}` : "; none started (autostart: false)"}`);
+      if (entry.observer) {
+        entry.observer.start();
+        out(`observer${pools.length > 1 ? ` (${name})` : ""}: ${config.observer!.cron ? `runs on ${config.observer!.cron}` : "runs from the button on its tab"}; digests of closed tasks are collected as they close`);
+      }
+      if (config.spawn) out(`spawn${pools.length > 1 ? ` (${name})` : ""}: leads may add ${config.spawn.templates.map((t) => t.name).join(", ")} (up to ${config.spawn.maxPerTask} per task)`);
       if (scheduler) {
         scheduler.start();
         const list = config.schedules ?? [];
@@ -286,7 +321,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         if (stopping) process.exit(130); // second Ctrl+C: leave now
         stopping = true;
         out("stopping the runners...");
-        void Promise.all(pools.map(({ pool, supervisor, scheduler }) => Promise.all([pool.stopAll(), supervisor?.stop(), scheduler?.stop()])))
+        void Promise.all(pools.map(({ pool, supervisor, scheduler, spawner, observer }) => Promise.all([spawner?.stop(), observer?.stop(), pool.stopAll(), supervisor?.stop(), scheduler?.stop()])))
           .then(() => ui.close())
           .then(() => process.exit(0));
       };

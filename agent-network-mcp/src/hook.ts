@@ -199,6 +199,23 @@ export async function runHook(mode: HookMode, input: HookInput, opts: HookOption
   return { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: postToolContext(agentId, fresh, stillOpen, now) } };
 }
 
+/**
+ * Qwen's PreToolUse for run_shell_command: a compound command (Qwen refuses it whole in headless mode anyway) or a build
+ * run in the shell (its whole output would stay in the context) is denied with what to do instead. Null: let it run.
+ */
+export function preShellDecision(command: string): object | null {
+  const cmd = command.trim();
+  const unquoted = cmd.replace(/'[^']*'|"[^"]*"/g, "''");
+  const deny = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
+  if (/&&|\|\||;|\||^cd\s/.test(unquoted)) {
+    return deny("One plain command per run_shell_command: no cd (you are in your folder already), no &&, ;, | — headless Qwen refuses a compound command whole. Run the parts as separate calls; search with grep_search, read with read_file.");
+  }
+  if (/^(\.\/mvnw|mvn|\.\/gradlew|gradle)\b|^(npm|pnpm|yarn)\s+(run\s+)?(test|build|verify)\b|^npx\s+(vitest|jest|tsc)\b/.test(cmd)) {
+    return deny(`Run builds and tests with the agent-network build tool instead: build({command: ${JSON.stringify(cmd)}}) — it answers with the outcome and what failed, and keeps the full log in a file, so your context stays small.`);
+  }
+  return null;
+}
+
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";
   const chunks: Buffer[] = [];
@@ -208,9 +225,19 @@ async function readStdin(): Promise<string> {
 
 /** `agent-network-mcp hook <post-tool|stop> [--network-dir <abs>] [--agent <id>]`; always exits 0. */
 export async function runHookCli(mode: string | undefined, args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, stdin: () => Promise<string> = readStdin, cwd: string = process.cwd()): Promise<number> {
-  if (mode !== "post-tool" && mode !== "stop") {
-    out("Usage: agent-network-mcp hook <post-tool|stop> [--network-dir <abs path>] [--agent <id>]");
+  if (mode !== "post-tool" && mode !== "stop" && mode !== "pre-shell") {
+    out("Usage: agent-network-mcp hook <post-tool|stop|pre-shell> [--network-dir <abs path>] [--agent <id>]");
     return 2;
+  }
+  if (mode === "pre-shell") {
+    try {
+      const input = JSON.parse((await stdin()) || "{}") as { tool_input?: { command?: unknown } };
+      const decision = typeof input.tool_input?.command === "string" ? preShellDecision(input.tool_input.command) : null;
+      if (decision) out(JSON.stringify(decision));
+    } catch {
+      // never break the agent's session
+    }
+    return 0;
   }
   try {
     const { values } = parseArgs({ args, options: { "network-dir": { type: "string" }, agent: { type: "string" } } });
@@ -223,7 +250,9 @@ export async function runHookCli(mode: string | undefined, args: string[], env: 
     } catch {
       // unreadable input: act as if there were no extra flags
     }
-    const result = await runHook(mode, input, { networkDir, ...(values.agent ? { agent: values.agent } : {}) });
+    // the agent: --agent, else AGENT_ID of the session (a runner sets it; Qwen passes its environment to hooks), else found by process
+    const agent = values.agent ?? (env.AGENT_ID && !env.AGENT_ID.includes(",") ? env.AGENT_ID : undefined);
+    const result = await runHook(mode, input, { networkDir, ...(agent ? { agent } : {}) });
     if (result) out(JSON.stringify(result));
   } catch {
     // never break the agent's session

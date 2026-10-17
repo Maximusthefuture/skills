@@ -81,6 +81,12 @@ describe("build summary", () => {
     expect(lines.length).toBeLessThanOrEqual(60);
   });
 
+  it("paths relative to the agent's folder", () => {
+    const s = summarizeBuild("[ERROR] /work/shop-tester/src/test/java/shop/LoyaltyTest.java:[20,33] cannot find symbol\n[INFO] BUILD FAILURE", 1, 1000, { cwd: "/work/shop-tester" });
+    expect(s.text).toContain("[ERROR] src/test/java/shop/LoyaltyTest.java:[20,33] cannot find symbol");
+    expect(s.text).not.toContain("/work/shop-tester");
+  });
+
   it("Maven compile error with its symbol and location", () => {
     const s = summarizeBuild(MAVEN_COMPILE, 1, 9000);
     expect(s.text).toContain("Order.java:[12,17] cannot find symbol");

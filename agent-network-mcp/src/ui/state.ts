@@ -15,7 +15,7 @@ import { SubtaskStore } from "../stores/subtaskStore.js";
 import { SyncStore } from "../stores/syncStore.js";
 import { TaskStore } from "../stores/taskStore.js";
 import type { FileStore } from "../storage/fileStore.js";
-import type { Agent, Agreement, Implementation, Message, NetworkEvent, Task } from "../types.js";
+import type { Agent, Agreement, Implementation, Message, NetworkEvent, ReviewComment, Task } from "../types.js";
 
 /** Messages and events per task the page gets: the newest ones (it scrolls them in their own boxes). */
 const TAIL = 50;
@@ -66,6 +66,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         eventsTotal: evs.total,
         subtasks: Object.fromEntries((await Promise.all(task.agents.map((a) => subtasks.get(task.id, a)))).map((l) => [l.agentId, l.items])),
         followUps: tasks.filter((t) => t.parentTaskId === task.id).map((t) => t.id),
+        /** The operator's review comments on the diff, with the lead's answers. */
+        review: (await fs.readJson<ReviewComment[]>(["tasks", task.id, "review.json"]).catch(() => null)) ?? [],
         /** The latest run of the build tool per agent (agentId -> {ok, durationMs, tests?, at, logPath}). */
         builds: Object.fromEntries((await Promise.all(task.agents.map((a) => fs.readJson<{ agentId: string }>(["tasks", task.id, "builds", `${a}.json`]).catch(() => null)))).filter((b) => b !== null).map((b) => [b!.agentId, b])),
         ...(await (async () => {
@@ -159,7 +161,7 @@ function operatorQuestions(messages: Message[]) {
 }
 
 function pickTask(t: Task) {
-  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes } = t;
+  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify } = t;
   return {
     id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
@@ -169,6 +171,10 @@ function pickTask(t: Task) {
     merged: merged ?? null,
     /** The task writes this OpenSpec change (instead of implementing one). */
     proposes: proposes ?? null,
+    /** Agents the lead added from templates (spawn_agent), with why. */
+    spawned: spawned ?? [],
+    /** The lead checks the task with the operator before it proposes. */
+    clarify: !!clarify,
     parentTaskId: parentTaskId ?? null, baseCommit: baseCommit ?? null,
     followUpBudget: maxFollowUps ? { max: maxFollowUps, used: followUpsUsed ?? 0 } : null,
     /** BLOCKED: unless the operator decides by dueAt, the lead takes over the stuck fix. */

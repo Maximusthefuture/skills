@@ -1022,3 +1022,42 @@ describe("complete() without commits on an own branch", () => {
     expect((await services.backend.implementations.find(taskId, "backend"))!.commits).toEqual([]);
   });
 });
+
+describe("replies after the first one", () => {
+  it("leave out the task's fixed fields; swarm_context always shows them", async () => {
+    const { s, task } = await setup();
+    const t = await task(["backend", "reviewer"], "Registration");
+    const first = await s.backend.sendMessage({ to: "reviewer", message: "hi" });
+    expect(first.task).toMatchObject({ id: t.id, title: "Registration", agents: ["backend", "reviewer"], description: "d" });
+    const second = await s.backend.sendMessage({ to: "reviewer", message: "again" });
+    expect(second.task).toEqual({ id: t.id, phase: "DISCUSS", status: "ACTIVE" });
+    expect(second.unchanged).toContain("title, agents and description left out");
+    expect((await s.backend.context()).task).toMatchObject({ title: "Registration", agents: ["backend", "reviewer"], lead: "backend" });
+  });
+});
+
+describe("the operator's review comments", () => {
+  it("are open until the lead marks each fixed or declined; the lead cannot hand in while one is open", async () => {
+    const { s, operator, task } = await setup();
+    const t = await task();
+    await toImplement(s);
+    const added = await operator.addReviewComments(t.id, [{ file: "src/Api.java", line: 4, code: "int limit = 14;", text: "30 days, not 14" }, { file: "src/Api.java", text: "Add a test" }]);
+    expect(added.map((c) => c.id)).toEqual(["rc-1", "rc-2"]);
+
+    const ctx = await s.backend.context();
+    expect(ctx.reviewComments).toEqual([{ id: "rc-1", file: "src/Api.java", line: 4, code: "int limit = 14;", text: "30 days, not 14" }, { id: "rc-2", file: "src/Api.java", text: "Add a test" }]);
+    expect(ctx.allowedActions).toContain("resolve_comments");
+    expect(String(ctx.hint)).toMatch(/^The operator left 2 review comment/);
+    expect((await s.reviewer.context()).reviewComments).toBeUndefined(); // the lead answers them
+
+    expect(await failure(s.backend, s.backend.complete({ result: "api" }))).toMatchObject({ error: "REVIEW_OPEN", open: ["rc-1", "rc-2"] });
+    expect(await failure(s.reviewer, s.reviewer.resolveComments({ resolve: [{ id: "rc-1", status: "fixed" }] }))).toMatchObject({ error: "FORBIDDEN" });
+    expect(await failure(s.backend, s.backend.resolveComments({ resolve: [{ id: "rc-2", status: "declined" }] }))).toMatchObject({ message: expect.stringContaining("needs a note") });
+    const r = await s.backend.resolveComments({ resolve: [{ id: "rc-1", status: "fixed", note: "limit = 30, from config" }] });
+    expect(r).toMatchObject({ action: "COMMENTS_RESOLVED", stillOpen: ["rc-2"] });
+    await s.backend.resolveComments({ resolve: [{ id: "rc-2", status: "declined", note: "ApiTest already covers it" }] });
+    expect((await s.backend.context()).reviewComments).toBeUndefined();
+    await s.backend.complete({ result: "api", filesChanged: ["src/Api.java"] });
+    expect((await operator.reviewComments(t.id)).map((c) => [c.id, c.status, c.note])).toEqual([["rc-1", "fixed", "limit = 30, from config"], ["rc-2", "declined", "ApiTest already covers it"]]);
+  });
+});

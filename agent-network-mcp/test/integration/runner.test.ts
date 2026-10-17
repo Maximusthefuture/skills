@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { runCli } from "../../src/cli.js";
 import { runRunner, type RunnerOptions } from "../../src/runner.js";
+import { NetworkService } from "../../src/service.js";
 import { FileStore } from "../../src/storage/fileStore.js";
 import { AgentStore } from "../../src/stores/agentStore.js";
 import { MessageStore } from "../../src/stores/messageStore.js";
@@ -338,3 +339,30 @@ describe("urgent message from the operator", () => {
   });
 });
 
+
+describe("a runner that gives up", () => {
+  it("tells the page (which blocks the task); unblocked, it tries again from a fresh session", async () => {
+    const s = await setup();
+    const operator = await NetworkService.create(s.networkDir, { id: "operator", type: "cli" });
+    const gaveUp: string[] = [];
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "0", "{prompt}"], {
+      maxRestarts: 0,
+      onGiveUp: async (taskId, reason) => {
+        gaveUp.push(`${taskId}: ${reason}`);
+        await operator.blockForRunner(taskId, "backend", reason);
+      },
+    });
+    const task = await s.newTask("Never done");
+    await until(async () => (await s.tasks.get(task.id)).status === "BLOCKED", "blocked after giving up");
+    expect(gaveUp).toEqual([`${task.id}: 1 sessions ended before its part was done (last exit 3)`]);
+    expect(await s.tasks.get(task.id)).toMatchObject({ blockedBy: "runner" });
+    const before = s.launches().length;
+    await pause(60);
+    expect(s.launches()).toHaveLength(before); // blocked: no model
+
+    await operator.unblockTask(task.id, 1);
+    await until(() => s.launches().length > before, "a fresh session after unblocking");
+    expect(s.launches().at(-1)).toMatchObject({ taskId: task.id, attempt: 1 });
+    await r.stop();
+  });
+});

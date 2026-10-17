@@ -56,6 +56,7 @@ export async function ensureWorktrees(agents: { id: string; cwd?: string; worktr
 }
 
 export interface MergeResult {
+  strategy?: MergeStrategy;
   /** The merge commit, or HEAD when the branch was in it already. */
   commit: string;
   already: boolean;
@@ -67,13 +68,25 @@ export interface MergeResult {
  * project has uncommitted changes to tracked files, is on no branch, or the merge would conflict (checked first with
  * git merge-tree, which touches neither the index nor the files).
  */
-export async function mergeBranch(project: string, branch: string, message: string): Promise<MergeResult> {
+export type MergeStrategy = "squash" | "merge";
+
+/** Merging `branch` would change nothing in the project (its work is in HEAD, also after a squash). */
+async function contentMerged(project: string, branch: string): Promise<boolean> {
+  const tree = await git(project, ["merge-tree", "--write-tree", "HEAD", branch]);
+  return tree.ok && tree.out.trim().split("\n")[0] === (await git(project, ["rev-parse", "HEAD^{tree}"])).out.trim();
+}
+
+/**
+ * squash (default): the whole task as ONE commit on the project's branch — easy to read, and one `git revert` undoes it.
+ * merge: a merge commit that keeps the agents' commits.
+ */
+export async function mergeBranch(project: string, branch: string, message: string, strategy: MergeStrategy = "squash"): Promise<MergeResult> {
   if (!(await git(project, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).ok) throw new AppError("INVALID_INPUT", `No branch ${branch} in ${project}`);
   const into = (await git(project, ["symbolic-ref", "--short", "-q", "HEAD"])).out.trim();
   if (!into) throw new AppError("INVALID_INPUT", `${project} is on no branch (detached HEAD): check out the branch to merge into first`);
   const dirty = (await git(project, ["status", "--porcelain", "--untracked-files=no"])).out.trim();
   if (dirty) throw new AppError("INVALID_INPUT", `${project} has uncommitted changes; commit or stash them first:\n${dirty.split("\n").slice(0, 10).join("\n")}`);
-  if ((await git(project, ["merge-base", "--is-ancestor", branch, "HEAD"])).ok) {
+  if ((await git(project, ["merge-base", "--is-ancestor", branch, "HEAD"])).ok || (await contentMerged(project, branch))) {
     return { commit: (await git(project, ["rev-parse", "HEAD"])).out.trim(), already: true, into };
   }
   const probe = await git(project, ["merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", branch]);
@@ -82,12 +95,41 @@ export async function mergeBranch(project: string, branch: string, message: stri
     if (files.length) throw new AppError("MERGE_CONFLICT", `${branch} conflicts with ${into} in: ${files.join(", ")}. Nothing was changed; merge by hand (git merge ${branch}) or let the lead merge ${into} into its branch first.`, { files });
     throw new AppError("INVALID_INPUT", `Cannot check the merge of ${branch}: ${probe.err.trim().slice(0, 300)}`);
   }
-  const r = await git(project, ["merge", "--no-ff", "--no-edit", "-m", message, branch]);
-  if (!r.ok) {
-    await git(project, ["merge", "--abort"]);
-    throw new AppError("INVALID_INPUT", `git merge ${branch} failed: ${(r.err || r.out).trim().slice(0, 400)}`);
+  if (strategy === "merge") {
+    const r = await git(project, ["merge", "--no-ff", "--no-edit", "-m", message, branch]);
+    if (!r.ok) {
+      await git(project, ["merge", "--abort"]);
+      throw new AppError("INVALID_INPUT", `git merge ${branch} failed: ${(r.err || r.out).trim().slice(0, 400)}`);
+    }
+  } else {
+    // the commits of the branch, listed in the one commit: what went in, without their history in the project
+    const log = (await git(project, ["log", "--format=%h %s", `HEAD..${branch}`])).out.trim();
+    const sq = await git(project, ["merge", "--squash", branch]);
+    const c = sq.ok ? await git(project, ["commit", "-m", message, "-m", `Squashed from ${branch}:\n${log}`]) : sq;
+    if (!c.ok) {
+      await git(project, ["reset", "--merge"]);
+      throw new AppError("INVALID_INPUT", `git merge --squash ${branch} failed: ${(c.err || c.out).trim().slice(0, 400)}`);
+    }
   }
-  return { commit: (await git(project, ["rev-parse", "HEAD"])).out.trim(), already: false, into };
+  return { commit: (await git(project, ["rev-parse", "HEAD"])).out.trim(), already: false, into, strategy };
+}
+
+/**
+ * Undo a merged task: `git revert` of its commit (-m 1 for a merge commit), refused with nothing changed when the project
+ * has uncommitted changes or the revert conflicts (later work touched the same lines).
+ */
+export async function revertCommit(project: string, commit: string, message: string): Promise<{ commit: string }> {
+  const dirty = (await git(project, ["status", "--porcelain", "--untracked-files=no"])).out.trim();
+  if (dirty) throw new AppError("INVALID_INPUT", `${project} has uncommitted changes; commit or stash them first`);
+  const parents = (await git(project, ["rev-list", "--parents", "-n", "1", commit])).out.trim().split(" ").length - 1;
+  if (parents < 1) throw new AppError("INVALID_INPUT", `No commit ${commit} in ${project}`);
+  const r = await git(project, ["revert", "--no-edit", ...(parents > 1 ? ["-m", "1"] : []), commit]);
+  if (!r.ok) {
+    await git(project, ["revert", "--abort"]);
+    throw new AppError("MERGE_CONFLICT", `Reverting ${commit.slice(0, 7)} conflicts with later changes; nothing was changed. Revert it by hand (git revert ${commit.slice(0, 7)}).`);
+  }
+  await git(project, ["commit", "--amend", "-m", message, "-m", `This reverts commit ${commit}.`]);
+  return { commit: (await git(project, ["rev-parse", "HEAD"])).out.trim() };
 }
 
 export interface RemovedWorktree {
@@ -118,7 +160,9 @@ export async function removeWorktrees(agents: { id: string; cwd?: string; worktr
       item.removed = true;
     }
     if (item.removed && (await git(project, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).ok) {
-      const d = await git(project, ["branch", "-d", branch]);
+      let d = await git(project, ["branch", "-d", branch]);
+      // squashed into the project: its commits are not ancestors of HEAD, but its work is all in it — safe to drop
+      if (!d.ok && (await contentMerged(project, branch))) d = await git(project, ["branch", "-D", branch]);
       if (d.ok) item.branchDeleted = true;
       else item.note = `branch ${branch} kept: it is not merged into the project's branch (git branch -D ${branch} drops it)`;
     }

@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /abs/path/agent-network-mcp/dist/index.js hook post-tool",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /abs/path/agent-network-mcp/dist/index.js hook stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "run_shell_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /abs/path/agent-network-mcp/dist/index.js hook pre-shell",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

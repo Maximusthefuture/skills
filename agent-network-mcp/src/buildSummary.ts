@@ -139,8 +139,10 @@ function uniqueCapped(lines: string[], max: number): string[] {
 }
 
 /** The answer of the build tool for one finished run. */
-export function summarizeBuild(output: string, exitCode: number | null, durationMs: number, opts: { logPath?: string; timedOut?: boolean } = {}): BuildSummary {
-  const lines = output.replace(ANSI, "").split(/\r?\n/);
+export function summarizeBuild(output: string, exitCode: number | null, durationMs: number, opts: { logPath?: string; timedOut?: boolean; cwd?: string } = {}): BuildSummary {
+  // paths relative to the agent's folder: a compile error line with the absolute path costs ~60 tokens more
+  const plain = output.replace(ANSI, "");
+  const lines = (opts.cwd ? plain.replaceAll(`${opts.cwd.replace(/\/$/, "")}/`, "") : plain).split(/\r?\n/);
   const ok = exitCode === 0 && !opts.timedOut;
   const tests = testTotals(lines) ?? undefined;
   const status = opts.timedOut ? `TIMEOUT (stopped after ${formatDuration(durationMs)})` : ok ? "PASS" : `FAIL (exit ${exitCode ?? "signal"})`;

@@ -58,12 +58,18 @@ export interface Task {
   verifyCommand?: string;
   /** Why the task is BLOCKED. */
   blockedReason?: string;
-  /** BLOCKED by its cost limit (maxCostUsd), not by its fix rounds: unblocking raises the limit. */
-  blockedBy?: "cost";
+  /** BLOCKED by its cost limit (maxCostUsd: unblocking raises it) or by an agent's runner that gave up (unblocking retries). */
+  blockedBy?: "cost" | "runner";
   /** Cost limit in USD over all agent sessions of this task: reached, the task is BLOCKED until the operator raises it. */
   maxCostUsd?: number;
   /** After DONE: the lead's branch merged into the project's branch by the operator (the page's "Влить в проект"). */
-  merged?: { at: string; branch: string; into: string; commit: string; already: boolean };
+  merged?: {
+    at: string; branch: string; into: string; commit: string; already: boolean;
+    /** squash: the task is one commit; merge: a merge commit. */
+    strategy?: "squash" | "merge";
+    /** "Откатить": the revert commit that undid it. */
+    reverted?: { at: string; commit: string };
+  };
   /** Follow-up: the task whose integration created this one. */
   parentTaskId?: string;
   /** Follow-up: the first task of the chain (the one the operator created). */
@@ -86,6 +92,13 @@ export interface Task {
    * others review it; no code is changed. After DONE the operator merges it and starts a task that implements it.
    */
   proposes?: { change: string };
+  /**
+   * The lead checks the task before anything else: it asks the operator what is unclear, or tells it how it understood
+   * the task (fyi). propose() is refused until it has written to the operator.
+   */
+  clarify?: true;
+  /** Agents the lead added to the team from templates (spawn_agent); the page starts a runner for each. */
+  spawned?: { id: string; template: string; by: string; at: string; reason: string; role?: SpawnRole }[];
 }
 
 /** A follow-up task the lead asks for when it integrates with PASS. */
@@ -229,6 +242,27 @@ export interface Message {
   choices?: QuestionChoices;
 }
 
+/** The operator's comment on a line of the diff: the lead fixes it (or has it fixed) or declines it with a reason. */
+export interface ReviewComment {
+  id: string;
+  file: string;
+  line?: number;
+  code?: string;
+  text: string;
+  at: string;
+  status: "open" | "fixed" | "declined";
+  /** The lead's note: what was done, or why not. */
+  note?: string;
+  resolvedAt?: string;
+}
+
+/** What a spawned agent does: a role from the project's library, or one the lead wrote for this task. */
+export interface SpawnRole {
+  name: string;
+  instructions: string;
+  source: "library" | "lead";
+}
+
 export interface QuestionChoices {
   options: { label: string; description?: string }[];
   /** The label of the option the agent would take; the one it goes ahead with when nobody answers in time. */
@@ -258,6 +292,10 @@ export const EVENT_TYPES = [
   "OPENSPEC_ARCHIVED",
   "BUILD_RAN",
   "TASK_MERGED",
+  "TASK_REVERTED",
+  "AGENT_SPAWNED",
+  "REVIEW_COMMENTS",
+  "REVIEW_RESOLVED",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

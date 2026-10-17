@@ -22,9 +22,8 @@ const finding = z.object({
 
 /** The tools an agent sees: swarm_context, create_task, send_message, propose, subtasks, complete, build, wait. */
 export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
-  const onError = async (e: unknown) => errorResult(await swarm.errorBody(e));
   const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, handler: (args: z.infer<z.ZodObject<S>>, signal: AbortSignal) => Promise<unknown>) =>
-    defineTool(server, onError, name, description, shape, handler);
+    defineTool(server, async (e: unknown) => errorResult(await swarm.errorBody(e, name)), name, description, shape, handler);
 
   tool(
     "swarm_context",
@@ -115,6 +114,26 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
       timeoutMin: z.number().optional().describe("Stop it after this many minutes (default 20)"),
     },
     async (a, signal) => swarm.build(a, signal),
+  );
+  tool(
+    "spawn_agent",
+    "Lead, DISCUSS, before propose: add an agent to the team from a template the operator prepared ('spawnable' in swarm_context lists them and how many are left). It joins this task, its runner starts by itself in its own folder, and you give it an assignment in propose() like any agent. Use it when the work splits into more independent parts than the team has agents; every agent costs tokens.",
+    {
+      template: z.string().describe("Template name from spawnable.templates, e.g. 'backend'"),
+      reason: z.string().describe("Which part of the work it takes and why the team needs it, e.g. 'the second endpoint group: /refunds, independent of /orders'"),
+      id: z.string().optional().describe("Agent id; omit for a fresh one like 'backend-2'"),
+      role: z.string().optional().describe("What it does: a role of the project's library by name (spawnable.roles), or the name of a role you write now with instructions, e.g. 'architect'"),
+      instructions: z.string().optional().describe("Your own role (with role): what this agent does in the task, what it looks at, which skills it uses, what it must not do, how it reports; 40-6000 characters. Its template still decides the CLI, model and permissions"),
+    },
+    async (a) => swarm.spawnAgent(a),
+  );
+  tool(
+    "resolve_comments",
+    "Lead: answer the operator's review comments on the diff ('reviewComments' in swarm_context): each fixed (what changed) or declined (why it stays). complete() is refused while any is open.",
+    {
+      resolve: z.array(z.object({ id: z.string().describe("rc-N"), status: z.enum(["fixed", "declined"]), note: z.string().optional().describe("fixed: what changed; declined: why (required)") })).describe("One entry per comment you answer"),
+    },
+    async (a) => swarm.resolveComments(a),
   );
   tool(
     "wait",

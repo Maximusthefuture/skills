@@ -6,7 +6,7 @@ import type { RunnerOptions } from "../../src/runner.js";
 import { NetworkService } from "../../src/service.js";
 import { RunnerPool } from "../../src/ui/runners.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
-import { branchDiff, ensureWorktrees, fileDiff, mergeBranch, mergeProjectInto, removeWorktrees } from "../../src/worktrees.js";
+import { branchDiff, ensureWorktrees, fileDiff, mergeBranch, mergeProjectInto, removeWorktrees, revertCommit } from "../../src/worktrees.js";
 import { tmpDir } from "../helpers/tmp.js";
 
 const git = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8" });
@@ -38,7 +38,7 @@ describe("merge the lead's branch", () => {
   it("merges with a merge commit; then says it is in already", async () => {
     const { project, backend } = await stand();
     const head = commit(backend, "b.txt", "feature");
-    const r = await mergeBranch(project, "swarm-backend", "Merge swarm-backend: task-001 Feature");
+    const r = await mergeBranch(project, "swarm-backend", "Merge swarm-backend: task-001 Feature", "merge");
     expect(r).toMatchObject({ already: false, into: "main" });
     expect(git(project, "log", "-1", "--format=%s%n%P").trim().split("\n")).toEqual(["Merge swarm-backend: task-001 Feature", expect.stringContaining(head)]);
     expect(existsSync(join(project, "b.txt"))).toBe(true);
@@ -135,7 +135,7 @@ describe("the page: merge after DONE, clean when nothing is open", () => {
     expect(one).toMatchObject({ path: "b.txt", truncated: false, patch: expect.stringContaining("+feature") });
     const merged = await post(`/api/tasks/${task.id}/merge`);
     expect(merged).toMatchObject({ status: 200, body: { task: { merged: { branch: "swarm-backend", into: "main", already: false } } } });
-    expect(git(project, "log", "-1", "--format=%s").trim()).toBe(`Merge swarm-backend: ${task.id} Feature`);
+    expect(git(project, "log", "-1", "--format=%s%n%P").trim().split("\n")).toEqual([`${task.id}: Feature`, expect.not.stringContaining(" ")]); // one commit, one parent
     expect(await post(`/api/tasks/${task.id}/merge`)).toMatchObject({ status: 400, body: { error: "ALREADY_COMPLETED" } });
     expect(await diff()).toMatchObject({ merged: true, files: [{ path: "b.txt" }] }); // after the merge: what the merge brought
     const state = (await (await fetch(`${ui.url}/api/state`)).json()) as any;
@@ -206,5 +206,104 @@ describe("a merged change into the agents' folders", () => {
     git(reviewer, "checkout", "-q", "a.txt");
     expect(await mergeProjectInto(project, reviewer)).toEqual({ from: "main", into: "swarm-reviewer", result: "fast-forward" });
     expect((await folders()).missing).toEqual([]);
+  });
+});
+
+describe("review comments on a diff", () => {
+  it("while the task runs they go to the lead with file and line; after DONE they become a follow-up task", async () => {
+    const { project, agents, backend, reviewer } = await stand();
+    const networkDir = join(project, ".agent-network");
+    const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
+    const pool = new RunnerPool(networkDir, agents.map((a) => ({ id: a.id, command: ["x"], cwd: a.cwd, worktree: a.worktree, autostart: false })));
+    ui = await startUiServer([{ networkDir, runners: pool }], { port: 0 });
+    const post = async (path: string, body: unknown) => {
+      const r = await fetch(`${ui!.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      return { status: r.status, body: (await r.json()) as any };
+    };
+    const task = await operator.createTaskAsOperator({ title: "Feature", description: "d", agents: ["backend", "reviewer"], verifyCommand: "npm test" });
+    commit(backend, "b.txt", "feature");
+    commit(reviewer, "r.txt", "notes");
+
+    // any agent's branch while the task runs
+    const diff = async (q = "") => (await (await fetch(`${ui!.url}/api/tasks/${task.id}/diff${q}`)).json()) as any;
+    expect(await diff()).toMatchObject({ branch: "swarm-backend", agents: ["backend", "reviewer"], files: [{ path: "b.txt" }] });
+    expect(await diff("?agent=reviewer")).toMatchObject({ branch: "swarm-reviewer", files: [{ path: "r.txt" }] });
+
+    expect(await post(`/api/tasks/${task.id}/review`, { comments: [] })).toMatchObject({ status: 400 });
+    const sent = await post(`/api/tasks/${task.id}/review`, { branch: "swarm-backend", comments: [{ file: "b.txt", line: 1, code: "feature", text: "Name it 'refund'" }, { file: "b.txt", text: "Add a test" }] });
+    expect(sent).toMatchObject({ status: 201, body: { sent: "lead", to: "backend" } });
+    const msg = (await operator.messages.list(task.id)).find((m) => m.to === "backend")!;
+    expect(msg.content).toContain("Review comments on the diff (branch swarm-backend)");
+    expect(msg.content).toContain("- rc-1 b.txt:1 `feature` — Name it 'refund'");
+    expect(msg.content).toContain("- rc-2 b.txt — Add a test");
+    expect((await operator.reviewComments(task.id)).map((c) => [c.id, c.status])).toEqual([["rc-1", "open"], ["rc-2", "open"]]);
+
+    await operator.tasks.save({ ...(await operator.tasks.get(task.id)), status: "COMPLETED", phase: "DONE" });
+    const after = await post(`/api/tasks/${task.id}/review`, { comments: [{ file: "b.txt", line: 1, text: "Still wrong" }] });
+    expect(after).toMatchObject({ status: 201, body: { sent: "task", task: { title: `Fix the review comments on ${task.id}: Feature`, agents: ["backend", "reviewer"], verifyCommand: "npm test" } } });
+    expect(after.body.task.description).toContain("- b.txt:1 — Still wrong");
+    expect(await operator.reviewComments(after.body.task.id)).toEqual([expect.objectContaining({ id: "rc-1", file: "b.txt", line: 1, status: "open" })]);
+  });
+});
+
+describe("one commit per task, and undoing it", () => {
+  it("squash puts the task in as one commit that one revert undoes; the squashed branches can still be cleaned", async () => {
+    const { project, agents, backend, reviewer } = await stand();
+    commit(backend, "b.txt", "one");
+    commit(backend, "c.txt", "two");
+    git(reviewer, "merge", "-q", "swarm-backend"); // the reviewer had the lead's work too
+    const before = git(project, "rev-parse", "HEAD").trim();
+    const r = await mergeBranch(project, "swarm-backend", "task-001: Feature");
+    expect(r).toMatchObject({ already: false, into: "main", strategy: "squash" });
+    expect(git(project, "rev-list", "--count", `${before}..HEAD`).trim()).toBe("1");
+    expect(git(project, "log", "-1", "--format=%s%n%b").trim()).toMatch(/^task-001: Feature\nSquashed from swarm-backend:\n\w+ c\.txt: two\n\w+ b\.txt: one$/);
+    expect(await mergeBranch(project, "swarm-backend", "again")).toMatchObject({ already: true }); // its work is in HEAD
+
+    const undone = await revertCommit(project, r.commit, "Revert task-001: Feature");
+    expect(git(project, "log", "-1", "--format=%s").trim()).toBe("Revert task-001: Feature");
+    expect(existsSync(join(project, "b.txt"))).toBe(false);
+    expect(undone.commit).toBe(git(project, "rev-parse", "HEAD").trim());
+
+    // a squashed branch is no ancestor of HEAD: branch -d refuses it, but its work is in the project — dropped all the same
+    await mergeBranch(project, "swarm-backend", "task-001: Feature again"); // after the revert it applies anew
+    const cleaned = await removeWorktrees(agents);
+    expect(cleaned.map((x) => [x.id, x.removed, x.branchDeleted])).toEqual([["backend", true, true], ["reviewer", true, true]]);
+  });
+
+  it("revert refuses on uncommitted changes and on conflicts, changing nothing", async () => {
+    const { project, backend } = await stand();
+    commit(backend, "a.txt", "theirs");
+    const r = await mergeBranch(project, "swarm-backend", "task-001: Feature");
+    commit(project, "a.txt", "later work on the same line");
+    const head = git(project, "rev-parse", "HEAD").trim();
+    await expect(revertCommit(project, r.commit, "Revert")).rejects.toMatchObject({ code: "MERGE_CONFLICT" });
+    expect(git(project, "rev-parse", "HEAD").trim()).toBe(head);
+    expect(git(project, "status", "--porcelain")).toBe("");
+    writeFileSync(join(project, "a.txt"), "dirty");
+    await expect(revertCommit(project, r.commit, "Revert")).rejects.toThrow(/uncommitted changes/);
+  });
+});
+
+describe("the page: revert a merged task", () => {
+  it("one button undoes the task's commit, once", async () => {
+    const { project, agents, backend } = await stand();
+    const networkDir = join(project, ".agent-network");
+    const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
+    const pool = new RunnerPool(networkDir, agents.map((a) => ({ id: a.id, command: ["x"], cwd: a.cwd, worktree: a.worktree, autostart: false })));
+    ui = await startUiServer([{ networkDir, runners: pool }], { port: 0 });
+    const post = async (path: string) => {
+      const r = await fetch(`${ui!.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      return { status: r.status, body: (await r.json()) as any };
+    };
+    const task = await operator.createTaskAsOperator({ title: "Feature", description: "d", agents: ["backend", "reviewer"] });
+    commit(backend, "b.txt", "feature");
+    await operator.tasks.save({ ...(await operator.tasks.get(task.id)), status: "COMPLETED", phase: "DONE" });
+    expect(await post(`/api/tasks/${task.id}/revert`)).toMatchObject({ status: 400 }); // not merged yet
+    expect((await post(`/api/tasks/${task.id}/merge`)).body.task.merged).toMatchObject({ strategy: "squash", already: false });
+    const undone = await post(`/api/tasks/${task.id}/revert`);
+    expect(undone).toMatchObject({ status: 200, body: { task: { merged: { reverted: { commit: expect.any(String) } } } } });
+    expect(git(project, "log", "-1", "--format=%s").trim()).toBe(`Revert ${task.id}: Feature`);
+    expect(existsSync(join(project, "b.txt"))).toBe(false);
+    expect(await post(`/api/tasks/${task.id}/revert`)).toMatchObject({ status: 400, body: { error: "ALREADY_COMPLETED" } });
   });
 });

@@ -56,6 +56,12 @@ interface Snapshot {
   dependencyCommits?: Record<string, string[]>;
   /** IMPLEMENT: this session tried to complete before its dependencies reported; it waits for them instead of trying again. */
   dependencyParked?: boolean;
+  /** The lead: the operator's review comments still open (each fixed or declined with resolve_comments). */
+  openReview?: { id: string; file: string; line?: number; code?: string; text: string }[];
+  /** A task with clarify: the lead has not written to the operator yet (a question or how it understood the task). */
+  mustClarify?: boolean;
+  /** DISCUSS, the lead, no agreement yet: the agents it may add from templates. */
+  spawnable?: { templates: { name: string; description: string; model?: string }[]; roles: { name: string; description: string }[]; left: number };
   /** A change-writing task: every answer of the operator to a question of this task (they belong in design.md). */
   operatorAnswers?: { question: string; askedBy: string; answer: string }[];
 }
@@ -78,7 +84,7 @@ const seq = (m: Message): number => Number(m.id.slice(4));
 /** Big parts of the context that change rarely: after the agent has seen one, replies say "(unchanged)" until it changes. */
 const SECTIONS = ["openspec", "agreement", "assignment", "ownership", "subtasks", "teamImplementations", "fixedFindings", "fixRequests", "followUps"] as const;
 const UNCHANGED = "(unchanged)";
-const UNCHANGED_NOTE = "Parts marked (unchanged) are as in an earlier response of this session; swarm_context shows them again.";
+const UNCHANGED_NOTE = "Parts marked (unchanged), and the task's title, agents and description left out, are as in an earlier response of this session; swarm_context shows them again.";
 
 /**
  * A FILE_REQUEST stays open until the owner writes back to the requester (a grant or any reply, e.g. a refusal).
@@ -127,6 +133,8 @@ export class Swarm {
   private parkedOnDependency = new Set<string>();
   /** "taskId:section" -> the section as this session last saw it (see reply()). */
   private shownSections = new Map<string, string>();
+  /** Tasks whose fixed fields (title, agents, lead, description...) this session's replies have shown. */
+  private shownTaskFixed = new Set<string>();
   /** Tasks whose description this session has already shown (it stays in the agent's context). */
   private shownDescription = new Set<string>();
   /** taskId -> phaseHistory length when this session first saw the task; later phases are new to it. */
@@ -220,6 +228,30 @@ export class Swarm {
       log: run.logPath,
       ...(dropped ? { note: `"${dropped}" was dropped: build shortens the output itself` } : {}),
     };
+  }
+
+  /** The lead adds an agent to the team from a template (DISCUSS, before propose); its runner starts by itself. */
+  async spawnAgent(input: { template?: string; id?: string; reason?: string; role?: string; instructions?: string }): Promise<SwarmContext> {
+    await this.begin(true);
+    const task = await this.requireTask();
+    const { agentId } = await this.service.spawnAgent({
+      taskId: task.id, template: input.template ?? "", reason: input.reason ?? "",
+      ...(input.id ? { id: input.id } : {}), ...(input.role ? { role: input.role } : {}), ...(input.instructions ? { instructions: input.instructions } : {}),
+    });
+    return {
+      ...this.reply(await this.contextNow()), ok: true, action: "AGENT_SPAWNED", agentId,
+      note: `${agentId} joined the task; its runner starts in a few seconds. Give it an assignment in propose() like any agent (it approves the agreement when it starts).`,
+    } as SwarmContext;
+  }
+
+  /** The lead answers the operator's review comments: each fixed (what was done) or declined (why). */
+  async resolveComments(input: { resolve?: { id: string; status: string; note?: string }[] }): Promise<SwarmContext> {
+    await this.begin(true);
+    const task = await this.requireTask();
+    if (!input.resolve?.length) throw invalid("resolve: [{id: 'rc-1', status: 'fixed', note: 'what changed'}]");
+    const all = await this.service.resolveReviewComments(task.id, input.resolve);
+    const open = all.filter((c) => c.status === "open").map((c) => c.id);
+    return { ...this.reply(await this.contextNow()), ok: true, action: "COMMENTS_RESOLVED", stillOpen: open } as SwarmContext;
   }
 
   /** The agent's own checklist for its part. Compact answer: it is called after every step. */
@@ -455,6 +487,16 @@ export class Swarm {
         same = true;
       } else this.shownSections.set(seen, json);
     }
+    // the task's fixed fields (title, agents, lead, description...) once per session: they stay in the agent's context;
+    // replies other than swarm_context then carry only what changes (phase, status, round, why it is blocked)
+    if (out.task && typeof out.task === "object") {
+      const t = out.task as Record<string, unknown>;
+      if (!fresh && this.shownTaskFixed.has(task.id)) {
+        const { id, phase, status, syncRound, maxFixRounds, blockedReason } = t;
+        out.task = { id, phase, status, ...(syncRound !== undefined ? { syncRound, maxFixRounds } : {}), ...(blockedReason ? { blockedReason } : {}) };
+        same = true;
+      } else this.shownTaskFixed.add(task.id);
+    }
     if (same) out.unchanged = UNCHANGED_NOTE;
     return out as SwarmContext;
   }
@@ -476,8 +518,13 @@ export class Swarm {
   // ------------------------------------------------------------------ errors
 
   /** Error body for LLM consumption: code, message, current state, nextAction (+ pending / allowedActions). */
-  async errorBody(e: unknown): Promise<Record<string, unknown>> {
+  async errorBody(e: unknown, tool?: string): Promise<Record<string, unknown>> {
     const known = isAppError(e);
+    // what the protocol refused, for the observer: one line per error in this agent's own file (one writer per file)
+    if (tool) {
+      const task = await this.currentTask().catch(() => null);
+      await this.service.recordProtocolError({ tool, code: known ? e.code : "INTERNAL_ERROR", ...(task ? { taskId: task.id, phase: task.phase } : {}) }).catch(() => undefined);
+    }
     if (!known) this.log(`internal error: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
     const body: Record<string, unknown> = {
       error: known ? e.code : "INTERNAL_ERROR",
@@ -562,6 +609,14 @@ export class Swarm {
         ? { dependencyCommits: await this.dependencyCommits(agreement, impls), dependencyParked: this.parkedOnDependency.has(`${task.id}:${task.syncRound}`) }
         : {}),
       ...(task.openspec && task.phase !== "DONE" ? await this.readOpenspec(task.openspec.change) : {}),
+      ...(task.phase === "DISCUSS" && task.agents[0] === this.me && !agreement ? await this.spawnableFor(task) : {}),
+      ...(task.agents[0] === this.me && task.phase !== "DONE"
+        ? await this.service.reviewComments(task.id).then((all) => {
+            const open = all.filter((c) => c.status === "open").map(({ id, file, line, code, text }) => ({ id, file, ...(line !== undefined ? { line } : {}), ...(code ? { code } : {}), text }));
+            return open.length ? { openReview: open } : {};
+          })
+        : {}),
+      ...(task.clarify && task.phase === "DISCUSS" && !agreement && !messages.some((m) => m.from === task.agents[0] && m.to === OPERATOR) ? { mustClarify: true } : {}),
       ...(task.proposes
         ? {
             operatorAnswers: messages
@@ -570,6 +625,13 @@ export class Swarm {
           }
         : {}),
     };
+  }
+
+  private async spawnableFor(task: Task): Promise<{ spawnable?: Snapshot["spawnable"] }> {
+    const { templates, maxPerTask } = await this.service.spawnTemplates();
+    const left = maxPerTask - (task.spawned?.length ?? 0);
+    const roles = (await this.service.roles()).map(({ name, description }) => ({ name, description }));
+    return templates.length && left > 0 ? { spawnable: { templates, roles, left } } : {};
   }
 
   private async readOpenspec(name: string): Promise<{ change: ChangeInfo | null; changeError?: string }> {
@@ -786,6 +848,8 @@ export class Swarm {
       agent,
       ...(myAssignment ? { assignment: { responsibility: myAssignment.responsibility } } : {}),
       ...this.openspecView(snap, full),
+      ...(snap.spawnable ? { spawnable: snap.spawnable } : {}),
+      ...(snap.openReview ? { reviewComments: snap.openReview } : {}),
       ...(snap.operatorAnswers?.length && phase !== "DISCUSS" && phase !== "DONE" ? { operatorAnswers: snap.operatorAnswers } : {}),
       otherAgents: task.agents
         .filter((id) => id !== this.me)
@@ -905,13 +969,21 @@ export class Swarm {
           `If the answer still comes, it arrives in pendingMessages. ${core.hint}`,
       };
     }
-    const example = this.example(s.task, d.nextAction);
+    // the operator's comments on the diff come first: the lead cannot hand in its part or the integration while one is open
+    if (s.openReview?.length) {
+      d = {
+        ...d,
+        allowedActions: [...new Set([...d.allowedActions, "resolve_comments"])],
+        hint: `The operator left ${s.openReview.length} review comment(s) on the diff ('reviewComments': ${s.openReview.map((c) => c.id).join(", ")}): fix each, or have the agent who owns the file fix it (send_message), then mark it resolve_comments({resolve: [{id, status: "fixed", note: "<what changed>"}]}); one you disagree with: status "declined" with the reason. complete() is refused while any is open. ${d.hint}`,
+      };
+    }
+    const example = this.example(s.task, d.nextAction, s.mustClarify);
     return example ? { ...d, exampleCall: example } : d;
   }
 
   /** A ready-to-copy call where the arguments have structure (the agreement); simpler calls are spelled out in the hint. */
-  private example(task: Task, next: NextAction): Decision["exampleCall"] {
-    if (next !== "propose") return undefined;
+  private example(task: Task, next: NextAction, clarifying = false): Decision["exampleCall"] {
+    if (next !== "propose" || clarifying) return undefined;
     if (task.proposes) {
       const dir = `${changePath(task.proposes.change)}/**`;
       return { tool: "propose", args: { summary: `Write the OpenSpec change ${task.proposes.change}`, assignments: task.agents.map((agentId, i) => (i === 0 ? { agentId, responsibility: "writes the change", files: [dir] } : { agentId, responsibility: "reviews the change", files: [] })) } };
@@ -984,8 +1056,22 @@ export class Swarm {
           const split = spec
             ? `This task implements the OpenSpec change ${spec}/ ('openspec'): read its proposal.md, design.md and specs/, then split it without redesigning: every open task of tasks.md goes to exactly one agent (assignments[].tasks: ["1.1", ...]) together with the files those tasks change; ${spec}/ stays with you, the lead. If the design has to change, ask the operator. `
             : "";
+          const grow = s.spawnable
+            ? `If the work splits into more independent parts than the team has agents, or needs a specialist (architecture review, load tests, security...), add up to ${s.spawnable.left} agent(s) first with spawn_agent({template, reason, role?}) ('spawnable': templates ${s.spawnable.templates.map((t) => t.name).join(", ")}${s.spawnable.roles.length ? `; roles of the project's library: ${s.spawnable.roles.map((r) => r.name).join(", ")}` : ""}): the template is how it runs, the role what it does — a library role by name, or your own with role + instructions. Only when it really saves time, each agent costs tokens. `
+            : "";
+          if (s.mustClarify) {
+            return this.me === lead
+              ? done(
+                  "propose",
+                  ["send_message", "wait", ...(s.spawnable ? ["spawn_agent"] : [])],
+                  `First check the task (the operator asked for it): read task.description and the code it touches. Anything unclear that would change the scope, the behaviour or what counts as done: ask the operator — send_message({to: "operator", message, options: [{label, description}], recommended}), one question per message, the options you see; then wait() for the answers. ` +
+                    `Everything clear: tell the operator in a few lines how you understood it — send_message({to: "operator", fyi: true, message: "How I understand it: <what changes, where, what stays as it is>. No questions."}). propose() is accepted after that.`,
+                  ["operator"],
+                )
+              : done("wait", base, `${lead} (the lead) checks the task with the operator first; tell it what is unclear to you (send_message), then wait().`, [lead!]);
+          }
           return this.me === lead
-            ? done("propose", base, `${split}Agree with the others who changes which files (send_message), then propose(): one assignment per agent, every file with ONE owner; an agent with nothing of its own to change gets files: [] (review only). Write the exact contracts into interfaces (method, path, headers, body, status codes); an agent whose work calls another agent's new code (e.g. API tests) gets dependsOn: [that agent].`, [...task.agents])
+            ? done("propose", s.spawnable ? [...base, "spawn_agent"] : base, `${split}${grow}Agree with the others who changes which files (send_message), then propose(): one assignment per agent, every file with ONE owner; an agent with nothing of its own to change gets files: [] (review only). Write the exact contracts into interfaces (method, path, headers, body, status codes); an agent whose work calls another agent's new code (e.g. API tests) gets dependsOn: [that agent].`, [...task.agents])
             : done("wait", base, `Tell ${lead} which ${spec ? "tasks of tasks.md and which " : ""}files you will take, or that you only review (files: []), then wait() for the proposal.`, [...task.agents]);
         }
         const pending = agreement.assignments.map((a) => a.agentId).filter((id) => !agreement.approvedBy.includes(id));
