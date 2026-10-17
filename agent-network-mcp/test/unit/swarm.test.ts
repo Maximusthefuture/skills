@@ -119,7 +119,6 @@ describe("swarm_context", () => {
     expect(lead).toMatchObject({ nextAction: "integrate", allowedActions: ["send_message", "complete", "wait"], task: { lead: "backend", maxFixRounds: 3 } });
     expect(lead.hint).toContain('complete({status: "PASS", result})');
     expect(await failure(s.backend, s.backend.complete({ status: "PASS" }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("'result'") });
-    expect(await failure(s.backend, s.backend.complete({ status: "PASS", result: "x", filesChanged: ["a"] }))).toMatchObject({ error: "INVALID_INPUT" });
     expect(await failure(s.reviewer, s.reviewer.complete({ status: "PASS", result: "x" }))).toMatchObject({ error: "NOT_ASSIGNED" });
 
     const done = await s.backend.complete({ status: "PASS", result: "merged into main, tests green", commits: ["abc999"] });
@@ -307,18 +306,18 @@ describe("tool misuse (state is never corrupted, errors are actionable)", () => 
     expect((await s.reviewer.context()).pendingMessages).toEqual([]);
   });
 
-  it("complete with arguments that do not belong to the phase", async () => {
+  it("complete still requires the phase's own fields (result, status, findings)", async () => {
     const { s, task } = await setup();
     await task();
     await s.backend.context();
     await s.backend.propose({ summary: "s", assignments });
-    expect(await failure(s.reviewer, s.reviewer.complete({ result: "done already" }))).toMatchObject({ error: "INVALID_INPUT", currentPhase: "DISCUSS" });
+    // an extra field never skips validation that is unrelated to it: reviewer has not reviewed this agreement yet
+    expect(await failure(s.reviewer, s.reviewer.complete({ result: "done already" }))).toMatchObject({ error: "AGREEMENT_NOT_REVIEWED", currentPhase: "DISCUSS" });
 
     await s.reviewer.context();
     await s.reviewer.complete({});
     await s.backend.complete({});
     expect(await failure(s.backend, s.backend.complete({}))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("requires 'result'"), nextAction: "implement" });
-    expect(await failure(s.backend, s.backend.complete({ result: "x", status: "PASS" }))).toMatchObject({ error: "INVALID_INPUT" });
     await s.backend.complete({ result: "x" });
     expect(await failure(s.backend, s.backend.complete({ result: "again" }))).toMatchObject({ error: "ALREADY_COMPLETED", nextAction: "wait" });
     await s.reviewer.complete({ result: "y" });
@@ -326,10 +325,47 @@ describe("tool misuse (state is never corrupted, errors are actionable)", () => 
     expect(await failure(s.backend, s.backend.complete({}))).toMatchObject({ error: "INVALID_INPUT", currentPhase: "SYNC", nextAction: "sync" });
     expect(await failure(s.backend, s.backend.complete({ status: "MAYBE" }))).toMatchObject({ error: "INVALID_INPUT" });
     expect(await failure(s.backend, s.backend.complete({ status: "NEEDS_FIX" }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("finding") });
-    expect(await failure(s.backend, s.backend.complete({ status: "PASS", result: "x" }))).toMatchObject({ error: "INVALID_INPUT" });
     expect(await failure(s.backend, s.backend.complete({ status: "NEEDS_FIX", findings: [{ severity: "HUGE", description: "x" }] }))).toMatchObject({ error: "INVALID_INPUT" });
     expect(await failure(s.backend, s.backend.complete({ status: "NEEDS_FIX", findings: [{ severity: "ERROR", description: "x", files: ["../../etc/passwd"] }] }))).toMatchObject({ error: "INVALID_INPUT" });
     expect((await s.backend.context()).task).toMatchObject({ phase: "SYNC" });
+  });
+
+  it("ignores fields the current phase does not use, with a warning, instead of failing the call", async () => {
+    const { s, task } = await setup();
+    await task();
+
+    // DISCUSS: complete() takes no arguments; an extra one is dropped, approval still happens
+    await s.backend.context();
+    await s.backend.propose({ summary: "s", assignments });
+    await s.reviewer.context();
+    expect(await s.reviewer.complete({ result: "done already" })).toMatchObject({
+      action: "AGREEMENT_APPROVED",
+      warnings: ["ignored fields not used in this phase: result"],
+    });
+    const toImpl = await s.backend.complete({});
+    expect(toImpl).toMatchObject({ phaseChanged: { to: "IMPLEMENT" } });
+
+    // IMPLEMENT: 'status'/'findings'/'followUps' belong to later phases
+    expect(await s.backend.complete({ result: "api", status: "PASS" })).toMatchObject({
+      action: "IMPLEMENTATION_COMPLETED",
+      warnings: expect.arrayContaining(["ignored fields not used in this phase: status"]),
+    });
+    expect(await s.reviewer.complete({ result: "validation" })).toMatchObject({ phaseChanged: { to: "SYNC" } });
+
+    // SYNC: 'result'/'filesChanged'/'commits'/'tasksDone' belong to IMPLEMENT
+    expect(await s.backend.complete({ status: "PASS", result: "looks fine" })).toMatchObject({
+      action: "SYNC_PASS",
+      warnings: ["ignored fields not used in this phase: result"],
+    });
+    expect(await s.reviewer.complete({ status: "PASS" })).toMatchObject({ phaseChanged: { to: "INTEGRATE" } });
+
+    // INTEGRATE: 'filesChanged'/'tasksDone' belong to IMPLEMENT
+    const done = await s.backend.complete({ status: "PASS", result: "merged, build green", commits: ["abc999"], filesChanged: ["src/Api.java"], tasksDone: ["1"] });
+    expect(done).toMatchObject({
+      action: "INTEGRATION_PASS",
+      task: { phase: "DONE" },
+      warnings: expect.arrayContaining(["ignored fields not used in this phase: filesChanged, tasksDone"]),
+    });
   });
 
   it("rejects unsafe paths and commits on IMPLEMENT completion without changing state", async () => {

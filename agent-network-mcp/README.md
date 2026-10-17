@@ -533,6 +533,12 @@ Haiku-тестер три раунда подряд сдавал те же ко�
 агенту (в `swarm_context`, ответе `propose` или теле ошибки `AGREEMENT_NOT_REVIEWED`). Повторный `propose` заменяет
 agreement, увеличивает `version` и сбрасывает одобрения.
 
+**Поля не из текущей фазы.** `complete()` принимает у каждой фазы свой набор полей (DISCUSS — никаких, IMPLEMENT —
+`result, filesChanged?, commits?, tasksDone?`, SYNC — `status, findings?`, INTEGRATE — `status, result, commits?,
+findings?, followUps?`). Поле не из этого набора не обрывает вызов: оно отбрасывается, а в `warnings` попадает
+`"ignored fields not used in this phase: ..."`. Обязательные поля фазы (`result` в IMPLEMENT/INTEGRATE, `status` в
+SYNC/INTEGRATE) по-прежнему требуются — их отсутствие остаётся `INVALID_INPUT`.
+
 **Текущая задача.** Агент работает с самой старой `ACTIVE` задачей, где он назначен (после её завершения или отмены
 переходит к следующей). Поэтому ни один tool не принимает `taskId`.
 

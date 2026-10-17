@@ -150,8 +150,11 @@ describe("follow-up tasks", () => {
   it("only with PASS, only in INTEGRATE, concrete, for registered agents", async () => {
     const { s } = await setup(3);
     await toImplement(s);
-    expect(await failure(s.backend, s.backend.complete({ result: "x", followUps: [{ title: "t", description: CONCRETE }] }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("followUps") });
-    await s.backend.complete({ result: "api" });
+    // followUps belongs to INTEGRATE; during IMPLEMENT it is ignored with a warning, not a reason to fail the call
+    expect(await s.backend.complete({ result: "x", followUps: [{ title: "t", description: CONCRETE }] })).toMatchObject({
+      action: "IMPLEMENTATION_COMPLETED",
+      warnings: expect.arrayContaining(["ignored fields not used in this phase: followUps"]),
+    });
     await s.reviewer.complete({ result: "tests" });
     await s.backend.complete({ status: "PASS" });
     await s.reviewer.complete({ status: "PASS" });

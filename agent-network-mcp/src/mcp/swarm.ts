@@ -365,13 +365,12 @@ export class Swarm {
     switch (task.phase) {
       case "DISCUSS": {
         const extra = given(["result", "filesChanged", "commits", "tasksDone", "status", "findings", "followUps"]);
-        if (extra.length) throw invalid(`During DISCUSS complete() takes no arguments (it approves the agreement); got: ${extra.join(", ")}`);
         action = await this.approve(task);
+        warnings = this.ignoredFields(extra);
         break;
       }
       case "IMPLEMENT": {
         const extra = given(["status", "findings", "followUps"]);
-        if (extra.length) throw invalid(`During IMPLEMENT complete() takes {result, filesChanged?, commits?, tasksDone?}; got unexpected: ${extra.join(", ")}`);
         if (!input.result?.trim()) throw invalid("complete() during IMPLEMENT requires 'result': a short summary of what you implemented");
         const existing = await this.service.implementations.find(task.id, this.me);
         if (!existing) await this.service.startImplementation(task.id);
@@ -390,29 +389,28 @@ export class Swarm {
           if (isAppError(e) && e.code === "DEPENDENCY_NOT_READY") this.parkedOnDependency.add(`${task.id}:${task.syncRound}`); // wait for them, do not retry
           throw e;
         });
-        warnings = [...(done.warnings ?? []), ...(unreported ? [unreported.note] : []), ...(checked ? [checked] : [])];
+        warnings = [...(done.warnings ?? []), ...(unreported ? [unreported.note] : []), ...(checked ? [checked] : []), ...this.ignoredFields(extra)];
         action = "IMPLEMENTATION_COMPLETED";
         break;
       }
       case "SYNC": {
         const extra = given(["result", "filesChanged", "commits", "tasksDone", "followUps"]);
-        if (extra.length) throw invalid(`During SYNC complete() takes {status, findings?}; got unexpected: ${extra.join(", ")}`);
         if (input.status !== "PASS" && input.status !== "NEEDS_FIX") {
           throw invalid("complete() during SYNC requires 'status': \"PASS\" or \"NEEDS_FIX\" (with 'findings')");
         }
         await this.service.submitSync({ taskId: task.id, status: input.status, findings: this.findings(input.findings) });
         action = input.status === "PASS" ? "SYNC_PASS" : "SYNC_NEEDS_FIX";
+        warnings = this.ignoredFields(extra);
         break;
       }
       case "INTEGRATE": {
         const extra = given(["filesChanged", "tasksDone"]);
-        if (extra.length) throw invalid(`During INTEGRATE complete() takes {status, result, commits?, findings?, followUps?}; got unexpected: ${extra.join(", ")}`);
         if (input.status !== "PASS" && input.status !== "NEEDS_FIX") {
           throw invalid("complete() during INTEGRATE requires 'status': \"PASS\" (merged, build and tests green) or \"NEEDS_FIX\" (with 'findings')");
         }
         if (!input.result?.trim()) throw invalid("complete() during INTEGRATE requires 'result': what you merged, where the result is, and the build/test outcome");
         const checked = input.status === "PASS" ? await this.checkProposal(task) : undefined;
-        if (checked) warnings = [checked];
+        warnings = [...(checked ? [checked] : []), ...this.ignoredFields(extra)];
         const res = await this.service.submitIntegration({ taskId: task.id, status: input.status, result: input.result, commits: input.commits, findings: this.findings(input.findings), followUps: input.followUps });
         action = input.status === "PASS" ? "INTEGRATION_PASS" : "INTEGRATION_NEEDS_FIX";
         if (res.followUps.length) followUpsCreated = res.followUps.map((t) => ({ id: t.id, title: t.title, agents: t.agents }));
@@ -424,6 +422,11 @@ export class Swarm {
     const after = this.reply(await this.contextNow());
     const phaseChanged = (after.task as { phase: string } | null)?.phase !== task.phase ? { from: task.phase, to: (after.task as { phase: string }).phase } : undefined;
     return { ...after, ok: true, action, ...(phaseChanged ? { phaseChanged } : {}), ...(warnings?.length ? { warnings } : {}), ...(followUpsCreated ? { followUpsCreated } : {}) } as SwarmContext;
+  }
+
+  /** Fields complete() got that the current phase does not use: dropped, not fatal, named in a warning. */
+  private ignoredFields(extra: string[]): string[] {
+    return extra.length ? [`ignored fields not used in this phase: ${extra.join(", ")}`] : [];
   }
 
   private findings(raw: RawFinding[] | undefined): SyncFinding[] {

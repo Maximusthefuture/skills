@@ -266,7 +266,8 @@ describe("misuse over MCP", () => {
 
     const cases: [Promise<any>, Record<string, unknown>][] = [
       [reviewer.callError("complete"), { code: "AGREEMENT_NOT_READY", nextAction: "wait" }],
-      [backend.callError("complete", { status: "PASS" }), { code: "INVALID_INPUT", currentPhase: "DISCUSS" }],
+      // 'status' is extra during DISCUSS (ignored with a warning, not a reason to fail); the call still fails because no agreement exists yet
+      [backend.callError("complete", { status: "PASS" }), { code: "AGREEMENT_NOT_READY", currentPhase: "DISCUSS" }],
       [backend.callError("send_message", { to: "ghost", message: "x" }), { code: "NOT_ASSIGNED", validRecipients: ["reviewer", "operator"] }],
       [backend.callError("send_message", { to: "reviewer", message: "" }), { code: "INVALID_INPUT" }],
       [backend.callError("propose", { summary: "s", assignments: [] }), { code: "INVALID_INPUT", taskAgents: ["backend", "reviewer"] }],
