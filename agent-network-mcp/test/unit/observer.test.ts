@@ -65,6 +65,54 @@ describe("digests of closed tasks", () => {
       protocolErrors: { "propose:CLARIFY_FIRST": 1 },
     });
   });
+
+  it("counts a session's cost/sessions in a task it only finished via alsoFinished, even with no sessions of its own", async () => {
+    const root = await tmpDir();
+    const networkDir = join(root, ".agent-network");
+    const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
+    const taskA = await operator.createTaskAsOperator({ title: "A", description: "a", agents: ["backend", "reviewer"] });
+    const taskB = await operator.createTaskAsOperator({ title: "B", description: "b", agents: ["backend", "reviewer"] });
+    const sessions = new SessionStore(await FileStore.open(networkDir));
+    // the agent kept going past taskA without a pause and also finished taskB within the same session
+    await sessions.create({
+      taskId: taskA.id, agentId: "backend", attempt: 1, startedAt: new Date().toISOString(), endedAt: new Date().toISOString(),
+      durationMs: 1000, exitCode: 0, costUsd: 0.53, model: "haiku", alsoFinished: [taskB.id],
+    });
+    await operator.cancelTask(taskA.id, "done");
+    await operator.cancelTask(taskB.id, "done");
+    await collectDigests(networkDir);
+    const digests = await readDigests(networkDir);
+    const dA = digests.find((d) => d.taskId === taskA.id);
+    const dB = digests.find((d) => d.taskId === taskB.id);
+    expect(dA?.agents.find((a) => a.id === "backend")).toMatchObject({ sessions: 1, costUsd: 0.53 });
+    // taskB has no session file of its own: its real cost lives only in taskA's folder, credited via alsoFinished
+    expect(dB?.agents.find((a) => a.id === "backend")).toMatchObject({ sessions: 1, costUsd: 0.53 });
+    expect(dB?.costUsd).toBe(0.53);
+  });
+
+  it("rebuilds a digest once a new session appears crediting it via alsoFinished, after it was already written", async () => {
+    const root = await tmpDir();
+    const networkDir = join(root, ".agent-network");
+    const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
+    const taskA = await operator.createTaskAsOperator({ title: "A", description: "a", agents: ["backend", "reviewer"] });
+    const taskB = await operator.createTaskAsOperator({ title: "B", description: "b", agents: ["backend", "reviewer"] });
+    await operator.cancelTask(taskA.id, "done");
+    await operator.cancelTask(taskB.id, "done");
+    expect(await collectDigests(networkDir)).toEqual(expect.arrayContaining([taskA.id, taskB.id]));
+    expect(await collectDigests(networkDir)).toEqual([]); // nothing new: both digests stay as they are
+
+    // a session recorded late, after both digests were already written, that also finished taskB
+    const sessions = new SessionStore(await FileStore.open(networkDir));
+    await sessions.create({
+      taskId: taskA.id, agentId: "backend", attempt: 1, startedAt: new Date().toISOString(), endedAt: new Date().toISOString(),
+      durationMs: 1000, exitCode: 0, costUsd: 0.53, model: "haiku", alsoFinished: [taskB.id],
+    });
+
+    expect(await collectDigests(networkDir)).toEqual(expect.arrayContaining([taskA.id, taskB.id]));
+    const digests = await readDigests(networkDir);
+    expect(digests.find((d) => d.taskId === taskA.id)?.agents.find((a) => a.id === "backend")).toMatchObject({ sessions: 1, costUsd: 0.53 });
+    expect(digests.find((d) => d.taskId === taskB.id)?.agents.find((a) => a.id === "backend")).toMatchObject({ sessions: 1, costUsd: 0.53 });
+  });
 });
 
 describe("the observer's store and tools", () => {

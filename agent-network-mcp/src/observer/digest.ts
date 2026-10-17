@@ -4,7 +4,7 @@ import { sessionCost, taskStats, type Prices } from "../stats.js";
 import { FileStore } from "../storage/fileStore.js";
 import { EventStore } from "../stores/eventStore.js";
 import { MessageStore } from "../stores/messageStore.js";
-import { SessionStore } from "../stores/sessionStore.js";
+import { SessionStore, type SessionRecord } from "../stores/sessionStore.js";
 import { SyncStore } from "../stores/syncStore.js";
 import { TaskStore } from "../stores/taskStore.js";
 import { Journal } from "../supervisor/journal.js";
@@ -30,6 +30,8 @@ export interface TaskDigest {
   protocolErrors: Record<string, number>;
   builds: { runs: number; red: number };
   supervisor: { incidents: Record<string, number>; needsYou: number };
+  /** Own-folder sessions plus ones credited via another task's alsoFinished: lets collectDigests notice a later one and rebuild. */
+  countedSessions: number;
 }
 
 const minutes = (ms: number) => Math.round(ms / 6000) / 10;
@@ -53,9 +55,26 @@ async function protocolErrors(root: string, taskId: string): Promise<Record<stri
   return out;
 }
 
+/** This task's own sessions plus ones from other tasks' folders whose alsoFinished names it (the agent kept going past it without a pause). */
+async function creditedSessions(fs: FileStore, taskId: string): Promise<{ sessions: SessionRecord[]; countedIn: string[] }> {
+  const store = new SessionStore(fs);
+  const own = await store.list(taskId);
+  const countedIn: string[] = [];
+  const credited: SessionRecord[] = [];
+  for (const other of await new TaskStore(fs).list()) {
+    if (other.id === taskId) continue;
+    const theirs = (await store.list(other.id)).filter((s) => s.alsoFinished?.includes(taskId));
+    if (theirs.length) {
+      countedIn.push(other.id);
+      credited.push(...theirs);
+    }
+  }
+  return { sessions: [...own, ...credited], countedIn };
+}
+
 export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): Promise<TaskDigest> {
-  const sessions = await new SessionStore(fs).list(task.id);
-  const stats = taskStats(task, sessions, [], new Date(), prices);
+  const { sessions, countedIn } = await creditedSessions(fs, task.id);
+  const stats = taskStats(task, sessions, countedIn, new Date(), prices);
   const events = (await new EventStore(fs).list(task.id)).map((e) => e.event);
   const messages = await new MessageStore(fs).list(task.id);
   const reports = await new SyncStore(fs).list(task.id);
@@ -112,17 +131,29 @@ export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): P
     protocolErrors: await protocolErrors(fs.root, task.id),
     builds: { runs: builds.length, red: builds.filter((b) => !b.ok).length },
     supervisor: { incidents, needsYou: journal.filter((j) => j.kind === "needs-you").length },
+    countedSessions: sessions.length,
   };
 }
 
 /** Digests of closed tasks: <network>/observer/digests/<task>.json, written once each task is COMPLETED or CANCELLED. */
 export async function collectDigests(networkDir: string, prices?: Prices): Promise<string[]> {
   const fs = await FileStore.open(networkDir);
+  const tasks = await new TaskStore(fs).list();
+  // one pass over every task's own sessions: cheap in-memory lookup below for whether a task gained a new
+  // own or alsoFinished-credited session since its digest (if any) was last written
+  const sessionsByTask = new Map(await Promise.all(tasks.map(async (t) => [t.id, await new SessionStore(fs).list(t.id)] as const)));
+  const relevantCount = (taskId: string): number => {
+    let n = (sessionsByTask.get(taskId) ?? []).length;
+    for (const list of sessionsByTask.values()) n += list.filter((s) => s.alsoFinished?.includes(taskId)).length;
+    return n;
+  };
   const written: string[] = [];
-  for (const task of await new TaskStore(fs).list()) {
+  for (const task of tasks) {
     if (task.status !== "COMPLETED" && task.status !== "CANCELLED") continue;
-    if (await fs.readJson(["observer", "digests", `${task.id}.json`])) continue;
-    await fs.writeJson(["observer", "digests", `${task.id}.json`], await buildDigest(fs, task, prices));
+    const path = ["observer", "digests", `${task.id}.json`];
+    const existing = await fs.readJson<TaskDigest>(path);
+    if (existing && relevantCount(task.id) <= (existing.countedSessions ?? 0)) continue;
+    await fs.writeJson(path, await buildDigest(fs, task, prices));
     written.push(task.id);
   }
   return written;
