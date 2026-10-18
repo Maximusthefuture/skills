@@ -1,6 +1,6 @@
 import { buildTools, DEFAULT_BUILD_TIMEOUT_MIN, parseBuildCommand, runBuild } from "../build.js";
 import { AppError, isAppError } from "../errors.js";
-import { containsCommit, filesChangedSince, readGitContext, workTreeState } from "../git.js";
+import { containsCommit, filesChangedSince, readGitContext, resolveCommit, workTreeState } from "../git.js";
 import { phaseEpoch } from "../handoff.js";
 import { changePath, readChange, validateChange, type ChangeInfo, type Exec } from "../openspec.js";
 import { normalizePath, ownersOf } from "../ownership.js";
@@ -424,7 +424,7 @@ export class Swarm {
         if (!existing) await this.service.startImplementation(task.id);
         const checked = await this.checkProposal(task);
         const unreported = input.commits?.length ? undefined : await this.unreportedWork(task, existing?.commits ?? []);
-        const commits = unreported?.head ? [unreported.head] : input.commits;
+        const commits = unreported?.head ? [unreported.head] : await this.realCommits(task, input.commits);
         const absent = Object.entries(await this.dependencyCommits(await this.service.agreements.find(task.id), await this.service.implementations.list(task.id)));
         if (absent.length) {
           throw new AppError(
@@ -466,7 +466,9 @@ export class Swarm {
         if (!input.result?.trim()) throw invalid("complete() during INTEGRATE requires 'result': what you merged, where the result is, and the build/test outcome");
         const checked = input.status === "PASS" ? await this.checkProposal(task) : undefined;
         warnings = [...(checked ? [checked] : []), ...this.ignoredFields(extra)];
-        const res = await this.service.submitIntegration({ taskId: task.id, status: input.status, result: input.result, commits: input.commits, findings: this.findings(input.findings), followUps: input.followUps });
+        const merged = await this.realCommits(task, input.commits);
+        if (input.status === "PASS") await this.requireJobsMerged(task, merged?.[0]);
+        const res = await this.service.submitIntegration({ taskId: task.id, status: input.status, result: input.result, commits: merged, findings: this.findings(input.findings), followUps: input.followUps });
         action = input.status === "PASS" ? "INTEGRATION_PASS" : "INTEGRATION_NEEDS_FIX";
         if (res.followUps.length) followUpsCreated = res.followUps.map((t) => ({ id: t.id, title: t.title, agents: t.agents }));
         break;
@@ -818,6 +820,62 @@ export class Swarm {
    * work there, and agents often commit and then forget the hash. Records the branch head (read now, not the cached
    * context) and says so; warns when nothing new is committed. Nothing for an agent in the task's checkout or a review-only one.
    */
+  /**
+   * The commits an agent reports, checked against git: a short hash becomes the full one; a hash git does not know (made
+   * up from a short one, mistyped) is refused, as is a commit outside its own branch. Outside a repository they pass as given.
+   */
+  private async realCommits(task: Task, commits: string[] | undefined): Promise<string[] | undefined> {
+    if (!commits?.length || !task.git) return commits; // a task outside git: nothing to check them against
+    const out: string[] = [];
+    for (const c of commits) {
+      const full = await resolveCommit(this.workdir, c.trim());
+      if (full === undefined) return commits;
+      if (full === null) {
+        throw new AppError("INVALID_INPUT", `There is no commit ${c} in your repository (${this.workdir}). Copy the hash from git, never complete one: git log --oneline -3 shows your latest commits; pass the short hash as it is.`, { commit: c });
+      }
+      if ((await containsCommit(this.workdir, full)) === false) {
+        throw new AppError("INVALID_INPUT", `Commit ${c} is not in your branch: report the commits your branch has (git log --oneline -5).`, { commit: c });
+      }
+      out.push(full);
+    }
+    return out;
+  }
+
+  /**
+   * The lead's integration takes in the work it delegated: every commit a finished job reported must be in the merged
+   * result. A job whose work the lead decides not to take is merged with "-s ours", which records the decision in git.
+   */
+  private async requireJobsMerged(task: Task, merged: string | undefined): Promise<void> {
+    const jobs = (await this.service.jobsOf(task.id)).filter((j) => j.status === "COMPLETED");
+    if (!jobs.length) return;
+    const head = merged ?? (await readGitContext(this.workdir).catch(() => null))?.commit;
+    if (!head) return;
+    const missing: string[] = [];
+    for (const job of jobs) {
+      const impl = await this.service.implementations.find(job.id, job.agents[0]!);
+      for (const c of impl?.commits ?? []) {
+        const inIt = await this.ancestor(c, head);
+        if (inIt === false || inIt === null) missing.push(`${c.slice(0, 7)} (${job.id}, ${job.agents[0]})`);
+      }
+    }
+    if (missing.length) {
+      throw new AppError(
+        "JOBS_OPEN",
+        `The work you delegated is not in the merged result: ${missing.join(", ")}. git merge <commit> each into your branch, run the build, then complete again; a job's work you decided not to take: git merge -s ours <commit> -m "<why>", which records that decision.`,
+        { missing },
+      );
+    }
+  }
+
+  /** Is `commit` in the history of `head` (in this agent's repository)? null when git cannot tell. */
+  private async ancestor(commit: string, head: string): Promise<boolean | null> {
+    const full = await resolveCommit(this.workdir, commit);
+    if (!full) return null;
+    if (full === head || head.startsWith(full) || full.startsWith(head)) return true;
+    const { execFile } = await import("node:child_process");
+    return new Promise((done) => execFile("git", ["merge-base", "--is-ancestor", full, head], { cwd: this.workdir, timeout: 5000 }, (err) => done(!err ? true : (err as { code?: unknown }).code === 1 ? false : null)));
+  }
+
   /** Files the commits of this agent's own branch changed since the task's base (others' merged work left out); null without one. */
   private async changedInBranch(task: Task): Promise<string[] | null> {
     if (!task.git || !(await this.ownBranch(task))) return null;
@@ -873,7 +931,7 @@ export class Swarm {
     const d = this.decide(snap);
     if (d.park) {
       await this.service.park(task);
-      return { task: { id: task.id, title: task.title, phase: task.phase, status: task.status }, agent, parked: true, waitingOn: d.waitingOn, allowedActions: d.allowedActions, nextAction: d.nextAction, hint: d.hint };
+      return { task: { id: task.id, title: task.title, phase: task.phase, status: task.status }, agent, parked: true, pendingMessages: [], waitingOn: d.waitingOn, allowedActions: d.allowedActions, nextAction: d.nextAction, hint: d.hint };
     }
     if (d.handoff) {
       // nothing else: messages stay unread for the fresh session, and nothing here should tempt this one to go on
@@ -1099,8 +1157,8 @@ export class Swarm {
       return {
         nextAction: "done",
         allowedActions: [],
-        hint: `Nothing for you to do until the others move (${d.waitingOn.join(", ") || "the team"}): end your session now, with no more tool calls. The runner waits without a model and starts a fresh session as soon as something changes for you (a phase, a message, a report).`,
-        waitingOn: d.waitingOn,
+        hint: `Nothing for you to do until the others move (${d.waitingOn.filter((a) => a !== this.me).join(", ") || "the team"}): end your session now, with no more tool calls. The runner waits without a model and starts a fresh session as soon as something changes for you (a phase, a message, a report).`,
+        waitingOn: d.waitingOn.filter((a) => a !== this.me),
         park: true,
       };
     }
@@ -1258,6 +1316,13 @@ export class Swarm {
         if (task.syncRound === 0 && isReviewOnly(myAssignment, task)) {
           return done("implement", ["send_message", "complete", "wait"], 'Your assignment has no files: review only, you change nothing in this task. Mark your part ready now with complete({result: "review only: nothing to change"}); you review in SYNC.', pending);
         }
+        // the lead's own steps are done and only its delegated jobs are open: it waits for them (wait() would return at
+        // once with "implement" otherwise, a model turn each time)
+        const running = (s.jobs ?? []).filter((j) => j.status === "running" || j.status === "blocked");
+        const myOpen = (s.subtasks.find((l) => l.agentId === this.me)?.items ?? []).filter((i) => i.status === "TODO" || i.status === "DOING");
+        if (running.length && myOpen.length && myOpen.every((i) => running.some((j) => j.subtask === i.id))) {
+          return done("wait", ["send_message", "subtasks", "wait"], `Your own steps are done; your delegated jobs still run: ${running.map((j) => `${j.task} (${j.agent})`).join(", ")}. wait(): their results arrive in pendingMessages; then merge their commits and complete().`, running.map((j) => j.agent));
+        }
         const deps = myAssignment?.dependsOn ?? [];
         const depsWaiting = deps.filter((d) => !impls.some((i) => i.agentId === d && i.status === "READY_FOR_SYNC"));
         if (depsWaiting.length && s.dependencyParked) {
@@ -1320,7 +1385,7 @@ export class Swarm {
         return done(
           "sync",
           ["send_message", "complete", "wait"],
-          `${fresh}Review ${scope} ('teamImplementations': their changed files and commits) against the task and the agreement: judge the code, not what its authors say about it. Work done in another branch is in its commits (git show <hash>); if a change listed in filesChanged is not visible to you, ask its author with send_message to commit it and wait() for the reply instead of reporting it missing.${task.syncRound > 1 ? " 'fixedFindings' lists what the fixes had to address: check each one." : ""}${spec ? ` Check each task in their tasksDone against its scenarios in ${spec}/specs/.` : ""} Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.`,
+          `${fresh}Review ${scope} ('teamImplementations': their changed files and commits) against the task and the agreement: judge the code, not what its authors say about it. Work done in another branch is in its commits (git show <hash>); if a change listed in filesChanged is not visible to you, ask its author with send_message to commit it and wait() for the reply instead of reporting it missing. Look at the whole change, not only the listed files: git diff --stat ${(task.baseCommit ?? task.git?.commit ?? "<the task's base>").slice(0, 7)} <their last commit> — a file outside the agreement or unrelated to the task (pulled in by a merge, say) is an ERROR.${task.syncRound > 1 ? " 'fixedFindings' lists what the fixes had to address: check each one." : ""}${spec ? ` Check each task in their tasksDone against its scenarios in ${spec}/specs/.` : ""} Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.`,
           pending,
         );
       }
@@ -1335,7 +1400,7 @@ export class Swarm {
         return done(
           "integrate",
           ["send_message", "complete", "wait"],
-          `Bring everyone's work together (merge their branches if they use worktrees), run ${verify} on the result, ` +
+          `Bring everyone's work together (merge their branches if they use worktrees; and the commits of your delegated jobs), check that git diff --stat ${(task.baseCommit ?? task.git?.commit ?? "<the task's base>").slice(0, 7)} HEAD holds only the task's files, run ${verify} on the result, ` +
             (spec
               ? `tick [x] in ${spec}/tasks.md the tasks reported done ('openspec.tasks') and run \`openspec validate ${task.openspec!.change} --strict\` if the openspec CLI is installed, then complete({status: "PASS", result}) naming the tasks left open, `
               : `then complete({status: "PASS", result}) `) +

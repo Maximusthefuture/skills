@@ -37,6 +37,8 @@ describe("parking a runner's waiting session", () => {
     const ctx = await reviewer.context();
     expect(ctx).toMatchObject({ nextAction: "done", parked: true, waitingOn: ["backend"], allowedActions: [] });
     expect(String(ctx.hint)).toContain("waits without a model");
+    // the same from wait(), where a session usually is when it has nothing to do
+    expect(await reviewer.wait({ timeoutMs: 1000 })).toMatchObject({ status: "DONE", nextAction: "done", parked: true });
     expect(await isParked(fs, "reviewer", await operator.tasks.get(task.id))).toBe(true);
     // the backend's own builds or steps change nothing for the reviewer... its report and the phase change do
     await backend.complete({ result: "api", filesChanged: ["src/A.java"] });

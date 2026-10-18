@@ -92,6 +92,28 @@ describe("the lead delegates a job to a new runner", () => {
     await backend.complete({ result: "api done", filesChanged: ["src/main/A.java"] });
   });
 
+  it("a job never takes files another agent of the task owns", async () => {
+    const root = await tmpDir();
+    const networkDir = join(root, "shop", ".agent-network");
+    mkdirSync(networkDir, { recursive: true });
+    await writeSpawnFile(networkDir, SPAWN);
+    const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
+    const swarm = async (id: string) => new Swarm(await NetworkService.create(networkDir, { id, type: "test" }, { hub: new EventHub(networkDir, { fallbackPollMs: 50 }) }));
+    const backend = await swarm("backend");
+    const tester = await swarm("tester");
+    await operator.createTaskAsOperator({ title: "Orders", description: "POST /orders", agents: ["backend", "tester"] });
+    await backend.propose({ summary: "orders", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/main/**"] }, { agentId: "tester", responsibility: "tests", files: ["src/test/**"] }] });
+    for (const a of [backend, tester]) {
+      await a.context();
+      await a.complete({});
+    }
+    const refused = await failure(backend, backend.delegate({ template: "tester", job: "Load test POST /orders with 50 requests", files: ["src/test/java/load/OrdersLoadTest.java"] }));
+    expect(refused).toMatchObject({ error: "FILE_NOT_OWNED" });
+    expect(JSON.stringify(refused)).toContain("src/test/** (tester)");
+    // its own files, or new ones nobody owns, are fine
+    await backend.delegate({ template: "tester", job: "Benchmark the order query and write the numbers down", files: ["bench/OrdersBench.java"] });
+  });
+
   it("a cancelled job drops the lead's subtask and says so; the limit counts jobs and spawned agents together", async () => {
     const { operator, backend, task } = await setup();
     const first = await backend.delegate({ template: "tester", job: "Find why OrderServiceTest fails on CI only" });

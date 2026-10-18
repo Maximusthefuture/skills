@@ -67,3 +67,16 @@ export async function filesChangedSince(cwd: string, base: string, others: strin
     return null;
   }
 }
+
+/**
+ * A commit as the repository in `cwd` knows it: the full hash of a short or full one, null when git does not know it
+ * (a hash the agent made up or mistyped); undefined when `cwd` is not a git repository.
+ */
+export async function resolveCommit(cwd: string, commit: string): Promise<string | null | undefined> {
+  try {
+    await git(cwd, "rev-parse", "--git-dir");
+  } catch {
+    return undefined;
+  }
+  return git(cwd, "rev-parse", "--verify", "--quiet", `${commit}^{commit}`).catch(() => null);
+}

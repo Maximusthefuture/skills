@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isHandedOver } from "./handoff.js";
-import { isParked } from "./park.js";
+import { isParked, lastPark } from "./park.js";
 import { progressMark, uncommittedCount, workBrief } from "./progress.js";
 import { NetworkService } from "./service.js";
 import { SessionOutput, type ActivityItem, type SessionResult } from "./sessionOutput.js";
@@ -464,9 +464,12 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       if (opts.once) return 0;
       continue;
     }
-    if (await isParked(fs, agent, after).catch(() => false)) {
-      // a planned end: the top of the loop waits without a model and starts a fresh session when something changes
+    // the session parked (a planned end): the top of the loop waits without a model, or, if something changed for the
+    // agent while the session was ending, starts a fresh one at once
+    const parked = await lastPark(fs, agent).catch(() => null);
+    if (parked?.taskId === task.id && Date.parse(parked.at) >= startedAt.getTime()) {
       plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
+      if (!(await isParked(fs, agent, after).catch(() => false))) say(`${task.id}: parked, but something changed for ${agent} meanwhile; a fresh session starts`);
       continue;
     }
     if (after.status === "BLOCKED") {

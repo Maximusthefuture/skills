@@ -161,7 +161,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   tool(
     "wait",
     `Stop and wait while there is nothing useful for you to do. Returns when a message arrives, an action is required of you, or the task is done; status is MESSAGES | ACTION_REQUIRED | UPDATED (new task, phase change, blocked) | DONE | TIMEOUT (short answer; call wait again). Returns immediately if something is already pending. Max ${MAX_WAIT_MS}ms.`,
-    { timeoutMs: z.number().int().min(0).max(MAX_WAIT_MS).optional().describe(`Milliseconds to wait; omit it to use the default (${swarm.defaultWaitMs})`) },
+    { timeoutMs: z.number().int().min(0).optional().describe(`Milliseconds to wait, at most ${MAX_WAIT_MS} (more is cut to it); omit it to use the default (${swarm.defaultWaitMs})`) },
     async (a, signal) => swarm.wait(a, signal),
   );
 }

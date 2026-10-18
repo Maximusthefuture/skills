@@ -33,3 +33,9 @@ export async function isParked(fs: FileStore, agentId: string, task: Task): Prom
   const marker = await fs.readJson<ParkMarker>(markerPath(agentId));
   return !!marker && marker.taskId === task.id && task.status === "ACTIVE" && marker.mark === (await parkMark(fs, task, agentId));
 }
+
+/** When the agent last parked, and on which task (null: never). */
+export async function lastPark(fs: FileStore, agentId: string): Promise<{ taskId: string; at: string } | null> {
+  const marker = await fs.readJson<ParkMarker>(markerPath(agentId));
+  return marker ? { taskId: marker.taskId, at: marker.at } : null;
+}

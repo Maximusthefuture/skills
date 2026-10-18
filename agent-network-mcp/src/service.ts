@@ -601,10 +601,16 @@ ${feedbackText(fb)}`;
       const used = (task.spawned?.length ?? 0) + jobs.length;
       if (used >= maxPerTask) throw new AppError("INVALID_INPUT", `This task added or delegated ${used} runner(s) already, the limit is ${maxPerTask}`);
       const files = [...new Set((input.files ?? []).map((f) => normalizePath(assertRelativeFilePath(f))))];
+      // a job works on the lead's own files or on files nobody in the task owns: never on another agent's
+      const agreement = await this.agreements.find(task.id);
+      const taken = (agreement?.assignments ?? []).filter((a) => a.agentId !== lead).flatMap((a) => (a.files ?? []).filter((g) => files.some((f) => overlaps(f, g))).map((g) => `${g} (${a.agentId})`));
+      if (taken.length) {
+        throw new AppError("FILE_NOT_OWNED", `The job's files belong to other agents of ${task.id}: ${taken.join(", ")}. Delegate work on your own files or new ones; that part is theirs — or ask them (send_message) to hand it over first.`, { taken });
+      }
       const role = await this.roleOf(input);
-      const taken = new Set([...(await this.agents.list()).map((a) => a.id), ...(await this.tasks.list()).flatMap((t) => t.agents), OPERATOR]);
+      const ids = new Set([...(await this.agents.list()).map((a) => a.id), ...(await this.tasks.list()).flatMap((t) => t.agents), OPERATOR]);
       let agentId = "";
-      for (let n = 1; ; n++) if (!taken.has((agentId = `${template.name}-job${n}`))) break;
+      for (let n = 1; ; n++) if (!ids.has((agentId = `${template.name}-job${n}`))) break;
       // the lead's checklist gets the job as an open step: its own complete() waits for it
       const list = await this.subtasks.get(task.id, lead);
       const subtask = `s${list.nextSeq}`;
@@ -870,7 +876,7 @@ ${feedbackText(fb)}`;
         throw new AppError(
           "FILE_OVERLAP",
           `Two agents claim the same files: ${first.agents[0]} '${first.files[0]}' and ${first.agents[1]} '${first.files[1]}'` +
-            `${overlaps.length > 1 ? ` (and ${overlaps.length - 1} more)` : ""}. Split the files so that every file has ONE owner (talk it over with send_message); ` +
+            `${overlaps.length > 1 ? ` (and ${overlaps.length - 1} more)` : ""}. Split the files so that every file has ONE owner (talk it over with send_message) — split the work, do not take it away: an agent that was to write tests gets its own test class (e.g. a separate *LoadTest or *EdgeCasesTest) rather than files: []; ` +
             `if an agent later needs a file of the other, it asks with send_message(requestFiles=[...]).`,
           { overlaps },
         );

@@ -83,3 +83,50 @@ describe("ownership is checked on what the branch changed", () => {
     expect((await operator.implementations.find("task-001", "backend"))!.filesChanged.sort()).toEqual(["src/Api.java", "src/Repo.java"]);
   });
 });
+
+describe("commits are checked against git, and the lead takes in what it delegated", () => {
+  it("a made-up hash is refused, a short one stored in full; PASS waits until the job's commit is in the merged result", async () => {
+    const { writeSpawnFile } = await import("../../src/spawner.js");
+    const r = await repo();
+    const networkDir = join(r.main, ".agent-network");
+    await writeSpawnFile(networkDir, { templates: [{ name: "tester", description: "tests", config: { id: "tester", command: ["x", "{prompt}"] } }], maxPerTask: 2 });
+    const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
+    const swarm = async (id: string, workdir: string) => new Swarm(await NetworkService.create(networkDir, { id, type: "test" }, { hub: new EventHub(networkDir, { fallbackPollMs: 50 }) }), undefined, { workdir });
+    const backendDir = r.tree("backend");
+    const testerDir = r.tree("tester");
+    const backend = await swarm("backend", backendDir);
+    const tester = await swarm("tester", testerDir);
+    const task = await operator.createTaskAsOperator({ title: "Api", description: "an endpoint and its tests", agents: ["backend", "tester"] });
+    await backend.propose({ summary: "api", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/**"] }, { agentId: "tester", responsibility: "tests", files: ["test/**"] }] });
+    for (const a of [backend, tester]) {
+      await a.context();
+      await a.complete({});
+    }
+    const api = r.commit(backendDir, "src/Api.java", "class Api {}");
+    const sent = await backend.delegate({ template: "tester", job: "Benchmark Api and write the numbers to bench/README.md", files: ["bench/**"] });
+    // the lead has nothing but the job open: it waits (no busy wait() returning "implement")
+    expect(await backend.context()).toMatchObject({ nextAction: "wait", waitingOn: ["tester-job1"] });
+
+    const jobDir = r.tree("tester-job1");
+    const job = await swarm("tester-job1", jobDir);
+    git(jobDir, "merge", "-q", api);
+    const bench = r.commit(jobDir, "bench/README.md", "p95 12 ms");
+    const madeUp = `${bench.slice(0, 7)}${"0".repeat(33)}`;
+    expect(await job.complete({ result: "bench", filesChanged: ["bench/README.md"], commits: [madeUp] }).catch((e) => job.errorBody(e))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("never complete one") });
+    await job.complete({ result: "p95 12 ms", filesChanged: ["bench/README.md"], commits: [bench.slice(0, 7)] });
+    expect((await operator.implementations.find(sent.job as string, "tester-job1"))!.commits).toEqual([bench]);
+
+    await backend.complete({ result: "api", filesChanged: ["src/Api.java"], commits: [api] });
+    const t = r.commit(testerDir, "test/ApiTest.java", "class ApiTest {}");
+    await tester.complete({ result: "tests", filesChanged: ["test/ApiTest.java"], commits: [t] });
+    for (const a of [backend, tester]) await a.complete({ status: "PASS" });
+    expect((await operator.tasks.get(task.id)).phase).toBe("INTEGRATE");
+
+    git(backendDir, "merge", "-q", "--no-edit", "tester");
+    const refused = await backend.complete({ status: "PASS", result: "merged", commits: [git(backendDir, "rev-parse", "HEAD")] }).catch((e) => backend.errorBody(e));
+    expect(refused).toMatchObject({ error: "JOBS_OPEN" });
+    expect(JSON.stringify(refused)).toContain(bench.slice(0, 7));
+    git(backendDir, "merge", "-q", "--no-edit", bench);
+    expect(await backend.complete({ status: "PASS", result: "merged with the benchmark", commits: [git(backendDir, "rev-parse", "HEAD")] })).toMatchObject({ task: { phase: "DONE" } });
+  });
+});
