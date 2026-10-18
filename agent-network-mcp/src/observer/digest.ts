@@ -32,7 +32,22 @@ export interface TaskDigest {
   supervisor: { incidents: Record<string, number>; needsYou: number };
   /** Own-folder sessions plus ones credited via another task's alsoFinished: lets collectDigests notice a later one and rebuild. */
   countedSessions: number;
+  /**
+   * How it ended up, not just how it went: merged into the project (squash / merge) and reverted after; the operator's
+   * comments on the diff and the lead's answers; follow-up tasks; delegated jobs; why its sessions ended.
+   */
+  outcome: {
+    merged: "squash" | "merge" | "already" | null;
+    reverted: boolean;
+    reviewComments: { total: number; fixed: number; declined: number; open: number; texts: string[] };
+    followUps: number;
+    jobs: number;
+    sessionsEndedBy: Record<string, number>;
+  };
 }
+
+/** What changes after a task closed (a merge, a revert, comments): a digest whose key differs is written again. */
+const outcomeKey = (task: Task, comments: number): string => `${task.merged?.commit ?? ""}|${task.merged?.reverted?.commit ?? ""}|${comments}`;
 
 const minutes = (ms: number) => Math.round(ms / 6000) / 10;
 
@@ -79,6 +94,8 @@ export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): P
   const messages = await new MessageStore(fs).list(task.id);
   const reports = await new SyncStore(fs).list(task.id);
   const journal = (await new Journal(fs).list(1000)).filter((j) => j.taskId === task.id);
+  const review = (await fs.readJson<{ file: string; line?: number; text: string; status: string }[]>(["tasks", task.id, "review.json"])) ?? [];
+  const allTasks = await new TaskStore(fs).list();
 
   const agents = task.agents.map((id) => {
     const mine = sessions.filter((s) => s.agentId === id);
@@ -132,7 +149,23 @@ export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): P
     builds: { runs: builds.length, red: builds.filter((b) => !b.ok).length },
     supervisor: { incidents, needsYou: journal.filter((j) => j.kind === "needs-you").length },
     countedSessions: sessions.length,
-  };
+    outcome: {
+      merged: task.merged ? (task.merged.already ? "already" : (task.merged.strategy ?? "merge")) : null,
+      reverted: !!task.merged?.reverted,
+      reviewComments: {
+        total: review.length,
+        fixed: review.filter((c) => c.status === "fixed").length,
+        declined: review.filter((c) => c.status === "declined").length,
+        open: review.filter((c) => c.status === "open").length,
+        // the words, short: repeated comments across tasks are what a role should learn
+        texts: review.slice(0, 20).map((c) => `${c.file}${c.line ? `:${c.line}` : ""}: ${c.text}`.slice(0, 200)),
+      },
+      followUps: allTasks.filter((t) => t.parentTaskId === task.id && !t.jobOf).length,
+      jobs: allTasks.filter((t) => t.jobOf?.taskId === task.id).length,
+      sessionsEndedBy: sessions.reduce<Record<string, number>>((acc, s) => ((acc[s.endedBy ?? "unknown"] = (acc[s.endedBy ?? "unknown"] ?? 0) + 1), acc), {}),
+    },
+    outcomeKey: outcomeKey(task, review.length),
+  } as TaskDigest;
 }
 
 /** Digests of closed tasks: <network>/observer/digests/<task>.json, written once each task is COMPLETED or CANCELLED. */
@@ -152,7 +185,9 @@ export async function collectDigests(networkDir: string, prices?: Prices): Promi
     if (task.status !== "COMPLETED" && task.status !== "CANCELLED") continue;
     const path = ["observer", "digests", `${task.id}.json`];
     const existing = await fs.readJson<TaskDigest>(path);
-    if (existing && relevantCount(task.id) <= (existing.countedSessions ?? 0)) continue;
+    const comments = ((await fs.readJson<unknown[]>(["tasks", task.id, "review.json"])) ?? []).length;
+    // written again on a later session (alsoFinished) or once the task was merged, reverted or commented on after it closed
+    if (existing && relevantCount(task.id) <= (existing.countedSessions ?? 0) && (existing as TaskDigest & { outcomeKey?: string }).outcomeKey === outcomeKey(task, comments)) continue;
     await fs.writeJson(path, await buildDigest(fs, task, prices));
     written.push(task.id);
   }

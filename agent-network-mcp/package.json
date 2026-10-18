@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "docs:sync": "node scripts/sync-protocol.mjs"
   },
   "license": "MIT",
   "dependencies": {

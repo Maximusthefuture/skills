@@ -11,10 +11,17 @@ import type { Task } from "./types.js";
  */
 export async function parkMark(fs: FileStore, task: Task, agentId: string): Promise<string> {
   const toMe = (await new MessageStore(fs).list(task.id, { to: agentId })).at(-1)?.id ?? "";
-  // events for this agent from someone else (an agreement proposed, a part reported, a review); its own builds do not count
-  const events = (await new EventStore(fs).list(task.id)).filter(({ event: e }) => e.sourceAgent !== agentId && (e.targetAgent == null || e.targetAgent === agentId) && e.type !== "BUILD_RAN");
-  return `${task.updatedAt}|${toMe}|${events.at(-1)?.seq ?? 0}`;
+  // only what can give this agent something to do: a block and its unblock, a build, an agent added... wake nobody
+  const events = (await new EventStore(fs).list(task.id)).filter(({ event: e }) => e.sourceAgent !== agentId && (e.targetAgent == null || e.targetAgent === agentId) && WAKES.has(e.type));
+  const state = [task.phase, task.syncRound, JSON.stringify(task.reviewScope ?? null), JSON.stringify(task.takeover ?? null)].join(":");
+  return `${state}|${toMe}|${events.at(-1)?.seq ?? 0}`;
 }
+
+/** Events that may need a parked agent: a new agreement to approve, a part reported (a dependency), comments on the diff. */
+const WAKES = new Set(["AGREEMENT_UPDATED", "IMPLEMENTATION_COMPLETED", "REVIEW_COMMENTS", "TASK_HANDED_OVER", "PHASE_CHANGED"]);
+
+/** A parked agent looks again after this long anyway (a short session): a missed reason to wake costs minutes, not a task. */
+export const PARK_MAX_MS = 15 * 60_000;
 
 interface ParkMarker {
   taskId: string;
@@ -31,7 +38,9 @@ export async function writeParkMarker(fs: FileStore, agentId: string, task: Task
 /** The agent parked on this task and nothing has changed for it since. */
 export async function isParked(fs: FileStore, agentId: string, task: Task): Promise<boolean> {
   const marker = await fs.readJson<ParkMarker>(markerPath(agentId));
-  return !!marker && marker.taskId === task.id && task.status === "ACTIVE" && marker.mark === (await parkMark(fs, task, agentId));
+  if (!marker || marker.taskId !== task.id || task.status !== "ACTIVE") return false;
+  if (Date.now() - Date.parse(marker.at) > PARK_MAX_MS) return false;
+  return marker.mark === (await parkMark(fs, task, agentId));
 }
 
 /** When the agent last parked, and on which task (null: never). */

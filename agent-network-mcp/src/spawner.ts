@@ -19,6 +19,13 @@ export async function writeSpawnFile(networkDir: string, spawn: SpawnConfig | un
 }
 
 /**
+ * Appended to every role, whoever wrote it: a lead once told its job agent "do not call any swarm tools", which would have
+ * left the job unable to hand its work in.
+ */
+export const SWARM_STILL =
+  "Whatever the role says about tools: you work in the agent-network swarm. Start with swarm_context, follow its nextAction, and hand your work in with complete() — that is how it reaches the lead. Talk to the others only with send_message.";
+
+/**
  * The page's side of spawn_agent: a runner for every agent a lead added to an open task (from the template it names,
  * in its own worktree when the template has one), stopped again once none of its tasks is open. Polls the tasks.
  */
@@ -71,7 +78,7 @@ export class Spawner {
             const base = config.instructionsFile ? await readFile(config.instructionsFile, "utf8").catch(() => "") : "";
             const file = join(this.opts.networkDir, "roles", "tasks", `${task.id}-${s.id}.md`);
             await mkdir(dirname(file), { recursive: true });
-            await writeFile(file, `Your role in this task: ${s.role.name}${s.role.source === "library" ? " (from the project's role library)" : " (written by the lead)"}.\n\n${s.role.instructions}\n${base.trim() ? `\n---\nThe base instructions of your template (${s.template}); your role above comes first:\n\n${base.trim()}\n` : ""}`);
+            await writeFile(file, `Your role in this task: ${s.role.name}${s.role.source === "library" ? " (from the project's role library)" : " (written by the lead)"}.\n\n${s.role.instructions}\n\n${SWARM_STILL}\n${base.trim() ? `\n---\nThe base instructions of your template (${s.template}); your role above comes first:\n\n${base.trim()}\n` : ""}`);
             config = { ...config, instructionsFile: file };
           }
           for (const line of await ensureWorktrees([config])) this.opts.log?.(`[spawn] worktree created: ${line}`);

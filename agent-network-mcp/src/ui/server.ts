@@ -204,6 +204,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         taskTitle: title(r.session!.taskId),
         taskState: taskState(tasks.find((t) => t.id === r.session!.taskId)),
         alsoFinished: [],
+        endedBy: null, phase: null, endPhase: null,
         numTurns: null,
         recordPath: null,
         agentId: r.id,

@@ -201,3 +201,14 @@ describe("pre-shell (Qwen's PreToolUse on run_shell_command)", () => {
     expect(preShellDecision("npm install")).toBeNull();
   });
 });
+
+describe("git commands that write or run something", () => {
+  it("are refused in pre-bash and pre-shell; plain reads pass", async () => {
+    const { preBashDecision, preShellDecision } = await import("../../src/hook.js");
+    for (const c of ["git diff --output=/tmp/x HEAD~1", "git log -p --output /etc/hosts", "git diff --ext-diff", "git show --textconv HEAD:a.txt", "git format-patch -o out HEAD~1"]) {
+      expect(JSON.stringify(preBashDecision(c))).toContain('"permissionDecision":"deny"');
+      expect(JSON.stringify(preShellDecision(c))).toContain("writes a file or runs a program");
+    }
+    for (const c of ["git diff --stat abc123 HEAD", "git log --oneline -5", "git show HEAD", "./mvnw -q verify"]) expect(preBashDecision(c)).toBeNull();
+  });
+});

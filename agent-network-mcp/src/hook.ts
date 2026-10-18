@@ -20,6 +20,7 @@ import type { Agent, Message, Task } from "./types.js";
  */
 
 export type HookMode = "post-tool" | "stop";
+/** PreToolUse modes: pre-shell (Qwen's run_shell_command), pre-bash (Claude Code's Bash). */
 
 /** The part of the Claude Code hook input we use. */
 export interface HookInput {
@@ -204,10 +205,30 @@ export async function runHook(mode: HookMode, input: HookInput, opts: HookOption
  * Qwen's PreToolUse for run_shell_command: a compound command (Qwen refuses it whole in headless mode anyway) or a build
  * run in the shell (its whole output would stay in the context) is denied with what to do instead. Null: let it run.
  */
+const denyHook = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
+
+/**
+ * Read-only git commands that are not: an allow rule like Bash(git diff:*) lets "git diff --output=<any file>" write
+ * anywhere, and --ext-diff / --textconv / --upload-pack run programs. Refused whatever the CLI's own rules allow.
+ */
+export function gitWriteDecision(command: string): object | null {
+  const cmd = command.trim();
+  if (!/^git\s/.test(cmd)) return null;
+  const flag = /(^|\s)(--output(=|\s|$)|--output-directory|-o\s|--ext-diff|--textconv|--upload-pack|--receive-pack|--exec(=|\s))/.exec(cmd);
+  return flag ? denyHook(`git ${flag[2]!.trim()} is refused here: it writes a file or runs a program. Read with git diff / git log / git show as they are, without it.`) : null;
+}
+
+/** pre-bash (Claude Code): the git check only; Claude's own permission rules do the rest. */
+export function preBashDecision(command: string): object | null {
+  return gitWriteDecision(command);
+}
+
 export function preShellDecision(command: string): object | null {
   const cmd = command.trim();
   const unquoted = cmd.replace(/'[^']*'|"[^"]*"/g, "''");
-  const deny = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
+  const deny = denyHook;
+  const git = gitWriteDecision(cmd);
+  if (git) return git;
   if (/&&|\|\||;|\||^cd\s/.test(unquoted)) {
     return deny("One plain command per run_shell_command: no cd (you are in your folder already), no &&, ;, | — headless Qwen refuses a compound command whole. Run the parts as separate calls; search with grep_search, read with read_file.");
   }
@@ -226,14 +247,15 @@ async function readStdin(): Promise<string> {
 
 /** `agent-network-mcp hook <post-tool|stop> [--network-dir <abs>] [--agent <id>]`; always exits 0. */
 export async function runHookCli(mode: string | undefined, args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, stdin: () => Promise<string> = readStdin, cwd: string = process.cwd()): Promise<number> {
-  if (mode !== "post-tool" && mode !== "stop" && mode !== "pre-shell") {
-    out("Usage: agent-network-mcp hook <post-tool|stop|pre-shell> [--network-dir <abs path>] [--agent <id>]");
+  if (mode !== "post-tool" && mode !== "stop" && mode !== "pre-shell" && mode !== "pre-bash") {
+    out("Usage: agent-network-mcp hook <post-tool|stop|pre-shell|pre-bash> [--network-dir <abs path>] [--agent <id>]");
     return 2;
   }
-  if (mode === "pre-shell") {
+  if (mode === "pre-shell" || mode === "pre-bash") {
     try {
       const input = JSON.parse((await stdin()) || "{}") as { tool_input?: { command?: unknown } };
-      const decision = typeof input.tool_input?.command === "string" ? preShellDecision(input.tool_input.command) : null;
+      const decide = mode === "pre-bash" ? preBashDecision : preShellDecision;
+      const decision = typeof input.tool_input?.command === "string" ? decide(input.tool_input.command) : null;
       if (decision) out(JSON.stringify(decision));
     } catch {
       // never break the agent's session

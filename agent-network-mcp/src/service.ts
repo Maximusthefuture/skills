@@ -552,8 +552,9 @@ ${feedbackText(fb)}`;
   }
 
   /** A spawned agent's role: written by the lead now (role + instructions), or taken from the project's library by name. */
-  private async roleOf(input: { role?: string; instructions?: string }): Promise<SpawnRole | undefined> {
-    const roleName = input.role?.trim();
+  private async roleOf(input: { role?: string; instructions?: string }, fallback = "lead-written"): Promise<SpawnRole | undefined> {
+    // instructions with no name are a role all the same: it gets one (a lead that left it out lost a turn to the refusal)
+    const roleName = input.role?.trim() || (input.instructions?.trim() ? fallback : undefined);
     if (roleName) {
       if (!ROLE_NAME.test(roleName)) throw new AppError("INVALID_INPUT", "role: a name of lowercase letters, digits and -, e.g. 'architect'");
       if (input.instructions?.trim()) {
@@ -565,7 +566,6 @@ ${feedbackText(fb)}`;
       if (!found) throw new AppError("INVALID_INPUT", `No role "${roleName}" in the project's library; write it with instructions, or use one of: ${(await this.roles()).map((r) => r.name).join(", ") || "(none yet)"}`);
       return { name: roleName, instructions: found.instructions, source: "library" };
     }
-    if (input.instructions?.trim()) throw new AppError("INVALID_INPUT", "instructions need a role name: role: 'architect', instructions: '...'");
     return undefined;
   }
 
@@ -607,7 +607,7 @@ ${feedbackText(fb)}`;
       if (taken.length) {
         throw new AppError("FILE_NOT_OWNED", `The job's files belong to other agents of ${task.id}: ${taken.join(", ")}. Delegate work on your own files or new ones; that part is theirs — or ask them (send_message) to hand it over first.`, { taken });
       }
-      const role = await this.roleOf(input);
+      const role = await this.roleOf(input, `${template.name}-job`);
       const ids = new Set([...(await this.agents.list()).map((a) => a.id), ...(await this.tasks.list()).flatMap((t) => t.agents), OPERATOR]);
       let agentId = "";
       for (let n = 1; ; n++) if (!ids.has((agentId = `${template.name}-job${n}`))) break;
@@ -709,7 +709,7 @@ ${feedbackText(fb)}`;
       const spawned = task.spawned ?? [];
       if (spawned.length >= maxPerTask) throw new AppError("INVALID_INPUT", `This task added ${spawned.length} agent(s) already, the limit is ${maxPerTask}`);
       if (!input.reason?.trim()) throw new AppError("INVALID_INPUT", "reason: which part of the work the new agent takes and why the team needs it");
-      const role = await this.roleOf(input);
+      const role = await this.roleOf(input, `${template.name}-role`);
       // a fresh id: never one of a registered agent or one already in a task
       const taken = new Set([...(await this.agents.list()).map((a) => a.id), ...(await this.tasks.list()).flatMap((t) => t.agents), OPERATOR]);
       let id = input.id?.trim();
@@ -875,10 +875,12 @@ ${feedbackText(fb)}`;
         const first = overlaps[0]!;
         throw new AppError(
           "FILE_OVERLAP",
-          `Two agents claim the same files: ${first.agents[0]} '${first.files[0]}' and ${first.agents[1]} '${first.files[1]}'` +
+          (first.files[0] === first.files[1]
+            ? `Two agents claim the same files: ${first.agents[0]} and ${first.agents[1]} both list '${first.files[0]}'`
+            : `Two agents claim the same files: ${first.agents[0]} '${first.files[0]}' and ${first.agents[1]} '${first.files[1]}'`) +
             `${overlaps.length > 1 ? ` (and ${overlaps.length - 1} more)` : ""}. Split the files so that every file has ONE owner (talk it over with send_message) — split the work, do not take it away: an agent that was to write tests gets its own test class (e.g. a separate *LoadTest or *EdgeCasesTest) rather than files: []; ` +
             `if an agent later needs a file of the other, it asks with send_message(requestFiles=[...]).`,
-          { overlaps },
+          { overlaps: overlaps.map((o) => ({ agents: o.agents, files: [...new Set(o.files)] })) },
         );
       }
 

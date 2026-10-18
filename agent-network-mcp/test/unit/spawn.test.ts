@@ -136,6 +136,16 @@ describe("the spawner", () => {
   });
 });
 
+describe("a role without a name", () => {
+  it("instructions alone are a role all the same: named after the template, never a refusal", async () => {
+    const { operator, swarm } = await setup();
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    const backend = await swarm("backend");
+    await backend.spawnAgent({ template: "backend", reason: "the second endpoint group", instructions: "You build /refunds only; you do not touch /orders. Report the endpoints and their status codes." });
+    expect((await operator.tasks.get(task.id)).spawned![0]!.role).toMatchObject({ name: "backend-role", source: "lead" });
+  });
+});
+
 describe("roles of spawned agents", () => {
   const architect = "Review the agreement and the code for module boundaries, coupling and layering; use the java-extensibility-review skill; change no file; report ERROR findings for real defects only.";
 
@@ -144,7 +154,6 @@ describe("roles of spawned agents", () => {
     const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
     const backend = await swarm("backend");
     expect(await failure(backend, backend.spawnAgent({ template: "backend", reason: "r", role: "architect" }))).toMatchObject({ message: expect.stringContaining("No role \"architect\"") });
-    expect(await failure(backend, backend.spawnAgent({ template: "backend", reason: "r", instructions: architect }))).toMatchObject({ message: expect.stringContaining("need a role name") });
     expect(await failure(backend, backend.spawnAgent({ template: "backend", reason: "r", role: "architect", instructions: "short" }))).toMatchObject({ message: expect.stringContaining("40..6000") });
     await backend.spawnAgent({ template: "backend", reason: "boundaries of the new module", role: "architect", instructions: architect });
     expect((await operator.tasks.get(task.id)).spawned![0]!.role).toEqual({ name: "architect", instructions: architect, source: "lead" });
@@ -155,6 +164,8 @@ describe("roles of spawned agents", () => {
     const file = join(networkDir, "roles", "tasks", `${task.id}-backend-2.md`);
     expect(pool.list().find((r) => r.id === "backend-2")!.instructionsFile).toBe(file);
     expect(readFileSync(file, "utf8")).toMatch(/^Your role in this task: architect \(written by the lead\)\.\n\nReview the agreement/);
+    // whatever the lead wrote, the agent still hands its work in through the swarm
+    expect(readFileSync(file, "utf8")).toContain("hand your work in with complete()");
     await pool.stopAll();
 
     // kept in the library, then taken by name in the next task

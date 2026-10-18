@@ -16,7 +16,7 @@ IMPORTANT RULES:
 8. If you have nothing useful to do, call wait(). It blocks until something needs your attention.
 9. Call wait() to wait; swarm_context is for reading the state when you need it (swarm_context({full: true}) shows everything after a restart).
 10. Do not fabricate information about other agents; use send_message to ask them. What only a human can decide (unclear scope or requirements) you ask the user: in an interactive session in your own chat; in a headless session (started by a runner, nobody reads your chat) with send_message({to: "operator", message}) and then wait() for the answer. Name in the question the option you would take: with no answer in 10 minutes you go ahead with it and tell the other agents. The same when the environment stops you (a refused command, a hung process, an unreachable service) and two attempts did not help: ask the operator, do not keep retrying or work around a refusal. Not a question (a reply to the operator's message, a status it asked for): send_message({to: "operator", message, fyi: true}); it needs no answer and does not hold you.
-11. Use send_message when coordination is required (one recipient per message).
+11. Use send_message when coordination is required (one recipient per message). The lead's tools (plan, spawn_agent, delegate, resolve_comments) show up in allowedActions when they apply; the hint says how.
 12. Use complete only when the current phase allows it:
     - DISCUSS: complete() approves the current agreement (review it first);
     - IMPLEMENT: complete({result, filesChanged}) reports your part as ready (on your own git branch commit first and pass commits; in a shared folder they are optional);

@@ -1123,6 +1123,7 @@ function fillSelect(id,label,values,fmt){const sel=$(id);const keep=sel.value;co
   sel.replaceChildren(new Option(label,""),...values.map(v=>new Option(fmt?fmt(v):v,v)));if(values.includes(keep))sel.value=keep}
 ["f-agent","f-task","f-model","f-status","e-task","e-type"].forEach(id=>$(id).addEventListener("change",render));
 const STATUS={running:"идёт",ok:"ок",turns:"лимит ходов",stopped:"остановлена",failed:"ошибка"};
+const ENDED={"task-done":"задача готова",parked:"запаркована",handoff:"передана свежей сессии","turn-limit":"лимит ходов",blocked:"задача BLOCKED",interrupted:"срочное сообщение",ended:"завершилась",failed:"ошибка"};
 const expandedRuns=new Set();
 const runKey=r=>r.id?r.taskId+"/"+r.id:"live/"+r.agentId;
 function renderRuns(){
@@ -1134,6 +1135,7 @@ function renderRuns(){
   list.forEach(r=>{const key=runKey(r);const open=expandedRuns.has(key);
     const tr=el("tr","click"+(open?" sel":""));tr.onclick=()=>{if(expandedRuns.has(key))expandedRuns.delete(key);else expandedRuns.add(key);renderRuns()};
     const st=el("td","nw");st.append(dot({running:"acc",ok:"ok",turns:"ok",failed:"bad"}[r.status]||""),r.status==="failed"?"exit "+r.exitCode:STATUS[r.status]);
+    if(r.endedBy&&r.endedBy!=="failed"){st.append(el("div","muted small",(ENDED[r.endedBy]||r.endedBy)+(r.phase?" · "+r.phase+(r.endPhase&&r.endPhase!==r.phase?"→"+r.endPhase:""):"")))}
     const task=el("td","mono nw",r.taskId+(r.alsoFinished.length?" +"+r.alsoFinished.length:""));task.title=[r.taskTitle,...r.alsoFinished.map(x=>x.title)].join(", ");
     tr.append(td(open?"▾":"▸","muted"),td(r.seq?"С-"+r.seq:"—","mono nw"),st,td(r.agentId),td(r.model||"—","mono"),task,td(ago(r.startedAt),"muted nw"),td(fmtMs(r.durationMs),"mono nw"),
       td(r.usage?fmtTok(r.usage.total):r.status==="running"?"—":"нет данных",r.usage?"mono":"muted"),td(r.costUsd!==null?fmtUsd(r.costUsd,r.costEstimated):r.usage?"нет цены":"—",r.costUsd!==null?"mono nw":"muted"));

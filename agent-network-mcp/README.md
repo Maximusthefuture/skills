@@ -1835,4 +1835,4 @@ lead отметит их, а после DONE change архивируется к�
   моделью — до IMPLEMENT. Связка Qwen + Claude Code в одной задаче и Codex не проверялись. Качество работы сильно зависит
   от модели.
 
-Правила для самих агентов: [AGENTS.md](AGENTS.md); skill для CLI со skills (Qwen, Claude Code): [skills/agent-network/SKILL.md](skills/agent-network/SKILL.md). План и принципы дизайна: [PLAN.md](PLAN.md).
+Правила для самих агентов: [AGENTS.md](AGENTS.md) — единственный источник протокола; skill генерируется из него (`npm run docs:sync`, тест сверяет); skill для CLI со skills (Qwen, Claude Code): [skills/agent-network/SKILL.md](skills/agent-network/SKILL.md). План и принципы дизайна: [PLAN.md](PLAN.md).

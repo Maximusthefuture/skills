@@ -8,6 +8,7 @@ import { isParked, writeParkMarker } from "../../src/park.js";
 import { runRunner } from "../../src/runner.js";
 import { NetworkService } from "../../src/service.js";
 import { FileStore } from "../../src/storage/fileStore.js";
+import { MessageStore } from "../../src/stores/messageStore.js";
 import { TaskStore } from "../../src/stores/taskStore.js";
 import { tmpDir } from "../helpers/tmp.js";
 
@@ -77,7 +78,12 @@ describe("the runner and a parked agent", () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(launches()).toBe(0);
     expect(lines.some((l) => l.includes("parked in DISCUSS, waiting without a model"))).toBe(true);
-    await tasks.save({ ...task, title: "t (changed)" }); // something changed for it
+    // a block and its unblock change nothing for it: still parked
+    await tasks.save({ ...task, status: "BLOCKED" });
+    await tasks.save({ ...(await tasks.get(task.id)), status: "ACTIVE" });
+    expect(await isParked(fs, "backend", await tasks.get(task.id))).toBe(true);
+    // a message to it does
+    await new MessageStore(fs).create({ taskId: task.id, from: "reviewer", to: "backend", type: "INFORMATION", content: "the endpoint moved" });
     const end = Date.now() + 5000;
     while (launches() === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
     expect(launches()).toBe(1);

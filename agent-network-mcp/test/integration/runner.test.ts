@@ -140,6 +140,7 @@ describe("agent runner", () => {
     expect(r.lines).toContain(`${t.id}: session 1 reached its turn limit (3 turns) after progress; a fresh session goes on (phase DISCUSS)`);
     const sessions = await store.list(t.id);
     expect(sessions.map((x) => [x.exitCode, x.turnLimit ?? false])).toEqual([[1, true], [1, true], [0, false]]);
+    expect(sessions.map((x) => [x.phase, x.endedBy])).toEqual([["DISCUSS", "turn-limit"], ["DISCUSS", "turn-limit"], ["DISCUSS", "task-done"]]);
 
     // changed files in its git folder are progress too, even with nothing ticked
     const repo = await tmpDir();

@@ -433,6 +433,24 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const plannedTurnLimit = hitTurnLimit && (await progress(task.id).catch(() => progressBefore)) !== progressBefore;
     // a session may go on to the next task by itself (e.g. a follow-up): its time and tokens are counted for this task
     const alsoTasks = (await tasks.listForAgent(agent)).filter((t) => isFinished(t) && t.id !== task.id && !finishedBefore.has(t.id));
+    // why it ended, for the record (the page's runs, the observer, cost by phase)
+    const ended = await tasks.find(task.id).catch(() => null);
+    const parkedBy = await lastPark(fs, agent).catch(() => null);
+    const endedBy = interrupted
+      ? ("interrupted" as const)
+      : !ended || isFinished(ended)
+        ? ("task-done" as const)
+        : parkedBy?.taskId === task.id && Date.parse(parkedBy.at) >= startedAt.getTime()
+          ? ("parked" as const)
+          : ended.status === "BLOCKED"
+            ? ("blocked" as const)
+            : freshPhases.length && (ended.phaseHistory?.length ?? 0) > (task.phaseHistory?.length ?? 0) && (await isHandedOver(fs, agent, ended).catch(() => false))
+              ? ("handoff" as const)
+              : plannedTurnLimit
+                ? ("turn-limit" as const)
+                : code === 0
+                  ? ("ended" as const)
+                  : ("failed" as const);
     await sessions
       .create({
         taskId: task.id, agentId: agent, attempt, startedAt: startedAt.toISOString(), endedAt: endedAt.toISOString(),
@@ -443,6 +461,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
         ...(result?.model || model ? { model: result?.model ?? model } : {}), // what the CLI reported, else what it was asked for
         ...(alsoTasks.length ? { alsoFinished: alsoTasks.map((t) => t.id) } : {}),
         ...(plannedTurnLimit ? { turnLimit: true as const } : {}),
+        phase: task.phase, ...(ended ? { endPhase: ended.phase } : {}), endedBy,
       })
       .catch((e: Error) => log(`cannot record the session: ${e.message}`));
     await Promise.resolve(opts.onSessionEnd?.(task.id)).catch((e: Error) => log(`after the session: ${e.message}`));

@@ -219,3 +219,21 @@ describe("the observer on the page", () => {
     expect(await post("/api/observer/proposals/prop-003/reject", { reason: "duplicate" })).toMatchObject({ status: 200, body: { proposal: { status: "rejected", rejectReason: "duplicate" } } });
   });
 });
+
+describe("the digest says how a task ended up", () => {
+  it("merged, reverted, the operator's comments: written again when they change after the task closed", async () => {
+    const dir = join(await tmpDir(), ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    await operator.tasks.save({ ...(await operator.tasks.get(task.id)), status: "COMPLETED", phase: "DONE" });
+    expect(await collectDigests(dir)).toEqual([task.id]);
+    expect((await readDigests(dir))[0]!.outcome).toMatchObject({ merged: null, reverted: false, reviewComments: { total: 0 } });
+    expect(await collectDigests(dir)).toEqual([]); // nothing changed
+
+    const done = await operator.tasks.get(task.id);
+    await operator.tasks.save({ ...done, merged: { at: "", branch: "swarm-backend", into: "main", commit: "abc1234", already: false, strategy: "squash", reverted: { at: "", commit: "def5678" } } });
+    await operator.addReviewComments(task.id, [{ file: "src/A.java", line: 3, text: "no test for the error case" }]);
+    expect(await collectDigests(dir)).toEqual([task.id]);
+    expect((await readDigests(dir))[0]!.outcome).toMatchObject({ merged: "squash", reverted: true, reviewComments: { total: 1, open: 1, texts: ["src/A.java:3: no test for the error case"] } });
+  });
+});
