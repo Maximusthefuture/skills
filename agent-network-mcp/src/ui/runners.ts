@@ -2,12 +2,12 @@ import { homedir } from "node:os";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureWorktrees, type AgentWorktree } from "../worktrees.js";
+import { catchUpBranch, ensureWorktrees, type AgentWorktree } from "../worktrees.js";
 import { AppError } from "../errors.js";
 import { parseFreshPhases } from "../handoff.js";
 import { isValidModel, runRunner, usesModel, type RunnerOptions, type RunningSession } from "../runner.js";
 import type { ActivityItem } from "../sessionOutput.js";
-import type { Phase } from "../types.js";
+import type { Phase, Task } from "../types.js";
 import type { ModelPrice, Prices } from "../stats.js";
 import { parseCron } from "../schedule/cron.js";
 import { DEFAULT_RULES, type DetectRules } from "../supervisor/detect.js";
@@ -818,7 +818,16 @@ export class RunnerPool {
       ...(this.opts.onSessionEnd ? { onSessionEnd: (taskId: string) => this.opts.onSessionEnd!(m.config.id, taskId) } : {}),
       ...(this.opts.onGiveUp ? { onGiveUp: (taskId: string, reason: string) => this.opts.onGiveUp!(m.config.id, taskId, reason) } : {}),
       // an auto worktree removed after a task ("Убрать worktree") comes back from the project's HEAD before the next session
-      ...(m.config.worktree ? { prepare: async () => void (await ensureWorktrees([m.config])).forEach((line) => this.say(m, `[ui] worktree created again: ${line}`)) } : {}),
+      // and its branch gets the task's base when it lacks it (the project moved on, e.g. by the squash of its previous task)
+      ...(m.config.worktree
+        ? {
+            prepare: async (task: Task) => {
+              (await ensureWorktrees([m.config])).forEach((line) => this.say(m, `[ui] worktree created again: ${line}`));
+              const base = task.baseCommit ?? task.git?.commit;
+              return base && m.config.cwd ? ((await catchUpBranch(m.config.cwd, base)) ?? undefined) : undefined;
+            },
+          }
+        : {}),
       urgent: {
         take: () => {
           const text = m.urgent.splice(0).join("\n\n");

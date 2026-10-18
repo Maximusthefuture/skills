@@ -615,9 +615,11 @@ ${feedbackText(fb)}`;
       let agentId = "";
       for (let n = 1; ; n++) if (!ids.has((agentId = `${template.name}-job${n}`))) break;
       // the lead's checklist gets the job as an open step: its own complete() waits for it
-      const list = await this.subtasks.get(task.id, lead);
-      const subtask = `s${list.nextSeq}`;
-      await this.subtasks.save({ ...list, items: [...list.items, { id: subtask, title: `delegated to ${agentId}: ${job.split("\n")[0]!.slice(0, 120)}`, status: "TODO", updatedAt: new Date().toISOString() }], nextSeq: list.nextSeq + 1 });
+      let subtask = "";
+      await this.subtasks.update(task.id, lead, (list) => {
+        subtask = `s${list.nextSeq}`;
+        return { ...list, items: [...list.items, { id: subtask, title: `delegated to ${agentId}: ${job.split("\n")[0]!.slice(0, 120)}`, status: "TODO", updatedAt: new Date().toISOString() }], nextSeq: list.nextSeq + 1 };
+      });
       const at = new Date().toISOString();
       const description =
         `Delegated by ${lead}, the lead of ${task.id} ("${task.title}"):\n\n${job}\n\n` +
@@ -685,9 +687,8 @@ ${feedbackText(fb)}`;
     const { taskId, by, subtask } = job.jobOf;
     const agentId = job.agents[0]!;
     const impl = await this.implementations.find(job.id, agentId);
-    const list = await this.subtasks.get(taskId, by);
     const note = outcome === "done" ? (impl?.summary ?? "done").slice(0, 300) : `cancelled${reason ? `: ${reason}` : ""}`;
-    await this.subtasks.save({ ...list, items: list.items.map((i) => (i.id === subtask ? { ...i, status: outcome === "done" ? ("DONE" as const) : ("DROPPED" as const), note, updatedAt: new Date().toISOString() } : i)) });
+    await this.subtasks.update(taskId, by, (list) => ({ ...list, items: list.items.map((i) => (i.id === subtask ? { ...i, status: outcome === "done" ? ("DONE" as const) : ("DROPPED" as const), note, updatedAt: new Date().toISOString() } : i)) }));
     const commits = impl?.commits ?? [];
     const content = outcome === "done"
       ? `Your delegated job ${job.id} is done (${agentId}; your subtask ${subtask} is ticked).\nResult: ${impl?.summary ?? "(none)"}` +
@@ -1538,32 +1539,33 @@ ${feedbackText(fb)}`;
     const task = await this.requireMember(input.taskId);
     if (task.status === "BLOCKED") throw new AppError("TASK_BLOCKED", `Task ${task.id} is blocked; wait for the operator.`);
     if (task.status !== "ACTIVE") throw new AppError("ALREADY_COMPLETED", `Task ${task.id} is ${task.status}`);
-    const list = await this.subtasks.get(task.id, this.me);
-    const now = new Date().toISOString();
-    const find = (raw: string) => {
-      const id = raw.trim();
-      const item = list.items.find((i) => i.id === id);
-      if (!item) throw new AppError("INVALID_INPUT", `No subtask '${id}'. Yours: ${list.items.map((i) => i.id).join(", ") || "(none yet; add some with 'add')"}`);
-      return item;
-    };
-    for (const raw of input.add ?? []) {
-      const title = raw.trim();
-      if (!title) throw new AppError("INVALID_INPUT", "a subtask title must not be empty");
-      if (title.length > 300) throw new AppError("INVALID_INPUT", "a subtask title must be at most 300 characters: one concrete step");
-      list.items.push({ id: `s${list.nextSeq++}`, title, status: "TODO", updatedAt: now });
-    }
-    if (list.items.length > MAX_SUBTASKS) throw new AppError("INVALID_INPUT", `At most ${MAX_SUBTASKS} subtasks per agent and task; make the steps bigger`);
-    for (const raw of input.done ?? []) Object.assign(find(raw), { status: "DONE", updatedAt: now });
-    for (const d of input.drop ?? []) {
-      if (!d.reason?.trim()) throw new AppError("INVALID_INPUT", `dropping '${d.id}' needs a 'reason'`);
-      Object.assign(find(d.id), { status: "DROPPED", note: d.reason.trim(), updatedAt: now });
-    }
-    if (input.start) {
-      const item = find(input.start);
-      for (const other of list.items) if (other !== item && other.status === "DOING") Object.assign(other, { status: "TODO", updatedAt: now });
-      Object.assign(item, { status: "DOING", updatedAt: now });
-    }
-    return this.subtasks.save(list);
+    return this.subtasks.update(task.id, this.me, (list) => {
+      const now = new Date().toISOString();
+      const find = (raw: string) => {
+        const id = raw.trim();
+        const item = list.items.find((i) => i.id === id);
+        if (!item) throw new AppError("INVALID_INPUT", `No subtask '${id}'. Yours: ${list.items.map((i) => i.id).join(", ") || "(none yet; add some with 'add')"}`);
+        return item;
+      };
+      for (const raw of input.add ?? []) {
+        const title = raw.trim();
+        if (!title) throw new AppError("INVALID_INPUT", "a subtask title must not be empty");
+        if (title.length > 300) throw new AppError("INVALID_INPUT", "a subtask title must be at most 300 characters: one concrete step");
+        list.items.push({ id: `s${list.nextSeq++}`, title, status: "TODO", updatedAt: now });
+      }
+      if (list.items.length > MAX_SUBTASKS) throw new AppError("INVALID_INPUT", `At most ${MAX_SUBTASKS} subtasks per agent and task; make the steps bigger`);
+      for (const raw of input.done ?? []) Object.assign(find(raw), { status: "DONE", updatedAt: now });
+      for (const d of input.drop ?? []) {
+        if (!d.reason?.trim()) throw new AppError("INVALID_INPUT", `dropping '${d.id}' needs a 'reason'`);
+        Object.assign(find(d.id), { status: "DROPPED", note: d.reason.trim(), updatedAt: now });
+      }
+      if (input.start) {
+        const item = find(input.start);
+        for (const other of list.items) if (other !== item && other.status === "DOING") Object.assign(other, { status: "TODO", updatedAt: now });
+        Object.assign(item, { status: "DOING", updatedAt: now });
+      }
+      return list;
+    });
   }
 
   private requireIntegrator(task: Task): void {

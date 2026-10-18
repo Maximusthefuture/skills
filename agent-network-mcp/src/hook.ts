@@ -154,6 +154,8 @@ function stopReason(agentId: string, tasks: Task[], unread: Message[], open: Mes
 export interface HookOptions {
   networkDir: string;
   agent?: string;
+  /** A runner's session (AGENT_NETWORK_TASK_ID): it works this one task, the runner starts the next one in a fresh session. */
+  taskId?: string;
 }
 
 /** Returns the JSON object to print on stdout, or null to print nothing. */
@@ -175,9 +177,13 @@ export async function runHook(mode: HookMode, input: HookInput, opts: HookOption
   const open = perTask.flatMap((all) => openFileRequests(all)).filter((m) => m.to === agentId);
 
   if (mode === "stop") {
+    // a runner's session ends with its own task: another active task in the queue gets its own session
+    const mine = opts.taskId ? tasks.filter((t) => t.id === opts.taskId) : tasks;
+    if (!mine.length) return null;
     // the server told this session to end at a phase change: a fresh session takes the task over
-    for (const t of tasks) if ((await isHandedOver(fs, agentId, t)) || (await isParked(fs, agentId, t))) return null;
-    return { decision: "block", reason: stopReason(agentId, tasks, unread, open) };
+    for (const t of mine) if ((await isHandedOver(fs, agentId, t)) || (await isParked(fs, agentId, t))) return null;
+    const ids = new Set(mine.map((t) => t.id));
+    return { decision: "block", reason: stopReason(agentId, mine, unread.filter((m) => ids.has(m.taskId)), open.filter((m) => ids.has(m.taskId))) };
   }
 
   const now = deps.now();
@@ -275,7 +281,8 @@ export async function runHookCli(mode: string | undefined, args: string[], env: 
     }
     // the agent: --agent, else AGENT_ID of the session (a runner sets it; Qwen passes its environment to hooks), else found by process
     const agent = values.agent ?? (env.AGENT_ID && !env.AGENT_ID.includes(",") ? env.AGENT_ID : undefined);
-    const result = await runHook(mode, input, { networkDir, ...(agent ? { agent } : {}) });
+    const taskId = env.AGENT_NETWORK_RUNNER === "1" ? env.AGENT_NETWORK_TASK_ID : undefined;
+    const result = await runHook(mode, input, { networkDir, ...(agent ? { agent } : {}), ...(taskId ? { taskId } : {}) });
     if (result) out(JSON.stringify(result));
   } catch {
     // never break the agent's session

@@ -1,11 +1,11 @@
 import { buildTools, DEFAULT_BUILD_TIMEOUT_MIN, parseBuildCommand, runBuild } from "../build.js";
 import { AppError, isAppError } from "../errors.js";
-import { containsCommit, filesChangedSince, readGitContext, resolveCommit, workTreeState } from "../git.js";
+import { containsCommit, filesChangedSince, ownCommitsSince, readGitContext, resolveCommit, workTreeState } from "../git.js";
 import { phaseEpoch } from "../handoff.js";
 import { WAKES } from "../park.js";
 import { changePath, readChange, validateChange, type ChangeInfo, type Exec } from "../openspec.js";
 import { normalizePath, ownersOf } from "../ownership.js";
-import { planBrief, type PlanStatus } from "../plan.js";
+import { PLAN_READ_WHOLE, planAround, planBrief, planOutline, type PlanStatus } from "../plan.js";
 import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, OPERATOR_TIMEOUT_MS, clarifies, grillConfirmed, isReviewOnly, type NetworkService } from "../service.js";
 import type { Agent, Agreement, FollowUpRequest, GitContext, Implementation, IntegrationReport, Message, Phase, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
 
@@ -320,13 +320,24 @@ export class Swarm {
   }
 
   /** The lead's plan as an HTML page for the operator (task.planReview): a new version, or the current one to read. */
-  async plan(input: { html?: string; edits?: { find: string; replace: string }[]; note?: string; read?: boolean }): Promise<SwarmContext> {
+  async plan(input: { html?: string; edits?: { find: string; replace: string }[]; note?: string; read?: boolean; around?: string }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
-    if (input.read) {
+    if (input.read || input.around) {
       const current = await this.service.planHtml(task.id);
       if (!current) throw invalid("there is no plan yet: write it with plan({html})");
-      return { ...this.reply(await this.contextNow()), ok: true, action: "PLAN_READ", version: current.version, html: current.html } as SwarmContext;
+      const base = { ...this.reply(await this.contextNow()), ok: true, action: "PLAN_READ", version: current.version, size: current.html.length };
+      // the page stays in the context for the rest of the session and is read again every turn: a big one goes by parts
+      if (input.around) {
+        const parts = planAround(current.html, input.around);
+        if (!parts.length) throw invalid(`around: ${JSON.stringify(input.around.slice(0, 80))} is not in plan v${current.version}; pick a shorter piece of the text, or plan({read: true}) for the headings`);
+        return { ...base, parts } as SwarmContext;
+      }
+      if (current.html.length <= PLAN_READ_WHOLE) return { ...base, html: current.html } as SwarmContext;
+      return {
+        ...base, outline: planOutline(current.html),
+        note: `The page is ${Math.round(current.html.length / 1000)}k characters: too big to hold in your context whole. Read the parts you change with plan({read: true, around: "<a few words of the text>"}) and copy the exact text for edits from them.`,
+      } as SwarmContext;
     }
     const saved = await this.service.writePlan({ taskId: task.id, ...input });
     return { ...this.reply(await this.contextNow()), ok: true, action: "PLAN_SAVED", version: saved.version } as SwarmContext;
@@ -940,8 +951,11 @@ export class Swarm {
   /** Files the commits of this agent's own branch changed since the task's base (others' merged work left out); null without one. */
   private async changedInBranch(task: Task): Promise<string[] | null> {
     if (!task.git || !(await this.ownBranch(task))) return null;
-    const others = (await this.service.implementations.list(task.id)).filter((i) => i.agentId !== this.me).flatMap((i) => [...i.commits, ...(i.commitsBeforeFix ?? [])]);
-    return filesChangedSince(this.workdir, task.baseCommit ?? task.git.commit, others);
+    return filesChangedSince(this.workdir, task.baseCommit ?? task.git.commit, await this.othersCommits(task), task.createdAt);
+  }
+
+  private async othersCommits(task: Task): Promise<string[]> {
+    return (await this.service.implementations.list(task.id)).filter((i) => i.agentId !== this.me).flatMap((i) => [...i.commits, ...(i.commitsBeforeFix ?? [])]);
   }
 
   private async unreportedWork(task: Task, reported: string[]): Promise<{ head?: string; note: string } | undefined> {
@@ -949,7 +963,9 @@ export class Swarm {
     if (!branch || !task.git || (await this.service.ownership(task.id)).reviewOnly) return undefined;
     const head = (await readGitContext(this.workdir).catch(() => null))?.commit;
     if (!head) return undefined;
-    if (head === (task.baseCommit ?? task.git.commit)) {
+    // no commit of its own for this task (an old head from an earlier task, or only merges, is not its work)
+    const own = await ownCommitsSince(this.workdir, task.baseCommit ?? task.git.commit, await this.othersCommits(task), task.createdAt);
+    if (head === (task.baseCommit ?? task.git.commit) || (own && !own.length)) {
       return { note: `Your branch ${branch} has no commits since the task started, so the reviewers and the lead cannot see your changes: commit them and send the hash to the others (send_message).` };
     }
     if (task.syncRound > 0 && reported.includes(head)) {

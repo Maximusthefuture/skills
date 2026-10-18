@@ -175,6 +175,17 @@ describe("agent runner", () => {
     expect((await store.list(t.id)).map((x) => x.endedBy)).toEqual(["context-limit", "task-done"]);
   });
 
+  it("...but a session that fills its context without progress is a failed attempt: no endless fresh sessions", async () => {
+    const s = await setup();
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "context-idle:0", "{prompt}"], { maxRestarts: 1, restartDelayMs: 10, maxContextTokens: 50_000, cwd: await tmpDir() });
+    const t = await s.newTask("One huge read");
+    await until(() => r.lines.some((l) => l.includes("giving up until the task changes")), "give up", 15_000);
+    await pause(80);
+    expect(s.launches().map((l) => l.attempt)).toEqual([1, 2]); // first session + one restart, then quiet
+    expect(r.lines).toContain(`${t.id}: session 1 reached 90k tokens of context (limit 50k) without progress: counted as a failed attempt`);
+    await r.stop();
+  });
+
   it("restarts an unfinished task with a resume note, gives up after the limit and retries when the task changes", async () => {
     const s = await setup();
     const r = start(s.networkDir, [process.execPath, FAKE, s.log, "0"], { maxRestarts: 1 });

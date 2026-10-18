@@ -29,6 +29,22 @@ export interface PlanState { versions: PlanVersion[]; feedback: PlanFeedback[]; 
 export type PlanStatus = "none" | "awaiting" | "revising" | "approved";
 
 export const MAX_PLAN_BYTES = 300_000;
+/** plan({read: true}) returns a page up to this size whole; a bigger one stays out of the lead's context (read by parts). */
+export const PLAN_READ_WHOLE = 24_000;
+
+/** The parts of a page around each occurrence of a text (the lead copies the exact text for its edits from them). */
+export function planAround(html: string, text: string, pad = 400): { at: number; text: string }[] {
+  const out: { at: number; text: string }[] = [];
+  for (let at = html.indexOf(text); at >= 0 && out.length < 5; at = html.indexOf(text, at + text.length)) {
+    out.push({ at, text: html.slice(Math.max(0, at - pad), at + text.length + pad) });
+  }
+  return out;
+}
+
+/** The headings of a page in order: what a big page holds, without the page. */
+export function planOutline(html: string): string[] {
+  return [...html.matchAll(/<h([1-4])[^>]*>([\s\S]*?)<\/h\1>/gi)].map((m) => `${"  ".repeat(Number(m[1]) - 1)}${m[2]!.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()}`).filter((h) => h.trim());
+}
 
 export async function readPlanState(fs: FileStore, taskId: string): Promise<PlanState> {
   return (await fs.readJson<PlanState>(["tasks", taskId, "plan", "state.json"])) ?? { versions: [], feedback: [] };
@@ -56,7 +72,7 @@ export function applyEdits(html: string, edits: { find: string; replace: string 
     if (typeof e.find !== "string" || !e.find) throw new AppError("INVALID_INPUT", `edits[${i}].find must be the exact text to replace`);
     if (typeof e.replace !== "string") throw new AppError("INVALID_INPUT", `edits[${i}].replace must be a string ("" removes the text)`);
     const at = out.indexOf(e.find);
-    if (at < 0) throw new AppError("INVALID_INPUT", `edits[${i}].find is not in the current plan (${JSON.stringify(e.find.slice(0, 80))}): read it with plan({read: true}) and copy the text exactly, or send the whole page as html`);
+    if (at < 0) throw new AppError("INVALID_INPUT", `edits[${i}].find is not in the current plan (${JSON.stringify(e.find.slice(0, 80))}): read it with plan({read: true}) (or plan({read: true, around: "<a few words>"}) for a big page) and copy the text exactly, or send the whole page as html`);
     if (out.indexOf(e.find, at + 1) >= 0) throw new AppError("INVALID_INPUT", `edits[${i}].find occurs more than once (${JSON.stringify(e.find.slice(0, 80))}): include more of the surrounding text`);
     out = out.slice(0, at) + e.replace + out.slice(at + e.find.length);
   });

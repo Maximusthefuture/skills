@@ -90,7 +90,8 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
       html: z.string().optional().describe("The whole page: <!doctype html><html>... with inline <style>; for the first version or a rewrite"),
       edits: z.array(z.object({ find: z.string().describe("Exact text of the current version, occurring once"), replace: z.string().describe("Its replacement; \"\" removes it") })).optional().describe("Changes of the current version instead of the whole page (cheaper after feedback)"),
       note: z.string().optional().describe("What changed in this version, e.g. 'tester takes the API tests; the retry moved to the client'. After the operator's feedback, a note alone sends the same page again (nothing needed to change, and why)"),
-      read: z.boolean().optional().describe("true: return the current version's html (after the operator edited it in place), save nothing"),
+      read: z.boolean().optional().describe("true: return the current version's html (after the operator edited it in place), save nothing; a big page comes as its headings, read it by parts with around"),
+      around: z.string().optional().describe("Read only the parts of the current version around this text (a few words of it), save nothing"),
     },
     async (a) => swarm.plan(a),
   );

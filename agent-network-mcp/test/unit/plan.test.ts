@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { EventHub } from "../../src/events/eventHub.js";
 import { Swarm } from "../../src/mcp/swarm.js";
-import { applyEdits, checkFeedback, feedbackText, injectSdk, planStatus, stripSdk } from "../../src/plan.js";
+import { PLAN_READ_WHOLE, applyEdits, checkFeedback, feedbackText, injectSdk, planAround, planOutline, planStatus, stripSdk } from "../../src/plan.js";
 import { NetworkService } from "../../src/service.js";
 import { RunnerPool } from "../../src/ui/runners.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
@@ -39,6 +39,16 @@ async function failure(swarm: Swarm, p: Promise<unknown>) {
   }
   throw new Error("expected the call to fail");
 }
+
+describe("reading a big plan", () => {
+  it("by its headings and by parts around a text: never the whole page in the lead's context", () => {
+    const html = `<!doctype html><html><body><h1>Refunds</h1><h2>Who does what</h2>${"<p>filler text</p>".repeat(3000)}<h2>Risks</h2><p>the retry may double the refund</p></body></html>`;
+    expect(html.length).toBeGreaterThan(PLAN_READ_WHOLE);
+    expect(planOutline(html)).toEqual(["Refunds", "  Who does what", "  Risks"]);
+    const parts = planAround(html, "double the refund", 20);
+    expect(parts).toEqual([{ at: html.indexOf("double the refund"), text: expect.stringContaining("the retry may double the refund</p>") }]);
+  });
+});
 
 describe("the plan's pieces", () => {
   it("find/replace edits need text that occurs exactly once", () => {
@@ -119,6 +129,10 @@ describe("a plan the operator approves before the agreement (planReview)", () =>
     expect(String(woke.hint)).toContain("plan({read: true})");
     // the lead reads the operator's version and edits it
     expect((await backend.plan({ read: true })).html).toContain("tests of every refund status");
+    const near = await backend.plan({ read: true, around: "refund status" });
+    expect(near.html).toBeUndefined();
+    expect((near.parts as { text: string }[])[0]!.text).toContain("reviewer: tests of every refund status");
+    expect(await failure(backend, backend.plan({ read: true, around: "no such words here" }))).toMatchObject({ error: "INVALID_INPUT" });
     expect(await failure(backend, backend.plan({ edits: [{ find: "reviewer: tests</li>", replace: "x" }] }))).toMatchObject({ error: "INVALID_INPUT" });
     expect(await backend.plan({ edits: [{ find: "backend: POST /orders/{id}/refunds", replace: "backend: POST /orders/{id}/refunds → 202" }], note: "async refund" })).toMatchObject({ version: 3, plan: { status: "awaiting" } });
     expect(await failure(backend, backend.propose({ summary: "s", assignments }))).toMatchObject({ error: "PLAN_NOT_APPROVED" });

@@ -198,7 +198,8 @@ export interface RunnerOptions {
    */
   maxContextTokens?: number;
   /** Before a session starts: e.g. create the agent's worktree again after the operator removed it. Throwing = not now. */
-  prepare?: () => Promise<void>;
+  /** Before each session of a task (e.g. its worktree, its branch up to the task's base); a returned line goes to the log. */
+  prepare?: (task: Task) => Promise<string | void>;
   /** The runner gave up on a task (maxRestarts sessions failed): the page blocks the task, so the operator sees it. */
   onGiveUp?: (taskId: string, reason: string) => Promise<void> | void;
   /** After a session is recorded, before the runner looks at the task again (the page checks the task's cost limit here). */
@@ -378,7 +379,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     }
     if (opts.prepare) {
       try {
-        await opts.prepare();
+        const line = await opts.prepare(task);
+        if (line) say(`${task.id}: ${line}`);
       } catch (e) {
         say(`cannot prepare the session: ${(e as Error).message}; waiting`);
         await sleep(pollMs, signal);
@@ -487,11 +489,17 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     await Promise.resolve(opts.onSessionEnd?.(task.id)).catch((e: Error) => log(`after the session: ${e.message}`));
     if (signal?.aborted) break;
     if (contextEnded && !signal?.aborted) {
-      // a planned end like the turn limit: the next session goes on from the subtasks and git, with a small context
-      plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
       turnLimited.add(task.id);
-      say(`${task.id}: session ${attempt} reached ${Math.round(contextFull / 1000)}k tokens of context (limit ${Math.round(opts.maxContextTokens! / 1000)}k); a fresh session goes on (phase ${task.phase})`);
-      continue;
+      const limits = `${Math.round(contextFull / 1000)}k tokens of context (limit ${Math.round(opts.maxContextTokens! / 1000)}k)`;
+      // after progress, a planned end like the turn limit: the next session goes on from the subtasks and git, with a small
+      // context. Without progress it is a failed attempt (a first step whose output alone fills the context would
+      // otherwise restart the same session for ever): it waits and counts against maxRestarts
+      if ((await progress(task.id).catch(() => progressBefore)) !== progressBefore) {
+        plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
+        say(`${task.id}: session ${attempt} reached ${limits}; a fresh session goes on (phase ${task.phase})`);
+        continue;
+      }
+      say(`${task.id}: session ${attempt} reached ${limits} without progress: counted as a failed attempt`);
     }
     if (interrupted) {
       // the operator's urgent message: a planned end, the next session starts at once with the message first

@@ -5,7 +5,8 @@
 // (writes the server's handoff marker), sessions from attempt N finish it (0 = never); "block:N" = the first session
 // leaves the task BLOCKED, sessions from attempt N finish it; "turns:N" = sessions before attempt N tick a subtask and stop
 // at the turn limit (stream-json result error_max_turns), from attempt N they finish it; "turns-idle:N" = the same
-// without touching anything (no progress); "busy:N" = sessions before attempt N make one tool call and keep working until
+// without touching anything (no progress); "context:N" / "context-idle:N" = sessions before
+// attempt N fill the context (with / without ticking a subtask first); "busy:N" = sessions before attempt N make one tool call and keep working until
 // stopped, from attempt N they finish it> [prompt and other args...]
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync as writeRaw } from "node:fs";
 import { join } from "node:path";
@@ -61,8 +62,15 @@ if (/^turns(-idle)?:/.test(finishArg) && attempt < Number(finishArg.split(":")[1
   process.stdout.write(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 3, usage: { input_tokens: 10, output_tokens: 1 } }) + "\n");
   process.exit(1);
 }
-if (finishArg.startsWith("context:") && attempt < Number(finishArg.split(":")[1])) {
+if (/^context(-idle)?:/.test(finishArg) && (attempt < Number(finishArg.split(":")[1]) || finishArg === "context-idle:0")) {
   // a turn that read a big context, a tool call, its result, then it keeps working: the runner ends it on its context limit
+  // ("context-idle": without ticking anything first, so the session made no progress)
+  if (!finishArg.startsWith("context-idle")) {
+    const dir = join(NETWORK_DIR, "tasks", taskId, "subtasks");
+    mkdirSync(dir, { recursive: true });
+    const items = Array.from({ length: attempt }, (_, i) => ({ id: `s${i + 1}`, title: `step ${i + 1}`, status: "DONE", updatedAt: new Date().toISOString() }));
+    writeFileSync(join(dir, `${AGENT_ID}.json`), JSON.stringify({ taskId, agentId: AGENT_ID, items, nextSeq: attempt + 1 }));
+  }
   process.stdout.write(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 5, cache_read_input_tokens: 90_000 }, content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "A.java" } }] } }) + "\n");
   process.stdout.write(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "class A {}" }] } }) + "\n");
   setInterval(() => {}, 1e9);
@@ -72,7 +80,7 @@ if (finishArg.startsWith("context:") && attempt < Number(finishArg.split(":")[1]
   process.stdout.write(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "Tests run: 3" }] } }) + "\n");
   setInterval(() => {}, 1e9);
 } else {
-const finishOn = Number(finishArg.replace(/^(handoff|block|turns|turns-idle|turns-files|busy|context):/, ""));
+const finishOn = Number(finishArg.replace(/^(handoff|block|turns|turns-idle|turns-files|busy|context|context-idle):/, ""));
 if (finishOn > 0 && attempt >= finishOn) {
   finish(taskId);
   process.exit(0);

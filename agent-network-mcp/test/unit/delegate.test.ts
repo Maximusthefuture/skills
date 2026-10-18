@@ -5,6 +5,8 @@ import { EventHub } from "../../src/events/eventHub.js";
 import { Swarm } from "../../src/mcp/swarm.js";
 import { NetworkService } from "../../src/service.js";
 import { Spawner, writeSpawnFile } from "../../src/spawner.js";
+import { FileStore } from "../../src/storage/fileStore.js";
+import { SubtaskStore } from "../../src/stores/subtaskStore.js";
 import { RunnerPool, type SpawnConfig } from "../../src/ui/runners.js";
 import { tmpDir } from "../helpers/tmp.js";
 
@@ -126,5 +128,18 @@ describe("the lead delegates a job to a new runner", () => {
     // a job does not delegate further
     const tester = new Swarm(await NetworkService.create(operator.networkDir, { id: "tester-job2", type: "test" }));
     expect(await failure(tester, tester.delegate({ template: "tester", job: "Delegate my own job further please" }))).toMatchObject({ error: "FORBIDDEN" });
+  });
+
+  it("the lead's checklist loses no write when its own update and a finished job's tick meet", async () => {
+    const { networkDir, task } = await setup();
+    // two processes: the lead's and the job's; each read-modify-write goes through the list's lock
+    const a = new SubtaskStore(await FileStore.open(networkDir));
+    const b = new SubtaskStore(await FileStore.open(networkDir));
+    const add = (store: SubtaskStore, title: string) =>
+      store.update(task.id, "backend", (l) => ({ ...l, items: [...l.items, { id: `s${l.nextSeq}`, title, status: "TODO" as const, updatedAt: "" }], nextSeq: l.nextSeq + 1 }));
+    await Promise.all(Array.from({ length: 10 }, (_, i) => add(i % 2 ? a : b, `step ${i}`)));
+    const list = await a.get(task.id, "backend");
+    expect(list.items.map((i) => i.id).sort()).toEqual(Array.from({ length: 10 }, (_, i) => `s${i + 1}`).sort());
+    expect(list.nextSeq).toBe(11);
   });
 });

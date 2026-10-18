@@ -51,21 +51,34 @@ export async function workTreeState(cwd: string): Promise<{ head: string; dirty:
 }
 
 /**
- * Files changed by the commits of the branch in `cwd` since `base`, not counting merges and the commits in `others` (work of
- * other agents merged in): what the agent itself changed, whatever it reports. null when git cannot tell.
+ * The commits of the branch in `cwd` since `base`, with their files, not counting merges and the commits in `others` (work
+ * of other agents merged in); with `since`, only commits made from then on: a branch that carries the work of an earlier
+ * task (its squash in the project is another commit) does not count it for this one. null when git cannot tell.
  */
-export async function filesChangedSince(cwd: string, base: string, others: string[] = []): Promise<string[] | null> {
+export async function ownCommitsSince(cwd: string, base: string, others: string[] = [], since?: string): Promise<{ commit: string; files: string[] }[] | null> {
   try {
     const known: string[] = [];
     for (const c of [base, ...others]) {
       if (await git(cwd, "rev-parse", "--verify", "--quiet", `${c}^{commit}`).then(() => true, () => false)) known.push(c);
     }
     if (!known.includes(base)) return null;
-    const out = await git(cwd, "log", "--no-merges", "--name-only", "--pretty=format:", "HEAD", "--not", ...known);
-    return [...new Set(out.split("\n").map((l) => l.trim()).filter(Boolean))].sort();
+    const out = await git(cwd, "log", "--no-merges", "--name-only", "--pretty=format:%x01%H %ct", "HEAD", "--not", ...known);
+    // commit times have whole seconds: a commit in the same second as the task counts
+    const from = since ? Math.floor(Date.parse(since) / 1000) : -Infinity;
+    return out.split("\x01").filter((b) => b.trim()).flatMap((block) => {
+      const [head, ...files] = block.split("\n");
+      const [commit, time] = head!.trim().split(" ");
+      return Number(time) >= from ? [{ commit: commit!, files: files.map((l) => l.trim()).filter(Boolean) }] : [];
+    });
   } catch {
     return null;
   }
+}
+
+/** Files those commits changed: what the agent itself changed, whatever it reports. null when git cannot tell. */
+export async function filesChangedSince(cwd: string, base: string, others: string[] = [], since?: string): Promise<string[] | null> {
+  const commits = await ownCommitsSince(cwd, base, others, since);
+  return commits && [...new Set(commits.flatMap((c) => c.files))].sort();
 }
 
 /**

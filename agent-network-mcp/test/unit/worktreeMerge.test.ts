@@ -6,7 +6,8 @@ import type { RunnerOptions } from "../../src/runner.js";
 import { NetworkService } from "../../src/service.js";
 import { RunnerPool } from "../../src/ui/runners.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
-import { branchDiff, ensureWorktrees, fileDiff, mergeBranch, mergeProjectInto, removeWorktrees, revertCommit } from "../../src/worktrees.js";
+import { filesChangedSince } from "../../src/git.js";
+import { branchDiff, catchUpBranch, ensureWorktrees, fileDiff, mergeBranch, mergeProjectInto, removeWorktrees, revertCommit } from "../../src/worktrees.js";
 import { tmpDir } from "../helpers/tmp.js";
 
 const git = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8" });
@@ -65,6 +66,35 @@ describe("merge the lead's branch", () => {
   });
 });
 
+describe("the next task on an agent's old branch", () => {
+  it("after the squash of its previous task: the base is merged in, and only the commits of the new task count as its work", async () => {
+    const { project, backend, reviewer } = await stand();
+    // task 1, a while ago: its commit, then squashed into the project (another commit with the same content)
+    process.env.GIT_COMMITTER_DATE = "2026-01-01T10:00:00Z";
+    commit(backend, "old.txt", "task 1");
+    delete process.env.GIT_COMMITTER_DATE;
+    await mergeBranch(project, "swarm-backend", "task-001");
+    const base = git(project, "rev-parse", "HEAD").trim();
+    const created = new Date().toISOString(); // task 2 starts from the squash
+
+    expect(await catchUpBranch(backend, base)).toBe(`merged the task's base ${base.slice(0, 7)} into the branch`);
+    expect(await catchUpBranch(backend, base)).toBeNull(); // has it now
+    commit(backend, "new.txt", "task 2");
+    expect(await filesChangedSince(backend, base)).toEqual(["new.txt", "old.txt"]); // by commits alone task 1 would count
+    expect(await filesChangedSince(backend, base, [], created)).toEqual(["new.txt"]);
+
+    // uncommitted changes or a conflict: nothing is merged, the log says why
+    commit(project, "a.txt", "project moved on");
+    const next = git(project, "rev-parse", "HEAD").trim();
+    writeFileSync(join(reviewer, "a.txt"), "dirty");
+    expect(await catchUpBranch(reviewer, next)).toContain("uncommitted changes: not merged");
+    git(reviewer, "checkout", "-q", "a.txt");
+    commit(reviewer, "a.txt", "reviewer's own");
+    expect(await catchUpBranch(reviewer, next)).toContain("conflicts; nothing changed");
+    expect(git(reviewer, "status", "--porcelain")).toBe("");
+  });
+});
+
 describe("remove the agents' worktrees", () => {
   it("removes clean worktrees and merged branches, keeps a dirty one and an unmerged branch, and the runner brings them back", async () => {
     const { project, agents, backend, reviewer } = await stand();
@@ -93,7 +123,7 @@ describe("remove the agents' worktrees", () => {
     const pool = new RunnerPool(join(project, ".agent-network"), [{ id: "backend", command: ["x"], cwd: backend, worktree: agents[0]!.worktree, autostart: false }], {
       run: async (o) => {
         seen.push(o);
-        await o.prepare?.();
+        await o.prepare?.({ git: null } as never);
         return 0;
       },
     });

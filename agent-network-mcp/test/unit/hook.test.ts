@@ -166,6 +166,16 @@ describe("runHook stop", () => {
     expect(await runHook("stop", {}, { networkDir }, deps)).toMatchObject({ decision: "block" });
   });
 
+  it("a runner's session stops once its own task is done, though another active task waits in the queue", async () => {
+    const { networkDir, tasks, task, deps } = await setup();
+    const next = await tasks.create({ title: "next", description: "d", agents: ["backend", "reviewer"], createdBy: "operator", git: null });
+    expect(await runHook("stop", {}, { networkDir }, deps)).toMatchObject({ decision: "block" }); // interactive: every active task
+    expect(await runHook("stop", {}, { networkDir, taskId: next.id }, deps)).toMatchObject({ decision: "block", reason: expect.stringContaining(next.id) });
+    await tasks.save({ ...(await tasks.get(next.id)), phase: "DONE", status: "COMPLETED" });
+    expect(await runHook("stop", {}, { networkDir, taskId: next.id }, deps)).toBeNull();
+    expect((await tasks.get(task.id)).status).toBe("ACTIVE");
+  });
+
   it("lets the agent stop when it has no active task", async () => {
     const { networkDir, tasks, task, deps } = await setup();
     await tasks.save({ ...task, status: "BLOCKED" });

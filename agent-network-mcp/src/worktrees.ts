@@ -218,6 +218,24 @@ export async function fileDiff(project: string, base: string, head: string, mode
 }
 
 /**
+ * Before a session: the agent's own branch must hold the task's base (the project's commit the task started from), or the
+ * agent works on old code and its earlier task's commits look like new work. Merges the base in when the folder is clean;
+ * returns a line for the log when it did something or could not, null when the branch had it already.
+ */
+export async function catchUpBranch(cwd: string, base: string): Promise<string | null> {
+  if (!(await git(cwd, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`])).ok) return null; // another repository
+  if ((await git(cwd, ["merge-base", "--is-ancestor", base, "HEAD"])).ok) return null;
+  const short = base.slice(0, 7);
+  if ((await git(cwd, ["status", "--porcelain", "--untracked-files=no"])).out.trim()) return `the branch lacks the task's base ${short}, but has uncommitted changes: not merged`;
+  const r = await git(cwd, ["merge", "--no-edit", "-m", `Bring in the task's base ${short}`, base]);
+  if (!r.ok) {
+    await git(cwd, ["merge", "--abort"]);
+    return `merging the task's base ${short} conflicts; nothing changed: ${(r.out || r.err).trim().split("\n").slice(-2).join(" ")}`;
+  }
+  return `merged the task's base ${short} into the branch`;
+}
+
+/**
  * Brings the project's current branch into an agent's own branch (git merge in its folder): the way a change merged into
  * the project reaches the agents that will implement it. Refused, with nothing changed, when the folder has uncommitted
  * changes or the merge conflicts (it is aborted).
