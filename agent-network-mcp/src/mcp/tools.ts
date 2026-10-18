@@ -21,9 +21,11 @@ const finding = z.object({
 });
 
 /** The tools an agent sees: swarm_context, create_task, send_message, propose, plan, subtasks, complete, build, spawn_agent, delegate, resolve_comments, wait. */
-export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
-  const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, handler: (args: z.infer<z.ZodObject<S>>, signal: AbortSignal) => Promise<unknown>) =>
+export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit?: string[] } = {}): void {
+  const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, handler: (args: z.infer<z.ZodObject<S>>, signal: AbortSignal) => Promise<unknown>) => {
+    if (opts.omit?.includes(name)) return;
     defineTool(server, async (e: unknown) => errorResult(await swarm.errorBody(e, name)), name, description, shape, handler);
+  };
 
   tool(
     "swarm_context",
@@ -44,25 +46,25 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   );
   tool(
     "send_message",
-    "Send a message to ONE other agent of your task, or to 'operator' (the human) with a question only a human can answer (or, with fyi: true, something it should know that needs no answer). Your identity is added automatically. Also used to negotiate files: requestFiles asks the owner for permission to CHANGE their files (reading any file needs no permission), grantFiles (owner) gives it. A request blocks the asker until the owner answers, so owners answer first (nextAction 'respond').",
+    "Message ONE agent of your task, or 'operator' (the human): a question only a human can answer, or with fyi: true a note that needs no answer. Also for files: requestFiles asks an owner to let you CHANGE its files (reading needs no permission), grantFiles (owner) allows it; owners answer first (nextAction 'respond').",
     {
-      to: z.string().describe("Agent id of the recipient, one of the other agents of your task, e.g. 'reviewer'; or 'operator' to ask the human operator a question (the answer arrives in pendingMessages)"),
+      to: z.string().describe("Agent id, e.g. 'reviewer', or 'operator' (answers arrive in pendingMessages)"),
       message: z.string().describe("Text of the message, e.g. 'I take the controller and service, you take validation. Agreed?'"),
-      requestFiles: z.array(z.string()).optional().describe("Only to CHANGE files OWNED by the recipient (never for reading: reading needs no permission). Explain why in message. The owner replies with grantFiles or a refusal"),
-      grantFiles: z.array(z.string()).optional().describe("Owner only: let the recipient change these files of yours (answer to their request); message = conditions. To refuse, send a normal message with the reason"),
-      fyi: z.boolean().optional().describe("To 'operator' only. true: for information, no answer expected (a reply to the operator's message, a status it asked for); it does not hold you. Default: a question the operator answers"),
+      requestFiles: z.array(z.string()).optional().describe("Files OWNED by the recipient you need to CHANGE (never for reading); say why in message"),
+      grantFiles: z.array(z.string()).optional().describe("Owner: let the recipient change these files of yours; message = conditions. Refuse with a plain message"),
+      fyi: z.boolean().optional().describe("To 'operator': true = a note, no answer expected (does not hold you); default = a question"),
       options: z
         .array(z.object({ label: z.string().describe("1-5 words, e.g. 'Service layer'"), description: z.string().optional().describe("What choosing it means, its trade-off") }))
         .optional()
-        .describe("A question to 'operator' with 2-6 choices: the operator picks one on the page (buttons) or writes its own answer. Give them whenever there are options to choose from; the message still explains the question"),
-      recommended: z.string().optional().describe("With options: the label you would take; you go ahead with it if nobody answers in time"),
+        .describe("A question to 'operator' with 2-6 choices it picks on the page; give them whenever there are options"),
+      recommended: z.string().optional().describe("With options: the label you would take (taken if nobody answers in time); fit the project as it is, no new framework or dependency unless the task asks"),
       multiSelect: z.boolean().optional().describe("With options: true when several may be picked"),
     },
     async (a) => swarm.sendMessage(a),
   );
   tool(
     "propose",
-    "DISCUSS only. Propose (or replace) the agreement: a summary plus ONE assignment {agentId, responsibility} for EVERY agent of the task, optionally decisions and interfaces. Others then approve with complete().",
+    "DISCUSS: propose (or replace) the agreement: a summary and ONE assignment for EVERY agent of the task; the others approve with complete().",
     {
       summary: z.string().describe("One or two sentences: what the team will build"),
       assignments: z
@@ -70,9 +72,9 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
           z.object({
             agentId: z.string().describe("Agent id, e.g. 'backend'"),
             responsibility: z.string().describe("What this agent implements"),
-            files: z.array(z.string()).describe("Files or globs this agent will change, e.g. ['src/main/java/A.java', 'src/test/**']. Must not overlap with other agents. [] for an agent that changes nothing and only reviews the others' work (never invent a file for it)"),
-            tasks: z.array(z.string()).optional().describe("Only when the task has an OpenSpec change ('openspec' in swarm_context): the tasks.md numbers this agent implements, e.g. ['1.1', '1.2']. Every open task goes to exactly one agent; [] = review only"),
-            dependsOn: z.array(z.string()).optional().describe("Agents whose NEW code this agent's work calls, e.g. ['backend'] for a tester whose API tests call the endpoint backend builds. It still works in parallel, but its complete() is accepted only after they report their part and it ran its work against their code. Omit when it needs nobody's new code"),
+            files: z.array(z.string()).describe("Files or globs it changes, e.g. ['src/main/java/A.java', 'src/test/**'], no overlap with others; [] = review only (never invent a file)"),
+            tasks: z.array(z.string()).optional().describe("OpenSpec task only: its tasks.md numbers, e.g. ['1.1', '1.2']; each open task to exactly one agent"),
+            dependsOn: z.array(z.string()).optional().describe("Agents whose NEW code its work calls, e.g. ['backend'] for API tests; it completes after they report and it ran against their code"),
           }),
         )
         .describe("One entry for EVERY agent of the task, including yourself"),
@@ -105,15 +107,15 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm): void {
   );
   tool(
     "complete",
-    "Finish your step; meaning depends on the phase. DISCUSS: no arguments, approves the current agreement. IMPLEMENT: {result, filesChanged?, commits?, tasksDone?} marks your part ready (commits are optional; tasksDone for an OpenSpec task). SYNC: {status: PASS|NEEDS_FIX, findings?} submits your review (NEEDS_FIX needs an ERROR finding naming the agent to fix in relatedAgent; WARNING/INFO go with PASS). INTEGRATE (lead): {status, result, commits?, findings?, followUps?} after bringing everything together and running the build and tests; with PASS, followUps (when the task allows them) creates new tasks for work that is left.",
+    "Finish your step. DISCUSS: no arguments = approve the agreement. IMPLEMENT: {result, filesChanged?, commits?, tasksDone?} = your part is ready. SYNC: {status: PASS|NEEDS_FIX, findings?} = your review (NEEDS_FIX needs an ERROR with relatedAgent). INTEGRATE (lead): {status, result, commits?, findings?, followUps?} after merging and a green build.",
     {
-      result: z.string().optional().describe("IMPLEMENT: short summary of what you implemented. INTEGRATE: what was merged, where, build/test outcome"),
+      result: z.string().optional().describe("IMPLEMENT: what you did. INTEGRATE: what was merged, the build/test outcome"),
       filesChanged: z.array(z.string()).optional().describe("IMPLEMENT only: project-relative paths you changed"),
-      commits: z.array(z.string()).optional().describe("Optional. IMPLEMENT: hashes of your commits, if you committed. INTEGRATE: HEAD of the merged result, if you merged with git"),
-      tasksDone: z.array(z.string()).optional().describe("IMPLEMENT, OpenSpec task only: the numbers of your tasks.md tasks you finished"),
+      commits: z.array(z.string()).optional().describe("Hashes as git shows them (IMPLEMENT: yours; INTEGRATE: the merged HEAD)"),
+      tasksDone: z.array(z.string()).optional().describe("OpenSpec task: your finished tasks.md numbers"),
       status: z.string().optional().describe("SYNC / INTEGRATE: PASS or NEEDS_FIX"),
-      findings: z.array(finding).optional().describe("SYNC / INTEGRATE, required for NEEDS_FIX (at least one ERROR)"),
-      followUps: z.array(followUp).optional().describe("INTEGRATE with PASS, lead only, when swarm_context shows followUps.remaining > 0: new tasks for work that is left; the agents start them after this task is DONE"),
+      findings: z.array(finding).optional().describe("SYNC / INTEGRATE; NEEDS_FIX needs an ERROR"),
+      followUps: z.array(followUp).optional().describe("INTEGRATE PASS, when followUps.remaining > 0: new tasks for work that is left"),
     },
     async (a) => swarm.complete(a),
   );

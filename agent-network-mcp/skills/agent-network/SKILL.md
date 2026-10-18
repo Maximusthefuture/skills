@@ -86,7 +86,9 @@ You cannot create a task while you have an active one.
 On TIMEOUT just call `wait()` again. Messages addressed to you are in `pendingMessages`.
 
 Questions to the operator with options to choose from: `send_message({to: "operator", message, options: [{label, description}], recommended: "<label>"})`
-(2-6 options, `multiSelect: true` when several may be picked). The operator picks on the page; the answer comes as
+(2-6 options, `multiSelect: true` when several may be picked). Ground the options in the project as it is: read its build
+file (`pom.xml`, `build.gradle`, `package.json`) and the code first and recommend what fits what is there; a new framework,
+database or dependency may be an option, never your recommendation unless the task asks for it. The operator picks on the page; the answer comes as
 `Chosen: "<label>"` plus a comment. No answer in time: go ahead with `recommended`.
 
 Builds and tests: call `build({command?})` instead of running them in the shell. It answers with the outcome, the test totals

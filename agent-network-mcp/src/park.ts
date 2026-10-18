@@ -18,7 +18,7 @@ export async function parkMark(fs: FileStore, task: Task, agentId: string): Prom
 }
 
 /** Events that may need a parked agent: a new agreement to approve, a part reported (a dependency), comments on the diff. */
-const WAKES = new Set(["AGREEMENT_UPDATED", "IMPLEMENTATION_COMPLETED", "REVIEW_COMMENTS", "TASK_HANDED_OVER", "PHASE_CHANGED"]);
+export const WAKES = new Set(["AGREEMENT_UPDATED", "IMPLEMENTATION_COMPLETED", "REVIEW_COMMENTS", "TASK_HANDED_OVER", "PHASE_CHANGED"]);
 
 /** A parked agent looks again after this long anyway (a short session): a missed reason to wake costs minutes, not a task. */
 export const PARK_MAX_MS = 15 * 60_000;

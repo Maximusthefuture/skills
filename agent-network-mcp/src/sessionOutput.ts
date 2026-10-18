@@ -120,7 +120,12 @@ export class SessionOutput {
   private calls = new Map<string, { tool: string; at: number }>();
 
   /** onEvent receives the session's activity (see ActivityItem) as it comes. */
-  constructor(private readonly onEvent?: (e: ActivityItem) => void, private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly onEvent?: (e: ActivityItem) => void,
+    private readonly now: () => number = Date.now,
+    /** The size of the context the model just read (input + cache read + cache write of a main-session turn). */
+    private readonly onContext?: (tokens: number) => void,
+  ) {}
 
   private emit(e: ActivityItem): void {
     try {
@@ -229,6 +234,15 @@ export class SessionOutput {
         return null;
       case "assistant":
         this.assistantActivity(ev.message, typeof ev.parent_tool_use_id === "string");
+        // the session's own turns (not a subagent's): how big its context has grown
+        const u = (ev.message as { usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } } | undefined)?.usage;
+        if (u && typeof ev.parent_tool_use_id !== "string") {
+          try {
+            this.onContext?.((u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0));
+          } catch {
+            /* a listener's failure is not the session's */
+          }
+        }
         return typeof ev.parent_tool_use_id === "string" ? null : assistantText(ev.message); // the log shows the session itself; the feed shows both
       case "user":
         this.toolResults(ev.message, typeof ev.parent_tool_use_id === "string");

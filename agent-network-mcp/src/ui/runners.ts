@@ -29,6 +29,8 @@ export interface RunnerAgentConfig {
   id: string;
   /** Agent CLI argv with "{prompt}" (see `run`). */
   command: string[];
+  /** Built-in tools taken out of the command (e.g. ["Agent", "Skill"] for a reviewer): their descriptions are read every turn. */
+  withoutTools?: string[];
   cwd?: string;
   /** File with the whole prompt template ({agent} {taskId} {title} {attempt} {resume}); read before every session. */
   promptFile?: string;
@@ -43,6 +45,8 @@ export interface RunnerAgentConfig {
   maxRestarts?: number;
   /** Phases a fresh session takes over (["SYNC"]: the review is done by a session that did not see the discussion). */
   freshPhases?: Phase[];
+  /** End a session past this context size and go on in a fresh one (see RunnerOptions.maxContextTokens). */
+  maxContextTokens?: number;
   /** Start together with the UI. Default true. */
   autostart?: boolean;
   /** Its own git worktree, created at start when missing (defaults.worktree: true and no "cwd"). */
@@ -201,6 +205,36 @@ export async function projectRunnersConfig(project: string, template: TemplateNa
 
 type RawAgent = Partial<RunnerAgentConfig>;
 
+/**
+ * The command without some built-in tools: Claude Code's --tools list and --allowedTools lose them (and --agents goes
+ * with Agent: no subagents to define); Qwen's --exclude-tools gets them (agent, skill...). Every tool's description is
+ * read again on every turn, so a role that never uses one should not carry it.
+ */
+export function withoutTools(command: string[], tools: string[]): string[] {
+  if (!tools.length) return command;
+  const drop = new Set(tools);
+  const out: string[] = [];
+  for (let i = 0; i < command.length; i++) {
+    const a = command[i]!;
+    if (a === "--tools" && i + 1 < command.length) {
+      out.push(a, command[++i]!.split(",").filter((t) => !drop.has(t.trim())).join(","));
+    } else if (a === "--agents" && drop.has("Agent")) {
+      i++; // the subagent definitions go with the Agent tool
+    } else if (a === "--allowedTools" || a === "--allowed-tools") {
+      out.push(a);
+      while (i + 1 < command.length && !command[i + 1]!.startsWith("--")) {
+        const v = command[++i]!;
+        if (!drop.has(v)) out.push(v);
+      }
+    } else if (a === "--exclude-tools") {
+      out.push(a);
+      while (i + 1 < command.length && !command[i + 1]!.startsWith("-")) out.push(command[++i]!);
+      out.push(...tools.map((t) => t.toLowerCase()));
+    } else out.push(a);
+  }
+  return out;
+}
+
 function costLimit(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new AppError("INVALID_CONFIG", `${what} must be a positive amount in USD, e.g. 10`);
   return value;
@@ -244,9 +278,11 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     if (wantsWorktree && !project) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" gets its own worktree, but the project is unknown: start ui inside the project's git repository or set "project"`);
     const worktree: AgentWorktree | undefined = wantsWorktree ? { project: project!, branch: `swarm-${id}` } : undefined;
     const cwd = merged.cwd ? abs(merged.cwd) : worktree ? join(dirname(worktree.project), `${basename(worktree.project)}-${id}`) : undefined;
+    const without = Array.isArray(merged.withoutTools) ? merged.withoutTools.filter((t): t is string => typeof t === "string") : [];
     return {
       id,
-      command: merged.command,
+      command: withoutTools(merged.command, without),
+      ...(without.length ? { withoutTools: without } : {}),
       ...(cwd ? { cwd } : {}),
       ...(worktree ? { worktree } : {}),
       ...(promptFile ? { promptFile } : {}),
@@ -256,6 +292,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
       ...(merged.models?.length ? { models: [...new Set(merged.models)] } : {}),
       ...(merged.maxRestarts !== undefined ? { maxRestarts: Number(merged.maxRestarts) } : {}),
       ...(freshPhases.length ? { freshPhases } : {}),
+      ...(typeof merged.maxContextTokens === "number" && merged.maxContextTokens >= 10_000 ? { maxContextTokens: merged.maxContextTokens } : {}),
       autostart: merged.autostart !== false,
     };
   };
@@ -795,6 +832,7 @@ export class RunnerPool {
       },
       ...(m.config.maxRestarts !== undefined ? { maxRestarts: m.config.maxRestarts } : {}),
       ...(m.config.freshPhases ? { freshPhases: m.config.freshPhases } : {}),
+      ...(m.config.maxContextTokens ? { maxContextTokens: m.config.maxContextTokens } : {}),
       signal: controller.signal,
       log: (line) => this.say(m, `[runner] ${line}`),
       output: (text) => this.push(m, text),

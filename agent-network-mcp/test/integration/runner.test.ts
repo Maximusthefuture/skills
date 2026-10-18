@@ -135,7 +135,7 @@ describe("agent runner", () => {
     const runs = s.launches();
     expect(runs.map((l) => l.attempt)).toEqual([1, 2, 3]);
     expect(runs[0]!.args.join(" ")).not.toContain("turn limit");
-    expect(runs[1]!.args.join(" ")).toContain("reached its turn limit in the middle of the work");
+    expect(runs[1]!.args.join(" ")).toContain("ended in the middle of the work");
     expect(runs[1]!.args.join(" ")).not.toContain("previous one ended");
     expect(r.lines).toContain(`${t.id}: session 1 reached its turn limit (3 turns) after progress; a fresh session goes on (phase DISCUSS)`);
     const sessions = await store.list(t.id);
@@ -159,6 +159,20 @@ describe("agent runner", () => {
     await until(() => p.lines.some((l) => l.includes("giving up until the task changes")), "give up");
     expect(idle.launches().map((l) => l.attempt)).toEqual([1]);
     await p.stop();
+  });
+
+  it("a session whose context grew past maxContextTokens ends after its tool call; a fresh one goes on", async () => {
+    const s = await setup();
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "context:2", "{prompt}"], { maxRestarts: 0, maxContextTokens: 50_000, cwd: await tmpDir() });
+    const t = await s.newTask("Big reads");
+    await until(async () => (await s.tasks.get(t.id)).status === "COMPLETED", "task done", 15_000);
+    const store = new SessionStore(await FileStore.open(s.networkDir));
+    await until(async () => (await store.list(t.id)).length === 2, "both sessions recorded", 15_000);
+    await r.stop();
+    expect(s.launches().map((l) => l.attempt)).toEqual([1, 2]);
+    expect(s.launches()[1]!.args.join(" ")).toContain("ended in the middle of the work");
+    expect(r.lines.some((l) => l.includes("reached 90k tokens of context (limit 50k)"))).toBe(true);
+    expect((await store.list(t.id)).map((x) => x.endedBy)).toEqual(["context-limit", "task-done"]);
   });
 
   it("restarts an unfinished task with a resume note, gives up after the limit and retries when the task changes", async () => {

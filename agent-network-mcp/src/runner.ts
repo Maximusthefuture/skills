@@ -54,7 +54,7 @@ const HANDOFF =
   "You have not seen the earlier discussion, on purpose: work from swarm_context (the task and the agreement) and the code, not from what the others say they did.";
 
 const TURN_LIMIT =
-  " The previous session for this task reached its turn limit in the middle of the work: sessions are kept short on purpose, " +
+  " The previous session for this task ended in the middle of the work (its turn limit, or its context grew large): sessions are kept short on purpose, " +
   "because the whole context is read again on every turn. Call swarm_context (your 'subtasks' show what is done and what is in progress), " +
   "look at the state of your folder at the end of this prompt (read the diff only of the files you need), and go on from there without redoing finished steps.";
 
@@ -192,6 +192,11 @@ export interface RunnerOptions {
   onActivity?: (e: ActivityItem) => void;
   /** The operator's urgent messages: interrupt the current session and start the next one with the message first. */
   urgent?: UrgentChannel;
+  /**
+   * End a session whose context grew past this many tokens (after the tool call in flight) and go on in a fresh one, as
+   * after the turn limit: every turn reads the whole context again. Claude Code's stream-json reports it; off when unset.
+   */
+  maxContextTokens?: number;
   /** Before a session starts: e.g. create the agent's worktree again after the operator removed it. Throwing = not now. */
   prepare?: () => Promise<void>;
   /** The runner gave up on a task (maxRestarts sessions failed): the page blocks the task, so the operator sees it. */
@@ -224,10 +229,10 @@ export interface SessionRun {
  * Runs the agent session; on abort sends SIGTERM, then SIGKILL after 10 s. Its stdout goes through SessionOutput
  * (JSON events become a readable log and the final usage is kept); `sink` receives what to show (null = nothing).
  */
-export function runSession(argv: string[], env: NodeJS.ProcessEnv, cwd: string | undefined, sink: ((text: string) => void) | null, signal?: AbortSignal, onEvent?: (e: ActivityItem) => void): Promise<SessionRun> {
+export function runSession(argv: string[], env: NodeJS.ProcessEnv, cwd: string | undefined, sink: ((text: string) => void) | null, signal?: AbortSignal, onEvent?: (e: ActivityItem) => void, onContext?: (tokens: number) => void): Promise<SessionRun> {
   return new Promise((done) => {
     const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
-    const parsed = new SessionOutput(onEvent);
+    const parsed = new SessionOutput(onEvent, Date.now, onContext);
     const show = (text: string): void => {
       if (text && sink) sink(text);
     };
@@ -423,7 +428,20 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       interrupted = true;
       session.abort();
     });
-    const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal?.aborted ? signal : session.signal, opts.onActivity);
+    // the context grew too big: end the session once its current tool call is back, a fresh one goes on
+    let contextFull = 0;
+    let contextEnded = false;
+    const onContext = (tokens: number): void => {
+      if (opts.maxContextTokens && tokens > opts.maxContextTokens && !contextFull) contextFull = tokens;
+    };
+    const onActivity = (e: ActivityItem): void => {
+      opts.onActivity?.(e);
+      if (contextFull && !contextEnded && e.kind === "tool_result") {
+        contextEnded = true;
+        session.abort();
+      }
+    };
+    const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal?.aborted ? signal : session.signal, onActivity, onContext);
     opts.urgent?.attach(null);
     signal?.removeEventListener("abort", stopAll);
     const endedAt = new Date();
@@ -436,7 +454,9 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     // why it ended, for the record (the page's runs, the observer, cost by phase)
     const ended = await tasks.find(task.id).catch(() => null);
     const parkedBy = await lastPark(fs, agent).catch(() => null);
-    const endedBy = interrupted
+    const endedBy = contextEnded
+      ? ("context-limit" as const)
+      : interrupted
       ? ("interrupted" as const)
       : !ended || isFinished(ended)
         ? ("task-done" as const)
@@ -466,6 +486,13 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       .catch((e: Error) => log(`cannot record the session: ${e.message}`));
     await Promise.resolve(opts.onSessionEnd?.(task.id)).catch((e: Error) => log(`after the session: ${e.message}`));
     if (signal?.aborted) break;
+    if (contextEnded && !signal?.aborted) {
+      // a planned end like the turn limit: the next session goes on from the subtasks and git, with a small context
+      plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
+      turnLimited.add(task.id);
+      say(`${task.id}: session ${attempt} reached ${Math.round(contextFull / 1000)}k tokens of context (limit ${Math.round(opts.maxContextTokens! / 1000)}k); a fresh session goes on (phase ${task.phase})`);
+      continue;
+    }
     if (interrupted) {
       // the operator's urgent message: a planned end, the next session starts at once with the message first
       plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);

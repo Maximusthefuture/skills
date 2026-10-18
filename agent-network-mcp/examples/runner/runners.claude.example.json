@@ -23,7 +23,9 @@
     "observer: an agent that looks back over closed tasks for the system's own problems (refused calls, turn limits, give-ups, slow answers, costly phases) and writes a report with proposals; the page's Наблюдатель tab shows them, Accept turns one into a swarm task (in agent-network-mcp's own network for target agent-network). Digests of closed tasks are collected without a model; the session runs on its cron (Mondays 9:00 here) or from the button. Read-only tools plus its own MCP server (observer-mcp), which writes only into <network>/observer/.",
     "planCritic: reads every version of a plan the lead writes for a task with «План на утверждение» (task create --plan) and lists what would break in production (data, deploy and rollback, contracts, races, load, security); the risks show next to the plan, «В замечания» sends one to the lead. Read-only tools on {projectDir} (the project) and {planDir} (the plan's folder), one session per plan version, about $0.05-0.3 on sonnet. Remove the section to switch it off.",
     "planCritic.skillSets: the skills the critic gets for a kind of project. A set applies when one of its \"when\" files is in the project's root (\"*\" = any project: \"always\" here gives every plan the pre-mortem of ~/.claude/agents/critic.md); several sets may apply. \"skills\": a skill folder (SKILL.md), a folder of skills (backend-design-java: migration-safety, idempotency, error handling, ...) or one .md file. Missing ones are skipped. The critic reads only the skills whose description fits the plan.",
-    "PreToolUse hook pre-bash: refuses git flags that write files or run programs (git diff --output=..., --ext-diff, --textconv), which an allow rule like Bash(git diff:*) would let through."
+    "PreToolUse hook pre-bash: refuses git flags that write files or run programs (git diff --output=..., --ext-diff, --textconv), which an allow rule like Bash(git diff:*) would let through.",
+    "withoutTools: built-in tools a role never uses, taken out of its command (reviewer and tester: no subagents, no skills). Every tool description is read again on every turn, so this saves tokens in every turn of that agent.",
+    "maxContextTokens: a session whose context grew past this many tokens ends after its current tool call and a fresh one goes on from the subtasks and git, as after the turn limit (every turn reads the whole context again). Claude Code reports the size in stream-json."
   ],
   "maxTaskCostUsd": 10,
   "defaults": {
@@ -78,7 +80,8 @@
     ],
     "maxRestarts": 2,
     "systemPromptFile": "swarm-system-prompt.md",
-    "worktree": true
+    "worktree": true,
+    "maxContextTokens": 80000
   },
   "agents": [
     {
@@ -87,13 +90,21 @@
     },
     {
       "id": "reviewer",
-      "instructionsFile": "instructions/reviewer.md"
+      "instructionsFile": "instructions/reviewer.md",
+      "withoutTools": [
+        "Agent",
+        "Skill"
+      ]
     },
     {
       "id": "tester",
       "autostart": false,
       "model": "haiku",
-      "instructionsFile": "instructions/tester.md"
+      "instructionsFile": "instructions/tester.md",
+      "withoutTools": [
+        "Agent",
+        "Skill"
+      ]
     }
   ],
   "supervisor": {
@@ -206,7 +217,11 @@
       "tester": {
         "description": "A tester: cross-cutting tests (end-to-end, concurrency, negative suites) in its own test package.",
         "instructionsFile": "{agentNetworkMcp}/examples/runner/instructions/tester.md",
-        "model": "haiku"
+        "model": "haiku",
+        "withoutTools": [
+          "Agent",
+          "Skill"
+        ]
       }
     },
     "maxPerTask": 2

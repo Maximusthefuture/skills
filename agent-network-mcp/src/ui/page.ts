@@ -1123,7 +1123,7 @@ function fillSelect(id,label,values,fmt){const sel=$(id);const keep=sel.value;co
   sel.replaceChildren(new Option(label,""),...values.map(v=>new Option(fmt?fmt(v):v,v)));if(values.includes(keep))sel.value=keep}
 ["f-agent","f-task","f-model","f-status","e-task","e-type"].forEach(id=>$(id).addEventListener("change",render));
 const STATUS={running:"идёт",ok:"ок",turns:"лимит ходов",stopped:"остановлена",failed:"ошибка"};
-const ENDED={"task-done":"задача готова",parked:"запаркована",handoff:"передана свежей сессии","turn-limit":"лимит ходов",blocked:"задача BLOCKED",interrupted:"срочное сообщение",ended:"завершилась",failed:"ошибка"};
+const ENDED={"task-done":"задача готова",parked:"запаркована",handoff:"передана свежей сессии","turn-limit":"лимит ходов","context-limit":"большой контекст",blocked:"задача BLOCKED",interrupted:"срочное сообщение",ended:"завершилась",failed:"ошибка"};
 const expandedRuns=new Set();
 const runKey=r=>r.id?r.taskId+"/"+r.id:"live/"+r.agentId;
 function renderRuns(){

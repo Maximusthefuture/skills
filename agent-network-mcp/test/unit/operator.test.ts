@@ -183,6 +183,7 @@ describe("checking the task first (clarify)", () => {
     const first = await backend.context();
     expect(first).toMatchObject({ nextAction: "propose", allowedActions: ["send_message", "wait"] });
     expect(String(first.hint)).toContain("First check the task");
+    expect(String(first.hint)).toContain("never your recommendation unless the task asks for it"); // options from the project as it is
     expect(first.exampleCall).toBeUndefined();
     expect(String((await reviewer.context()).hint)).toContain("checks the task with the operator first");
     expect(await failure(backend, backend.propose({ summary: "s", assignments }))).toMatchObject({ error: "CLARIFY_FIRST" });
@@ -284,5 +285,52 @@ describe("preparation presets", () => {
     expect(depthFlags("standard")).toEqual({ clarify: true, grill: false, planReview: false });
     expect(depthFlags("thorough")).toEqual({ clarify: true, grill: true, planReview: true });
     expect(() => depthFlags("deep")).toThrow(/fast, standard or thorough/);
+  });
+});
+
+describe("the same hint is not repeated", () => {
+  it("the second reply in a phase with the same guidance says (unchanged); swarm_context shows it in full", async () => {
+    const { backend } = await setup();
+    await backend.context();
+    const a = await backend.sendMessage({ to: "reviewer", message: "I take the api" });
+    const b = await backend.sendMessage({ to: "reviewer", message: "and the migration" });
+    // swarm_context showed this guidance already: the replies after it do not repeat it
+    expect(a.hint).toBe("(unchanged)");
+    expect(b.hint).toBe("(unchanged)");
+    expect(String((await backend.context()).hint)).not.toBe("(unchanged)");
+  });
+});
+
+describe("an answer to another agent's question", () => {
+  it("reaches the lead too: it keeps the agreement", async () => {
+    const { operator, backend, reviewer, task } = await setup();
+    const q = await reviewer.sendMessage({ to: "operator", message: "Checked or unchecked exception?", options: [{ label: "Unchecked" }, { label: "Checked" }], recommended: "Unchecked" });
+    await operator.answerQuestion({ taskId: task.id, messageId: q.messageId as string, answer: 'Chosen: "Unchecked"' });
+    const toLead = (await operator.messages.list(task.id)).filter((m) => m.to === "backend" && m.from === "operator");
+    expect(toLead).toHaveLength(1);
+    expect(toLead[0]!.content).toContain("the operator answered reviewer's question");
+    expect(toLead[0]!.content).toContain('Answer: Chosen: "Unchecked"');
+    // the lead's own question: no copy to itself
+    const own = await backend.sendMessage({ to: "operator", message: "Partial refunds?", options: [{ label: "Yes" }, { label: "No" }], recommended: "Yes" });
+    await operator.answerQuestion({ taskId: task.id, messageId: own.messageId as string, answer: 'Chosen: "Yes"' });
+    expect((await operator.messages.list(task.id)).filter((m) => m.to === "backend" && m.from === "operator")).toHaveLength(2);
+  });
+});
+
+describe("the agreement against the task's split", () => {
+  it("work the task gives an agent, left out of its assignment, comes back as a warning", async () => {
+    const { workGiven } = await import("../../src/mcp/swarm.js");
+    const d = "Предзаказ товара. backend пишет код, reviewer — модульные тесты и ревью. Сборка: ./mvnw -q verify";
+    expect(workGiven(d, "reviewer")).toBe("модульные тесты и ревью");
+    expect(workGiven(d, "backend")).toBe("пишет код, reviewer — модульные тесты и ревью");
+    expect(workGiven("backend builds it, reviewer: review only", "reviewer")).toBeNull();
+    expect(workGiven("tester-2 writes load tests", "tester")).toBeNull();
+
+    const dir = join(await tmpDir(), ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const backend = new Swarm(await NetworkService.create(dir, { id: "backend", type: "test" }));
+    await operator.createTaskAsOperator({ title: "Preorders", description: d, agents: ["backend", "reviewer"] });
+    const res = await backend.propose({ summary: "s", assignments: [{ agentId: "backend", responsibility: "all", files: ["src/**"] }, { agentId: "reviewer", responsibility: "review", files: [] }] });
+    expect(res.warnings).toEqual([expect.stringContaining('task.description gives reviewer work ("модульные тесты и ревью")')]);
   });
 });

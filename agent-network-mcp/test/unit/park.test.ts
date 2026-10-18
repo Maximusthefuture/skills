@@ -15,13 +15,13 @@ import { tmpDir } from "../helpers/tmp.js";
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), "..", "helpers", "fakeAgent.mjs");
 
 /** A task in IMPLEMENT: backend builds, reviewer only reviews (files: []). */
-async function implementing(opts: { underRunner: boolean; operatorTimeoutMs?: number }) {
+async function implementing(opts: { underRunner: boolean; operatorTimeoutMs?: number; parkAfterWaits?: number }) {
   const networkDir = join(await tmpDir(), ".agent-network");
   const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
-  const swarm = async (id: string, o: { underRunner?: boolean; operatorTimeoutMs?: number } = {}) =>
+  const swarm = async (id: string, o: { underRunner?: boolean; operatorTimeoutMs?: number; parkAfterWaits?: number } = {}) =>
     new Swarm(await NetworkService.create(networkDir, { id, type: "test" }, { hub: new EventHub(networkDir, { fallbackPollMs: 50 }) }), undefined, o);
   const backend = await swarm("backend");
-  const reviewer = await swarm("reviewer", opts);
+  const reviewer = await swarm("reviewer", { parkAfterWaits: 0, ...opts });
   const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
   await backend.propose({ summary: "s", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/**"] }, { agentId: "reviewer", responsibility: "review", files: [] }] });
   await backend.context();
@@ -46,6 +46,13 @@ describe("parking a runner's waiting session", () => {
     expect((await operator.tasks.get(task.id)).phase).toBe("SYNC");
     expect(await isParked(fs, "reviewer", await operator.tasks.get(task.id))).toBe(false);
     expect((await reviewer.context()).nextAction).toBe("sync");
+  });
+
+  it("by default a runner's session waits first and parks only once the wait proves long (two wait() timeouts in a row)", async () => {
+    const { reviewer } = await implementing({ underRunner: true, parkAfterWaits: 2 });
+    expect((await reviewer.context()).nextAction).toBe("wait");
+    expect(await reviewer.wait({ timeoutMs: 30 })).toMatchObject({ status: "TIMEOUT" });
+    expect(await reviewer.wait({ timeoutMs: 30 })).toMatchObject({ status: "DONE", parked: true, nextAction: "done" });
   });
 
   it("not outside a runner, not with an unread message, not while its own question to the operator runs against the clock", async () => {
@@ -89,5 +96,51 @@ describe("the runner and a parked agent", () => {
     expect(launches()).toBe(1);
     controller.abort();
     await done;
+  });
+});
+
+describe("no busy wait() loops", () => {
+  it("a review-only part that depends on another is accepted at once: it has nothing to run against their code", async () => {
+    const networkDir = join(await tmpDir(), ".agent-network");
+    const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
+    const swarm = async (id: string) => new Swarm(await NetworkService.create(networkDir, { id, type: "test" }, { hub: new EventHub(networkDir, { fallbackPollMs: 50 }) }));
+    const backend = await swarm("backend");
+    const reviewer = await swarm("reviewer");
+    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    await backend.propose({ summary: "s", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/**"] }, { agentId: "reviewer", responsibility: "review", files: [], dependsOn: ["backend"] }] });
+    for (const a of [backend, reviewer]) {
+      await a.context();
+      await a.complete({});
+    }
+    expect(await reviewer.complete({ result: "review only: nothing to change" })).toMatchObject({ nextAction: "wait" });
+  });
+
+  it("...but a part it depends on, reported while it waits, wakes it at once", async () => {
+    const networkDir = join(await tmpDir(), ".agent-network");
+    const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
+    const swarm = async (id: string) => new Swarm(await NetworkService.create(networkDir, { id, type: "test" }, { hub: new EventHub(networkDir, { fallbackPollMs: 50 }) }));
+    const backend = await swarm("backend");
+    const tester = await swarm("tester");
+    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "tester"] });
+    await backend.propose({ summary: "s", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/**"] }, { agentId: "tester", responsibility: "api tests", files: ["test/**"], dependsOn: ["backend"] }] });
+    for (const a of [backend, tester]) {
+      await a.context();
+      await a.complete({});
+    }
+    expect(await tester.wait({ timeoutMs: 1000 })).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "implement" });
+    const t0 = Date.now();
+    const waiting = tester.wait({ timeoutMs: 5000 });
+    await new Promise((r) => setTimeout(r, 150));
+    await backend.complete({ result: "api", filesChanged: ["src/A.java"] });
+    expect(await waiting).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "implement" });
+    expect(Date.now() - t0).toBeLessThan(3000);
+  });
+
+  it("wait() called again after it said what to do, with nothing changed, waits instead of answering at once", async () => {
+    const { backend } = await implementing({ underRunner: false });
+    expect(await backend.wait({ timeoutMs: 1000 })).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "implement" });
+    const t0 = Date.now();
+    expect(await backend.wait({ timeoutMs: 300 })).toMatchObject({ status: "TIMEOUT" });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
   });
 });

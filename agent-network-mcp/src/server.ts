@@ -24,8 +24,10 @@ export interface ServerOptions {
 
 export function createServer(service: NetworkService, opts: ServerOptions = {}): McpServer {
   const log = opts.log ?? (() => undefined);
-  const server = new McpServer({ name: "agent-network-mcp", version: "0.2.0" }, { instructions: SWARM_INSTRUCTIONS });
-  registerSwarmTools(server, new Swarm(service, log, { defaultWaitMs: opts.waitMs, freshPhases: opts.freshPhases, underRunner: opts.underRunner, sessionTask: opts.sessionTask, operatorTimeoutMs: opts.operatorTimeoutMs }));
+  // under a runner the session has the runner's system prompt and the server's hints: the general instructions (about
+  // 1300 tokens) and create_task (a runner's session never starts a task) would only be read again every turn
+  const server = new McpServer({ name: "agent-network-mcp", version: "0.2.0" }, opts.underRunner ? {} : { instructions: SWARM_INSTRUCTIONS });
+  registerSwarmTools(server, new Swarm(service, log, { defaultWaitMs: opts.waitMs, freshPhases: opts.freshPhases, underRunner: opts.underRunner, sessionTask: opts.sessionTask, operatorTimeoutMs: opts.operatorTimeoutMs }), { omit: opts.underRunner ? ["create_task"] : [] });
   if (opts.advanced) registerAdvancedTools(server, service, log);
   return server;
 }

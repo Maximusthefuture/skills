@@ -61,13 +61,18 @@ if (/^turns(-idle)?:/.test(finishArg) && attempt < Number(finishArg.split(":")[1
   process.stdout.write(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 3, usage: { input_tokens: 10, output_tokens: 1 } }) + "\n");
   process.exit(1);
 }
-if (finishArg.startsWith("busy:") && attempt < Number(finishArg.split(":")[1])) {
+if (finishArg.startsWith("context:") && attempt < Number(finishArg.split(":")[1])) {
+  // a turn that read a big context, a tool call, its result, then it keeps working: the runner ends it on its context limit
+  process.stdout.write(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 5, cache_read_input_tokens: 90_000 }, content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "A.java" } }] } }) + "\n");
+  process.stdout.write(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "class A {}" }] } }) + "\n");
+  setInterval(() => {}, 1e9);
+} else if (finishArg.startsWith("busy:") && attempt < Number(finishArg.split(":")[1])) {
   // a session at work: one tool call done, then it keeps going until it is stopped (an urgent message interrupts it)
   process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "./mvnw -q test" } }] } }) + "\n");
   process.stdout.write(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "Tests run: 3" }] } }) + "\n");
   setInterval(() => {}, 1e9);
 } else {
-const finishOn = Number(finishArg.replace(/^(handoff|block|turns|turns-idle|turns-files|busy):/, ""));
+const finishOn = Number(finishArg.replace(/^(handoff|block|turns|turns-idle|turns-files|busy|context):/, ""));
 if (finishOn > 0 && attempt >= finishOn) {
   finish(taskId);
   process.exit(0);

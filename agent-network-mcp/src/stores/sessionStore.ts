@@ -27,7 +27,7 @@ export interface SessionRecord {
    * Why it ended: task-done, parked (nothing to do but wait), handoff (a fresh phase), turn-limit (after progress),
    * blocked, interrupted (the operator's urgent message), ended (exit 0 otherwise) or failed.
    */
-  endedBy?: "task-done" | "parked" | "handoff" | "turn-limit" | "blocked" | "interrupted" | "ended" | "failed";
+  endedBy?: "task-done" | "parked" | "handoff" | "turn-limit" | "context-limit" | "blocked" | "interrupted" | "ended" | "failed";
 }
 
 /** tasks/<task>/sessions/session-NNN.json, written by the runners. */

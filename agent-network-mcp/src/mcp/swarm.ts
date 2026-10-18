@@ -2,6 +2,7 @@ import { buildTools, DEFAULT_BUILD_TIMEOUT_MIN, parseBuildCommand, runBuild } fr
 import { AppError, isAppError } from "../errors.js";
 import { containsCommit, filesChangedSince, readGitContext, resolveCommit, workTreeState } from "../git.js";
 import { phaseEpoch } from "../handoff.js";
+import { WAKES } from "../park.js";
 import { changePath, readChange, validateChange, type ChangeInfo, type Exec } from "../openspec.js";
 import { normalizePath, ownersOf } from "../ownership.js";
 import { planBrief, type PlanStatus } from "../plan.js";
@@ -74,6 +75,19 @@ interface Snapshot {
   operatorAnswers?: { question: string; askedBy: string; answer: string }[];
 }
 
+/**
+ * The words right after an agent's name in a task description, when they give it work of its own (tests, code...),
+ * not just a review: "reviewer — модульные тесты и ревью" → "модульные тесты и ревью"; null otherwise.
+ */
+export function workGiven(description: string, agentId: string): string | null {
+  const re = new RegExp(`(^|[^\\w-])${agentId.replace(/[-]/g, "\\-")}(?![\\w-])\\s*[—:–-]?\\s*([^.;\\n]{3,80})`, "gi");
+  for (const m of description.matchAll(re)) {
+    const words = m[2]!.trim();
+    if (/тест|test|пиш|writ|implement|реализ|код|code|делает|builds?\b|migration|миграц/i.test(words)) return words.slice(0, 80);
+  }
+  return null;
+}
+
 /** "2/5 done, s3 in progress" */
 function progress(list: SubtaskList | undefined): string | null {
   const items = (list?.items ?? []).filter((i) => i.status !== "DROPPED");
@@ -90,7 +104,9 @@ type RawFinding = Omit<SyncFinding, "severity"> & { severity: string };
 const seq = (m: Message): number => Number(m.id.slice(4));
 
 /** Big parts of the context that change rarely: after the agent has seen one, replies say "(unchanged)" until it changes. */
-const SECTIONS = ["openspec", "agreement", "assignment", "ownership", "subtasks", "teamImplementations", "fixedFindings", "fixRequests", "followUps"] as const;
+// hint and exampleCall too: every reply stays in the agent's context and is read again each turn, so the same guidance
+// repeated in each reply of a phase grows the context for nothing
+const SECTIONS = ["openspec", "agreement", "assignment", "ownership", "subtasks", "teamImplementations", "fixedFindings", "fixRequests", "followUps", "hint", "exampleCall"] as const;
 const UNCHANGED = "(unchanged)";
 const UNCHANGED_NOTE = "Parts marked (unchanged), and the task's title, agents and description left out, are as in an earlier response of this session; swarm_context shows them again.";
 
@@ -127,6 +143,12 @@ export interface SwarmOptions {
    * on to the agent's next task: the runner starts that one in a fresh session (a clean context, its own cost).
    */
   sessionTask?: string;
+  /**
+   * Under a runner: park only after this many wait() timeouts in a row (default 2). A wait() turn is read from the prompt
+   * cache (cheap); a parked session's restart writes the cache again and spends a few turns, so a short wait is cheaper
+   * waited out, a long one parked.
+   */
+  parkAfterWaits?: number;
   /** How long a question to the operator blocks the asker (AGENT_NETWORK_OPERATOR_TIMEOUT_MIN); then it goes ahead with its own proposal. */
   operatorTimeoutMs?: number;
   /** The commands build() may start (default: BUILD_TOOLS plus AGENT_NETWORK_BUILD_TOOLS). */
@@ -158,6 +180,12 @@ export class Swarm {
   private readonly workdir: string;
   private readonly underRunner: boolean;
   private readonly sessionTask: string | undefined;
+  private readonly parkAfterWaits: number;
+  /** wait() timeouts in a row with nothing to do: parking pays off once the wait proves long. */
+  private idleWaits = 0;
+  /** The action wait() last told this agent to take: asked again with nothing changed, wait() waits instead of repeating it. */
+  private lastToldAction: string | null = null;
+  private lastToldAt = 0;
   /** Git context of the working folder, read once per session. */
   private workGit?: Promise<GitContext | null>;
   readonly defaultWaitMs: number;
@@ -170,7 +198,9 @@ export class Swarm {
     private readonly log: (m: string) => void = () => undefined,
     opts: SwarmOptions = {},
   ) {
-    this.defaultWaitMs = Math.min(Math.max(opts.defaultWaitMs ?? DEFAULT_WAIT_MS, 0), MAX_WAIT_MS);
+    // under a runner the longest wait by default: every wait() that returns is a model turn
+    this.defaultWaitMs = Math.min(Math.max(opts.defaultWaitMs ?? (opts.underRunner ? MAX_WAIT_MS : DEFAULT_WAIT_MS), 0), MAX_WAIT_MS);
+    this.parkAfterWaits = opts.parkAfterWaits ?? 2;
     this.freshPhases = opts.freshPhases ?? [];
     this.workdir = opts.workdir ?? process.cwd();
     this.underRunner = opts.underRunner ?? false;
@@ -375,7 +405,7 @@ export class Swarm {
       ...(files ? { requested: files, note: `Asked ${input.to} for permission to CHANGE these files (reading needs no permission). Continue with your own work; the answer arrives in pendingMessages. Do not edit them before the grant.` } : {}) } as SwarmContext;
   }
 
-  async propose(input: { summary?: string; assignments?: { agentId: string; responsibility: string; files?: string[]; tasks?: string[] }[]; decisions?: string[]; interfaces?: string[] }): Promise<SwarmContext> {
+  async propose(input: { summary?: string; assignments?: { agentId: string; responsibility: string; files?: string[]; tasks?: string[]; dependsOn?: string[] }[]; decisions?: string[]; interfaces?: string[] }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
     if (task.phase !== "DISCUSS") {
@@ -399,7 +429,15 @@ export class Swarm {
       decisions: input.decisions,
       interfaces: input.interfaces,
     });
-    return { ...this.reply(await this.contextNow()), ok: true, action: "AGREEMENT_PROPOSED", agreementVersion: res.agreement.version } as SwarmContext;
+    // the task gives an agent work (tests, code) and the agreement leaves it nothing: say so (a lead once took the
+    // reviewer's unit tests over and spawned a tester for them, a third of the task's cost)
+    const warnings = input.assignments
+      .filter((a) => a.files!.length === 0)
+      .flatMap((a) => {
+        const given = workGiven(task.description, a.agentId);
+        return given ? [`task.description gives ${a.agentId} work ("${given}") but its assignment has files: [] — propose again with its files, or keep it and say why in decisions.`] : [];
+      });
+    return { ...this.reply(await this.contextNow()), ok: true, action: "AGREEMENT_PROPOSED", agreementVersion: res.agreement.version, ...(warnings.length ? { warnings } : {}) } as SwarmContext;
   }
 
   async complete(input: { result?: string; filesChanged?: string[]; commits?: string[]; tasksDone?: string[]; status?: string; findings?: RawFinding[]; followUps?: FollowUpRequest[] }): Promise<SwarmContext> {
@@ -503,6 +541,9 @@ export class Swarm {
     await this.begin(true);
     const deadline = Date.now() + Math.min(Math.max(input.timeoutMs ?? this.defaultWaitMs, 0), MAX_WAIT_MS);
     let entry: string | undefined;
+    // an event that may change what the agent should do arrived while it waited (a part it depends on was reported, a
+    // message, a new agreement...): then the same action is news again, not a repeat
+    let woke = false;
     for (;;) {
       const current = await this.currentTask();
       if (current?.status === "BLOCKED" && current.handover) await this.service.escalateIfDue(current.id).catch(() => null); // nobody decided in time
@@ -511,14 +552,33 @@ export class Swarm {
       entry ??= signature;
       if ((ctx.pendingMessages as unknown[]).length > 0) return { ...this.reply(ctx), status: "MESSAGES" } as SwarmContext;
       if (ctx.nextAction === "done") return { ...this.reply(ctx), status: "DONE" } as SwarmContext;
-      if (ctx.nextAction !== "wait") return { ...this.reply(ctx), status: "ACTION_REQUIRED" } as SwarmContext;
+      if (ctx.nextAction !== "wait") {
+        // the agent was told this very action and calls wait() again with nothing changed: answering at once would make a
+        // loop of model turns (a reviewer once spun 60 times in a minute); it waits for a change like any wait() instead
+        const told = `${signature}|${ctx.nextAction}`; // not the hint: it carries the others' progress, which changes all the time
+        if (told !== this.lastToldAction || woke) {
+          this.lastToldAction = told;
+          this.lastToldAt = Date.now();
+          return { ...this.reply(ctx), status: "ACTION_REQUIRED" } as SwarmContext;
+        }
+      } else this.lastToldAction = null;
       if (signature !== entry) return { ...this.reply(ctx), status: "UPDATED" } as SwarmContext; // new task or phase change the agent should know about
       const left = deadline - Date.now();
-      if (left <= 0 || signal?.aborted) return this.compact(ctx, "TIMEOUT");
+      if (left <= 0 || signal?.aborted) {
+        this.idleWaits++;
+        // long enough: the next answer parks the session (the runner waits without a model)
+        if (this.underRunner && this.idleWaits >= this.parkAfterWaits && !signal?.aborted) {
+          const again = await this.contextNow();
+          if (again.parked) return { ...this.reply(again), status: "DONE" } as SwarmContext;
+        }
+        return this.compact(ctx, "TIMEOUT");
+      }
       // Consumes at most one event; the loop re-reads the (filesystem) state to decide whether it matters.
       // Waiting for the operator: look at the clock now and then, a question that timed out frees the agent.
       const operator = (ctx.waitingOn as string[] | undefined)?.includes(OPERATOR);
-      await this.service.waitForEvent({ timeoutMs: operator ? Math.min(left, OPERATOR_POLL_MS, this.operatorTimeoutMs) : left }, signal);
+      const got = await this.service.waitForEvent({ timeoutMs: operator ? Math.min(left, OPERATOR_POLL_MS, this.operatorTimeoutMs) : left }, signal);
+      // only what happened after the agent was told: older events it had not consumed yet are no news
+      if (got.status === "EVENT" && (WAKES.has(got.event.type) || got.event.type === "MESSAGE_CREATED") && Date.parse(got.event.createdAt) > this.lastToldAt) woke = true;
     }
   }
 
@@ -1153,7 +1213,8 @@ export class Swarm {
     }
     // under a runner, waiting for the other agents costs a model turn per wait(): park instead (not while a question of
     // its own runs against the clock, and not with unread messages, which a fresh session must still see)
-    if (this.underRunner && d.nextAction === "wait" && s.task.status === "ACTIVE" && !s.myQuestions.length && !s.unread.length && !s.openFromMe.length) {
+    if (d.nextAction !== "wait") this.idleWaits = 0;
+    if (this.underRunner && d.nextAction === "wait" && this.idleWaits >= this.parkAfterWaits && s.task.status === "ACTIVE" && !s.myQuestions.length && !s.unread.length && !s.openFromMe.length) {
       return {
         nextAction: "done",
         allowedActions: [],
@@ -1250,7 +1311,7 @@ export class Swarm {
               ? done(
                   "propose",
                   ["send_message", "wait", ...(s.spawnable ? ["spawn_agent"] : [])],
-                  `The operator asked to be grilled about the task before anything else: reach a shared understanding, nothing silently assumed. Read task.description and the code it touches first: facts from the code are yours to find, never a question. ` +
+                  `The operator asked to be grilled about the task before anything else: reach a shared understanding, nothing silently assumed. Read task.description and the code it touches first: facts from the code are yours to find, never a question. Ground the options in the project as it is: read its build file (pom.xml, build.gradle, package.json...) and the code first, and recommend what fits what is there (its frameworks, its storage, no new dependency); a new framework, database or dependency may be an option, never your recommendation unless the task asks for it. ` +
                     `Map the decisions as a tree (scope, behaviour, edge cases and errors, data and compatibility, what counts as done, what must not change). Work it in rounds: ask every question whose prerequisites are settled, now — a separate send_message({to: "operator", message, options: [{label, description}], recommended}) for EACH question (never several questions in one message: the operator answers each with its own options), numbered "Q1", "Q2"... in the message, labels of 1-5 words (details go in description), your recommended answer in recommended; never ask again what the operator already answered; a question that depends on an open one waits for the next round. Then wait() for the answers; each answer reshapes the tree, ask the next round. ` +
                     `When no branch is left: send your summary as one question — send_message({to: "operator", message: "How I understand it: <every decision, short>. Is that right?", options: [{label: "Yes, that's it"}, {label: "No, I will correct it"}], recommended: "Yes, that's it"}). propose() is accepted after the operator's yes; a "no" with a correction is the next round. Use the grilling skill if you have it.`,
                   ["operator"],
@@ -1262,7 +1323,7 @@ export class Swarm {
               ? done(
                   "propose",
                   ["send_message", "wait", ...(s.spawnable ? ["spawn_agent"] : [])],
-                  `First check the task (the operator asked for it): read task.description and the code it touches. Anything unclear that would change the scope, the behaviour or what counts as done: ask the operator — send_message({to: "operator", message, options: [{label, description}], recommended}), one question per message, the options you see; then wait() for the answers. ` +
+                  `First check the task (the operator asked for it): read task.description and the code it touches. Anything unclear that would change the scope, the behaviour or what counts as done: ask the operator — send_message({to: "operator", message, options: [{label, description}], recommended}), one question per message, the options you see; then wait() for the answers. Ground the options in the project as it is: read its build file (pom.xml, build.gradle, package.json...) and the code first, and recommend what fits what is there (its frameworks, its storage, no new dependency); a new framework, database or dependency may be an option, never your recommendation unless the task asks for it. ` +
                     `Everything clear: tell the operator in a few lines how you understood it — send_message({to: "operator", fyi: true, message: "How I understand it: <what changes, where, what stays as it is>. No questions."}), starting with "How I understand it:". propose() is accepted after a question or that note; other notes (an error, a status) do not count.`,
                   ["operator"],
                 )
@@ -1296,7 +1357,7 @@ export class Swarm {
           }
           const approved = s.plan?.approvedVersion ? `The operator approved plan v${s.plan.approvedVersion}: the agreement follows it (assignments, files, contracts). ` : "";
           return this.me === lead
-            ? done("propose", s.spawnable ? [...base, "spawn_agent"] : base, `${approved}${split}${grow}Agree with the others who changes which files (send_message), then propose(): one assignment per agent, every file with ONE owner; an agent with nothing of its own to change gets files: [] (review only). Write the exact contracts into interfaces (method, path, headers, body, status codes); an agent whose work calls another agent's new code (e.g. API tests) gets dependsOn: [that agent].`, [...task.agents])
+            ? done("propose", s.spawnable ? [...base, "spawn_agent"] : base, `${approved}${split}${grow}Split the work as task.description says who does what (an agent it gives tests gets its own test files: never take its part over and leave it files: []). Agree with the others who changes which files (send_message), then propose(): one assignment per agent, every file with ONE owner; an agent with nothing of its own to change gets files: [] (review only). Write the exact contracts into interfaces (method, path, headers, body, status codes); an agent whose work calls another agent's new code (e.g. API tests) gets dependsOn: [that agent].`, [...task.agents])
             : done("wait", base, `Tell ${lead} which ${spec ? "tasks of tasks.md and which " : ""}files you will take, or that you only review (files: []), then wait() for the proposal.`, [...task.agents]);
         }
         const pending = agreement.assignments.map((a) => a.agentId).filter((id) => !agreement.approvedBy.includes(id));
@@ -1313,6 +1374,11 @@ export class Swarm {
           return done("wait", ["send_message", "wait"], `${taken}Your part is ready. Waiting for: ${pending.join(", ")}.`, pending);
         }
         const myAssignment = agreement?.assignments.find((a) => a.agentId === this.me);
+        // parked on a dependency (its complete() was refused): it waits, whatever its assignment says it should do now
+        const waitingDeps = (myAssignment?.dependsOn ?? []).filter((d) => !impls.some((i) => i.agentId === d && i.status === "READY_FOR_SYNC"));
+        if (waitingDeps.length && s.dependencyParked) {
+          return done("wait", ["send_message", "subtasks", "wait"], `Your part waits for ${waitingDeps.join(", ")} (dependsOn): call wait(), you are woken when ${waitingDeps.length > 1 ? "they report" : "it reports"}.`, waitingDeps);
+        }
         if (task.syncRound === 0 && isReviewOnly(myAssignment, task)) {
           return done("implement", ["send_message", "complete", "wait"], 'Your assignment has no files: review only, you change nothing in this task. Mark your part ready now with complete({result: "review only: nothing to change"}); you review in SYNC.', pending);
         }
@@ -1385,7 +1451,7 @@ export class Swarm {
         return done(
           "sync",
           ["send_message", "complete", "wait"],
-          `${fresh}Review ${scope} ('teamImplementations': their changed files and commits) against the task and the agreement: judge the code, not what its authors say about it. Work done in another branch is in its commits (git show <hash>); if a change listed in filesChanged is not visible to you, ask its author with send_message to commit it and wait() for the reply instead of reporting it missing. Look at the whole change, not only the listed files: git diff --stat ${(task.baseCommit ?? task.git?.commit ?? "<the task's base>").slice(0, 7)} <their last commit> — a file outside the agreement or unrelated to the task (pulled in by a merge, say) is an ERROR.${task.syncRound > 1 ? " 'fixedFindings' lists what the fixes had to address: check each one." : ""}${spec ? ` Check each task in their tasksDone against its scenarios in ${spec}/specs/.` : ""} Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.`,
+          `${fresh}Review ${scope} ('teamImplementations': their changed files and commits) against the task and the agreement: judge the code, not what its authors say about it. Work done in another branch is in its commits (git show <hash>); if a change listed in filesChanged is not visible to you, ask its author with send_message to commit it and wait() for the reply instead of reporting it missing. Look at the whole change, not only the listed files: git diff --stat ${(task.baseCommit ?? task.git?.commit ?? "<the task's base>").slice(0, 7)} <their last commit> — a file outside the agreement or unrelated to the task (pulled in by a merge, say) is an ERROR. Then read the diff one file at a time (git diff <base> <commit> -- <file>), not all of it at once: every line you read stays in your context.${task.syncRound > 1 ? " 'fixedFindings' lists what the fixes had to address: check each one." : ""}${spec ? ` Check each task in their tasksDone against its scenarios in ${spec}/specs/.` : ""} Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.`,
           pending,
         );
       }

@@ -1025,6 +1025,16 @@ ${feedbackText(fb)}`;
     const answer = await this.messages.create({ taskId: task.id, from: OPERATOR, to: question.from, type: "INFORMATION", content: input.answer.trim(), replyTo: question.id });
     await this.messages.markRead(question);
     await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: question.from, sourceAgent: OPERATOR, payload: { messageId: answer.id, from: OPERATOR, type: answer.type, replyTo: question.id } });
+    // the lead keeps the agreement: a decision the operator gave another agent reaches it too (a reviewer once got
+    // "unchecked exception", the lead built a checked one, and the review sent it back a round)
+    const lead = this.phases.integrator(task);
+    if (question.from !== lead && task.agents.includes(lead) && task.status !== "COMPLETED" && task.status !== "CANCELLED") {
+      const copy = await this.messages.create({
+        taskId: task.id, from: OPERATOR, to: lead, type: "INFORMATION",
+        content: `[For your information, the lead: the operator answered ${question.from}'s question. No reply needed; make the agreement and the work follow it.]\nQuestion (${question.from}): ${question.content.slice(0, 600)}\nAnswer: ${input.answer.trim()}`,
+      });
+      await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: lead, sourceAgent: OPERATOR, payload: { messageId: copy.id, from: OPERATOR, type: copy.type } });
+    }
     return answer;
   }
 
@@ -1237,7 +1247,10 @@ ${feedbackText(fb)}`;
    * theirs (READY_FOR_SYNC in this round). The Swarm also checks that their commits are in the agent's branch.
    */
   private async checkDependencies(task: Task): Promise<void> {
-    const deps = (await this.agreements.find(task.id))?.assignments.find((a) => a.agentId === this.me)?.dependsOn ?? [];
+    const mine = (await this.agreements.find(task.id))?.assignments.find((a) => a.agentId === this.me);
+    // a review-only part (files: []) runs nothing against their code in IMPLEMENT: it reviews in SYNC, after them anyway
+    if (isReviewOnly(mine, task)) return;
+    const deps = mine?.dependsOn ?? [];
     if (!deps.length) return;
     const impls = await this.implementations.list(task.id);
     const waiting = deps.filter((d) => !impls.some((i) => i.agentId === d && i.status === "READY_FOR_SYNC"));

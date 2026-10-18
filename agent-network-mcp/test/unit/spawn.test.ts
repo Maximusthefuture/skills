@@ -182,3 +182,14 @@ describe("roles of spawned agents", () => {
     expect(await operator.roles()).toEqual([]);
   });
 });
+
+describe("roles without the tools they never use", () => {
+  it("Claude Code: out of --tools and --allowedTools, --agents goes with Agent; Qwen: into --exclude-tools", async () => {
+    const { withoutTools } = await import("../../src/ui/runners.js");
+    const claude = ["claude", "-p", "{prompt}", "--tools", "Read,Edit,Bash,Skill,Agent", "--agents", "{\"helper\":{}}", "--allowedTools", "mcp__agent-network", "Agent", "Read", "Skill", "--model", "{model}"];
+    expect(withoutTools(claude, ["Agent", "Skill"])).toEqual(["claude", "-p", "{prompt}", "--tools", "Read,Edit,Bash", "--allowedTools", "mcp__agent-network", "Read", "--model", "{model}"]);
+    expect(withoutTools(claude, [])).toBe(claude);
+    const qwen = ["qwen", "{prompt}", "--exclude-tools", "web_fetch", "web_search", "-m", "{model}"];
+    expect(withoutTools(qwen, ["Agent", "Skill"])).toEqual(["qwen", "{prompt}", "--exclude-tools", "web_fetch", "web_search", "agent", "skill", "-m", "{model}"]);
+  });
+});
