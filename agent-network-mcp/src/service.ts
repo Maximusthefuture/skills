@@ -896,13 +896,15 @@ ${feedbackText(fb)}`;
         assignments,
         decisions: input.decisions ?? [],
         interfaces: input.interfaces ?? [],
-        approvedBy: [],
+        // proposing it is approving it: no separate turn for the author to approve its own proposal
+        approvedBy: assignments.some((a) => a.agentId === this.me) ? [this.me] : [],
         createdAt: new Date().toISOString(),
         proposedBy: this.me,
         version: (previous?.version ?? 0) + 1,
       };
       await this.agreements.save(agreement);
       await this.emit({ type: "AGREEMENT_UPDATED", taskId: task.id, sourceAgent: this.me, payload: { proposedBy: this.me, version: agreement.version } });
+      if (agreement.approvedBy.includes(this.me)) await this.emit({ type: "AGREEMENT_APPROVED", taskId: task.id, sourceAgent: this.me, payload: { approvedBy: this.me, version: agreement.version, byProposing: true } });
       return { agreement };
     });
   }
@@ -978,6 +980,8 @@ ${feedbackText(fb)}`;
       if (input.version !== undefined && input.version !== agreement.version) {
         throw new AppError("INVALID_INPUT", `Agreement changed: you approved version ${input.version}, current is ${agreement.version}. Read it with agreement_get`);
       }
+      // the author approved it by proposing it: its own approve after that changes nothing
+      if (agreement.approvedBy.includes(this.me) && agreement.proposedBy === this.me) return { agreement };
       if (agreement.approvedBy.includes(this.me)) throw new AppError("ALREADY_COMPLETED", "You already approved this agreement");
       const updated: Agreement = { ...agreement, approvedBy: [...agreement.approvedBy, this.me] };
       await this.agreements.save(updated);
@@ -996,7 +1000,7 @@ ${feedbackText(fb)}`;
 
   // ---------------------------------------------------------------- messages
 
-  async sendMessage(input: { taskId: string; to: string; type: MessageType; content: string; replyTo?: string; files?: string[]; choices?: QuestionChoices }): Promise<Message> {
+  async sendMessage(input: { taskId: string; to: string; type: MessageType; content: string; replyTo?: string; files?: string[]; choices?: QuestionChoices; quiet?: boolean }): Promise<Message> {
     await this.requireMe();
     const task = await this.requireMember(input.taskId);
     if (task.status === "COMPLETED") throw new AppError("ALREADY_COMPLETED", "The task is completed");
@@ -1010,8 +1014,9 @@ ${feedbackText(fb)}`;
       assertMessageId(input.replyTo);
       await this.messages.get(task.id, input.replyTo);
     }
-    const message = await this.messages.create({ taskId: task.id, from: this.me, to, type: input.type, content: input.content, replyTo: input.replyTo, files: input.files, ...(choices ? { choices } : {}) });
-    await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: to, sourceAgent: this.me, payload: { messageId: message.id, from: this.me, type: message.type, ...(message.files ? { files: message.files } : {}) } });
+    const quiet = input.quiet && to !== OPERATOR && input.type === "INFORMATION";
+    const message = await this.messages.create({ taskId: task.id, from: this.me, to, type: input.type, content: input.content, replyTo: input.replyTo, files: input.files, ...(choices ? { choices } : {}), ...(quiet ? { quiet: true } : {}) });
+    await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: to, sourceAgent: this.me, payload: { messageId: message.id, from: this.me, type: message.type, ...(message.files ? { files: message.files } : {}), ...(quiet ? { quiet: true } : {}) } });
     return message;
   }
 
@@ -1035,10 +1040,10 @@ ${feedbackText(fb)}`;
     const lead = this.phases.integrator(task);
     if (question.from !== lead && task.agents.includes(lead) && task.status !== "COMPLETED" && task.status !== "CANCELLED") {
       const copy = await this.messages.create({
-        taskId: task.id, from: OPERATOR, to: lead, type: "INFORMATION",
+        taskId: task.id, from: OPERATOR, to: lead, type: "INFORMATION", quiet: true,
         content: `[For your information, the lead: the operator answered ${question.from}'s question. No reply needed; make the agreement and the work follow it.]\nQuestion (${question.from}): ${question.content.slice(0, 600)}\nAnswer: ${input.answer.trim()}`,
       });
-      await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: lead, sourceAgent: OPERATOR, payload: { messageId: copy.id, from: OPERATOR, type: copy.type } });
+      await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: lead, sourceAgent: OPERATOR, payload: { messageId: copy.id, from: OPERATOR, type: copy.type, quiet: true } });
     }
     return answer;
   }
@@ -1202,7 +1207,7 @@ ${feedbackText(fb)}`;
     return this.mutate(taskId, async (task) => {
       this.requirePhase(task, "IMPLEMENT");
       const existing = await this.implementations.find(task.id, this.me);
-      if (existing?.status === "IN_PROGRESS") return { implementation: existing, alreadyStarted: true };
+      if (existing?.status === "IN_PROGRESS" || existing?.auto) return { implementation: existing, alreadyStarted: true };
       if (existing?.status === "READY_FOR_SYNC") throw new AppError("ALREADY_COMPLETED", "Your implementation is already READY_FOR_SYNC");
       const implementation: Implementation = { taskId: task.id, agentId: this.me, status: "IN_PROGRESS", summary: "", filesChanged: [], commits: [] };
       await this.implementations.save(implementation);
@@ -1220,7 +1225,8 @@ ${feedbackText(fb)}`;
       await this.requireReviewDone(task);
       const existing = await this.implementations.find(task.id, this.me);
       if (!existing) throw new AppError("NOT_STARTED", "Call implementation_start before implementation_complete");
-      if (existing.status === "READY_FOR_SYNC") throw new AppError("ALREADY_COMPLETED", "Your implementation is already READY_FOR_SYNC");
+      // a review-only part the server marked ready: the agent's own report (a review note, say) replaces it
+      if (existing.status === "READY_FOR_SYNC" && !existing.auto) throw new AppError("ALREADY_COMPLETED", "Your implementation is already READY_FOR_SYNC");
       const open = (await this.subtasks.get(task.id, this.me)).items.filter((i) => i.status === "TODO" || i.status === "DOING");
       if (open.length) {
         throw new AppError(
@@ -1232,8 +1238,9 @@ ${feedbackText(fb)}`;
       await this.checkDependencies(task);
       const tasksDone = task.openspec ? await this.checkTasksDone(task, input.tasksDone) : undefined;
       const warnings = await this.checkOwnership(task.id, filesChanged);
+      const { auto: _auto, ...reported } = existing;
       const implementation: Implementation = {
-        ...existing,
+        ...reported,
         status: "READY_FOR_SYNC",
         summary: input.summary,
         filesChanged,
@@ -1742,6 +1749,15 @@ ${feedbackText(fb)}`;
       }
     }
     const saved = await this.tasks.save(next);
+    // an agent that only reviews has nothing to implement: its part is ready as IMPLEMENT starts, no turn of its own for it
+    if (t.from === "DISCUSS" && t.to === "IMPLEMENT") {
+      const agreement = await this.agreements.find(task.id);
+      for (const a of (agreement?.assignments ?? []).filter((x) => isReviewOnly(x, saved))) {
+        if (await this.implementations.find(task.id, a.agentId)) continue;
+        await this.implementations.save({ taskId: task.id, agentId: a.agentId, status: "READY_FOR_SYNC", summary: "review only: nothing to change", filesChanged: [], commits: [], completedAt: new Date().toISOString(), auto: true });
+        await this.emit({ type: "IMPLEMENTATION_COMPLETED", taskId: task.id, sourceAgent: a.agentId, payload: { agentId: a.agentId, filesChanged: [], commits: [], reviewOnly: true } });
+      }
+    }
     await this.emit({
       type: "PHASE_CHANGED",
       taskId: task.id,

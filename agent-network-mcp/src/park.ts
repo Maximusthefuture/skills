@@ -10,7 +10,8 @@ import type { Task } from "./types.js";
  * session. The mark is that state; the marker in hooks/<agent>.park.json says which state the session parked on.
  */
 export async function parkMark(fs: FileStore, task: Task, agentId: string): Promise<string> {
-  const toMe = (await new MessageStore(fs).list(task.id, { to: agentId })).at(-1)?.id ?? "";
+  // a quiet note (no answer needed) is no reason to start a session
+  const toMe = (await new MessageStore(fs).list(task.id, { to: agentId })).filter((m) => !m.quiet).at(-1)?.id ?? "";
   // only what can give this agent something to do: a block and its unblock, a build, an agent added... wake nobody
   const events = (await new EventStore(fs).list(task.id)).filter(({ event: e }) => e.sourceAgent !== agentId && (e.targetAgent == null || e.targetAgent === agentId) && WAKES.has(e.type));
   const state = [task.phase, task.syncRound, JSON.stringify(task.reviewScope ?? null), JSON.stringify(task.takeover ?? null)].join(":");

@@ -13,6 +13,7 @@ export interface NewMessage {
   replyTo?: string;
   files?: string[];
   choices?: QuestionChoices;
+  quiet?: boolean;
 }
 
 export interface MessageFilter {
@@ -40,6 +41,7 @@ export class MessageStore {
       ...(input.files?.length ? { files: input.files } : {}),
       ...(input.urgent ? { urgent: true as const } : {}),
       ...(input.choices ? { choices: input.choices } : {}),
+      ...(input.quiet ? { quiet: true as const } : {}),
       createdAt: new Date().toISOString(),
     }));
   }

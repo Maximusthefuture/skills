@@ -185,6 +185,8 @@ export class Swarm {
   private idleWaits = 0;
   /** The action wait() last told this agent to take: asked again with nothing changed, wait() waits instead of repeating it. */
   private lastToldAction: string | null = null;
+  /** Tasks whose author's stale approval (a bare complete() after IMPLEMENT started) was answered once already. */
+  private readonly staleApprovals = new Set<string>();
   private lastToldAt = 0;
   /** Git context of the working folder, read once per session. */
   private workGit?: Promise<GitContext | null>;
@@ -411,8 +413,10 @@ export class Swarm {
       }
       type = "FILE_REQUEST";
     }
-    const sent = await this.service.sendMessage({ taskId: task.id, to: input.to, type, content: input.message, ...(files ? { files } : {}) });
-    return { ...this.reply(await this.contextNow()), ok: true, action: type === "FILE_REQUEST" ? "FILES_REQUESTED" : "MESSAGE_SENT", messageId: sent.id,
+    // fyi to an agent: a note it needs not answer (an "understood", a heads-up): it reads it with its next reply, not woken for it
+    const quiet = !!input.fyi && type === "INFORMATION";
+    const sent = await this.service.sendMessage({ taskId: task.id, to: input.to, type, content: input.message, ...(files ? { files } : {}), ...(quiet ? { quiet } : {}) });
+    return { ...this.reply(await this.contextNow()), ok: true, action: type === "FILE_REQUEST" ? "FILES_REQUESTED" : quiet ? "INFO_SENT" : "MESSAGE_SENT", messageId: sent.id,
       ...(files ? { requested: files, note: `Asked ${input.to} for permission to CHANGE these files (reading needs no permission). Continue with your own work; the answer arrives in pendingMessages. Do not edit them before the grant.` } : {}) } as SwarmContext;
   }
 
@@ -468,6 +472,14 @@ export class Swarm {
       }
       case "IMPLEMENT": {
         const extra = given(["status", "findings", "followUps"]);
+        const started = await this.service.implementations.find(task.id, this.me);
+        // the author approving its own agreement after the others did: its proposal approved it already and IMPLEMENT
+        // started; a bare complete() is that stale approval, not a report: the fresh state, not an error
+        if (!given(["result", "filesChanged", "commits", "tasksDone", "status", "findings", "followUps"]).length && task.syncRound === 0 && !this.staleApprovals.has(task.id) &&
+          (await this.service.agreements.find(task.id))?.proposedBy === this.me && (!started || started.auto)) {
+          this.staleApprovals.add(task.id);
+          return { ...this.reply(await this.contextNow()), ok: true, action: "AGREEMENT_APPROVED", note: "Your proposal approved it; the others approved too and IMPLEMENT has started." } as SwarmContext;
+        }
         if (!input.result?.trim()) throw invalid("complete() during IMPLEMENT requires 'result': a short summary of what you implemented");
         const existing = await this.service.implementations.find(task.id, this.me);
         if (!existing) await this.service.startImplementation(task.id);
@@ -561,7 +573,8 @@ export class Swarm {
       const ctx = await this.contextNow();
       const signature = this.signature(ctx);
       entry ??= signature;
-      if ((ctx.pendingMessages as unknown[]).length > 0) return { ...this.reply(ctx), status: "MESSAGES" } as SwarmContext;
+      // a quiet note alone (no answer needed) wakes nobody: it comes with the next reply
+      if ((ctx.pendingMessages as { quiet?: boolean }[]).some((m) => !m.quiet)) return { ...this.reply(ctx), status: "MESSAGES" } as SwarmContext;
       if (ctx.nextAction === "done") return { ...this.reply(ctx), status: "DONE" } as SwarmContext;
       if (ctx.nextAction !== "wait") {
         // the agent was told this very action and calls wait() again with nothing changed: answering at once would make a
@@ -589,7 +602,8 @@ export class Swarm {
       const operator = (ctx.waitingOn as string[] | undefined)?.includes(OPERATOR);
       const got = await this.service.waitForEvent({ timeoutMs: operator ? Math.min(left, OPERATOR_POLL_MS, this.operatorTimeoutMs) : left }, signal);
       // only what happened after the agent was told: older events it had not consumed yet are no news
-      if (got.status === "EVENT" && (WAKES.has(got.event.type) || got.event.type === "MESSAGE_CREATED") && Date.parse(got.event.createdAt) > this.lastToldAt) woke = true;
+      const loud = got.status === "EVENT" && (WAKES.has(got.event.type) || (got.event.type === "MESSAGE_CREATED" && !(got.event.payload as { quiet?: boolean } | undefined)?.quiet));
+      if (got.status === "EVENT" && loud && Date.parse(got.event.createdAt) > this.lastToldAt) woke = true;
     }
   }
 
@@ -638,7 +652,8 @@ export class Swarm {
     return {
       status,
       task: t ? { id: t.id, phase: t.phase, status: t.status, syncRound: t.syncRound } : null,
-      pendingMessages: [],
+      // quiet notes did not end the wait but count as shown (read with the next call): they go with this short answer
+      pendingMessages: ctx.pendingMessages,
       waitingOn: ctx.waitingOn,
       allowedActions: ctx.allowedActions,
       nextAction: ctx.nextAction,
@@ -1089,7 +1104,7 @@ export class Swarm {
           const p = progress(listOf(id));
           return { id, ...(full || (a?.role && a.role !== id) ? { role: a?.role ?? null } : {}), status: a?.status ?? "NOT_REGISTERED", ...(p ? { subtasks: p } : {}) };
         }),
-      pendingMessages: unread.map((m) => ({ id: m.id, from: m.from, type: m.type, ...(m.files ? { files: m.files } : {}), content: m.content, ...(full ? { createdAt: m.createdAt } : {}) })),
+      pendingMessages: unread.map((m) => ({ id: m.id, from: m.from, type: m.type, ...(m.files ? { files: m.files } : {}), ...(m.quiet ? { quiet: true } : {}), content: m.content, ...(full ? { createdAt: m.createdAt } : {}) })),
       ...agreementView,
       ...(openToMe.length ? { openFileRequests: openToMe.map((m) => ({ messageId: m.id, from: m.from, files: m.files ?? [], reason: m.content })) } : {}),
       ...(snap.myQuestions.length ? { questionsToOperator: snap.myQuestions.map((m) => ({ messageId: m.id, question: m.content })) } : {}),
@@ -1231,7 +1246,7 @@ export class Swarm {
     // under a runner, waiting for the other agents costs a model turn per wait(): park instead (not while a question of
     // its own runs against the clock, and not with unread messages, which a fresh session must still see)
     if (d.nextAction !== "wait") this.idleWaits = 0;
-    if (this.underRunner && d.nextAction === "wait" && this.idleWaits >= this.parkAfterWaits && s.task.status === "ACTIVE" && !s.myQuestions.length && !s.unread.length && !s.openFromMe.length) {
+    if (this.underRunner && d.nextAction === "wait" && this.idleWaits >= this.parkAfterWaits && s.task.status === "ACTIVE" && !s.myQuestions.length && !s.unread.some((m) => !m.quiet) && !s.openFromMe.length) {
       return {
         nextAction: "done",
         allowedActions: [],
@@ -1388,7 +1403,8 @@ export class Swarm {
         const takeover = task.takeover?.round === task.syncRound ? task.takeover : undefined;
         if (mine?.status === "READY_FOR_SYNC") {
           const taken = takeover?.from.includes(this.me) ? `${lead} (the lead) took over your fix this round. ` : "";
-          return done("wait", ["send_message", "wait"], `${taken}Your part is ready. Waiting for: ${pending.join(", ")}.`, pending);
+          const auto = mine.auto ? "Your assignment has no files: review only, you change nothing in this task; your part was marked ready as IMPLEMENT started, you review the others in SYNC. " : "";
+          return done("wait", ["send_message", "wait"], `${taken}${auto || "Your part is ready. "}Waiting for: ${pending.join(", ")}.`, pending);
         }
         const myAssignment = agreement?.assignments.find((a) => a.agentId === this.me);
         // parked on a dependency (its complete() was refused): it waits, whatever its assignment says it should do now
@@ -1516,6 +1532,8 @@ export class Swarm {
     if (!agreement) {
       throw new AppError("AGREEMENT_NOT_READY", `No agreement has been proposed yet. ${task.agents[0]} (or any agent) should call propose().`);
     }
+    // the author's proposal counts as its approval: a complete() of its own after it changes nothing
+    if (agreement.approvedBy.includes(this.me) && agreement.proposedBy === this.me) return "AGREEMENT_APPROVED";
     if (agreement.approvedBy.includes(this.me)) throw new AppError("ALREADY_COMPLETED", "You already approved this agreement. Call wait().");
     if (this.shownAgreement.get(task.id) !== agreement.version) {
       this.shownAgreement.set(task.id, agreement.version);

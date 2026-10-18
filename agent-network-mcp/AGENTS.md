@@ -34,12 +34,13 @@ nextAction:
   on the page. Feedback arrives in `pendingMessages`: rework it with `plan({edits: [{find, replace}]})` (read the current
   page with `plan({read: true})` after the operator edited it; a big page by parts: `plan({read: true, around: "<a few words>"})`). `propose` is refused (`PLAN_NOT_APPROVED`) until approved.
 - `approve` (DISCUSS): read `agreement` (assignments and each agent's files); `complete()` approves it. If you disagree, `send_message` or `propose` a replacement.
+  Proposing an agreement approves it for its author: after `propose` the author only waits for the others.
 - `implement` (IMPLEMENT): work ONLY on your own assignment and change only your own files (`ownership.yourFiles`) or files granted to you. Reviewing the other agents' code is for SYNC, not now. Report blockers with `send_message`. When finished
   call `complete({result, filesChanged})`. Working on your own git branch (a separate worktree)? Commit your files first and pass
   `commits`: the reviewers and the lead see only committed work there (forgot the hash? the server records your branch head and
   says so in `warnings`). In a shared folder commits are optional; nothing checks them.
-  An assignment with `files: []` means you change nothing: you only review the others' work. Mark your part ready right away
-  with `complete({result: "review only: nothing to change"})` and do your review in SYNC.
+  An assignment with `files: []` means you change nothing: you only review the others' work. The server marks your part
+  ready as IMPLEMENT starts (no call needed); you `wait()` and do your review in SYNC.
   A part with several steps: plan it with `subtasks({add: ["<step>", ...]})`, then `subtasks({start: "s1"})` and `subtasks({done: ["s1"]})`
   as you go (drop a step that is not needed: `subtasks({drop: [{id, reason}]})`). `complete` is refused (`OPEN_SUBTASKS`) while steps are open.
   The list is kept by the server: after a restart `swarm_context` shows your `subtasks` and what is done; the others see your progress.
@@ -114,7 +115,9 @@ Rules:
   calls the agent-network tools, so not `general-purpose`, which would inherit them.
 - Not a question? A reply to the operator's message, an "understood", a status it asked for: `send_message({to:
   "operator", message, fyi: true})`. It is shown to the operator for information, needs no answer and does not hold
-  you. Send it only when the operator should know; a plain acknowledgement is usually not needed at all.
+  you. Send it only when the operator should know; a plain acknowledgement is usually not needed at all. To another agent
+  `fyi: true` marks a note it need not answer (a heads-up, an "understood"): it does not wake the agent, which reads it with
+  its next reply. Anything it must act on soon goes without `fyi`.
 - When the environment stops you (a command is refused, a process hangs, a service or port cannot be reached) and two
   attempts did not help, stop retrying and never work around a refusal: ask the operator with `send_message` (what is
   stuck, what you tried, what you need, the option you will take otherwise) and go on with what does not depend on it.

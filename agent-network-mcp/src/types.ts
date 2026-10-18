@@ -203,6 +203,8 @@ export interface Implementation {
   tasksDone?: string[];
   /** The commits it had reported when a review sent it back to fix: a fix that adds none delivered nothing new. */
   commitsBeforeFix?: string[];
+  /** Marked ready by the server as IMPLEMENT started (a review-only part); the agent's own report replaces it. */
+  auto?: true;
 }
 
 export type SyncStatus = "PASS" | "NEEDS_FIX";
@@ -260,6 +262,11 @@ export interface Message {
   urgent?: true;
   /** A question to the operator with choices (the form of Claude's AskUserQuestion): the page shows them as buttons. */
   choices?: QuestionChoices;
+  /**
+   * A note that needs no answer (fyi to an agent, a copy of the operator's answer to the lead): it wakes nobody — no
+   * wait() returns for it, a parked agent stays parked — and comes with the agent's next reply.
+   */
+  quiet?: true;
 }
 
 /** The operator's comment on a line of the diff: the lead fixes it (or has it fixed) or declines it with a reason. */

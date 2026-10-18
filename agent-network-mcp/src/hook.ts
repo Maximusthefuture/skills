@@ -183,7 +183,7 @@ export async function runHook(mode: HookMode, input: HookInput, opts: HookOption
     // the server told this session to end at a phase change: a fresh session takes the task over
     for (const t of mine) if ((await isHandedOver(fs, agentId, t)) || (await isParked(fs, agentId, t))) return null;
     const ids = new Set(mine.map((t) => t.id));
-    return { decision: "block", reason: stopReason(agentId, mine, unread.filter((m) => ids.has(m.taskId)), open.filter((m) => ids.has(m.taskId))) };
+    return { decision: "block", reason: stopReason(agentId, mine, unread.filter((m) => ids.has(m.taskId) && !m.quiet), open.filter((m) => ids.has(m.taskId))) };
   }
 
   const now = deps.now();

@@ -63,6 +63,12 @@ describe("parking a runner's waiting session", () => {
     await asking.reviewer.sendMessage({ to: "operator", message: "Should the review cover the migration?", options: [{ label: "Yes" }, { label: "No" }], recommended: "Yes" });
     expect((await asking.reviewer.context()).nextAction).toBe("wait");
 
+    // a note that needs no answer (fyi) neither keeps it from parking nor wakes it
+    const noted = await implementing({ underRunner: true });
+    await noted.backend.sendMessage({ to: "reviewer", message: "fyi: I renamed the DTO", fyi: true });
+    expect(await noted.reviewer.context()).toMatchObject({ nextAction: "done", parked: true });
+    expect(await isParked(noted.fs, "reviewer", await noted.operator.tasks.get(noted.task.id))).toBe(true);
+
     const told = await implementing({ underRunner: true });
     await told.backend.sendMessage({ to: "reviewer", message: "heads-up: the endpoint moved to /v2" });
     expect((await told.reviewer.context()).nextAction).not.toBe("done");
@@ -134,6 +140,21 @@ describe("no busy wait() loops", () => {
     await backend.complete({ result: "api", filesChanged: ["src/A.java"] });
     expect(await waiting).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "implement" });
     expect(Date.now() - t0).toBeLessThan(3000);
+  });
+
+  it("a quiet note does not end a wait(); it comes with the next reply that returns", async () => {
+    const { backend, reviewer } = await implementing({ underRunner: false });
+    const t0 = Date.now();
+    const waiting = reviewer.wait({ timeoutMs: 400 });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await backend.sendMessage({ to: "reviewer", message: "understood, thanks", fyi: true })).toMatchObject({ action: "INFO_SENT" });
+    // it did not end the wait; the short answer at the timeout carries it
+    expect(await waiting).toMatchObject({ status: "TIMEOUT", pendingMessages: [{ content: "understood, thanks", quiet: true }] });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(350);
+    await backend.sendMessage({ to: "reviewer", message: "the endpoint moved to /v2: review that one" });
+    const woke = await reviewer.wait({ timeoutMs: 1000 });
+    expect(woke.status).toBe("MESSAGES");
+    expect((woke.pendingMessages as { content: string; quiet?: boolean }[]).map((m) => [m.content, m.quiet ?? false])).toEqual([["the endpoint moved to /v2: review that one", false]]);
   });
 
   it("wait() called again after it said what to do, with nothing changed, waits instead of answering at once", async () => {

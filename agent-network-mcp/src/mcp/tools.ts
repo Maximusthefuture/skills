@@ -52,7 +52,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
       message: z.string().describe("Text of the message, e.g. 'I take the controller and service, you take validation. Agreed?'"),
       requestFiles: z.array(z.string()).optional().describe("Files OWNED by the recipient you need to CHANGE (never for reading); say why in message"),
       grantFiles: z.array(z.string()).optional().describe("Owner: let the recipient change these files of yours; message = conditions. Refuse with a plain message"),
-      fyi: z.boolean().optional().describe("To 'operator': true = a note, no answer expected (does not hold you); default = a question"),
+      fyi: z.boolean().optional().describe("true = a note that needs no answer: to 'operator' it holds nobody; to an agent it does not wake it (it reads the note with its next reply). Default: to 'operator' a question, to an agent a message that wakes it"),
       options: z
         .array(z.object({ label: z.string().describe("1-5 words, e.g. 'Service layer'"), description: z.string().optional().describe("What choosing it means, its trade-off") }))
         .optional()

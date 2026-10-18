@@ -58,11 +58,11 @@ describe("buildUiState", () => {
     expect(state.tasks[0]).toMatchObject({
       id: "task-001",
       phase: "DISCUSS",
-      waitingOn: ["backend", "reviewer"],
-      agreement: { summary: "plan", approvedBy: [] },
+      waitingOn: ["reviewer"],
+      agreement: { summary: "plan", approvedBy: ["backend"] },
       messages: [expect.objectContaining({ content: "hello", from: "backend" })],
     });
-    expect(state.tasks[0]!.events.map((e) => e.type)).toEqual(["TASK_CREATED", "MESSAGE_CREATED", "AGREEMENT_UPDATED"]);
+    expect(state.tasks[0]!.events.map((e) => e.type)).toEqual(["TASK_CREATED", "MESSAGE_CREATED", "AGREEMENT_UPDATED", "AGREEMENT_APPROVED"]);
   });
 
   it("marks an agent DEAD when its process is gone but it never went OFFLINE", async () => {

@@ -100,8 +100,8 @@ describe("agent-created task (no operator)", () => {
 
     await backend.call("propose", { summary: "fix + test", assignments: [{ agentId: "backend", responsibility: "fix", files: ["src/main/**"] }, { agentId: "reviewer", responsibility: "test", files: ["src/test/**"] }] });
     await reviewer.call("swarm_context");
-    await reviewer.call("complete");
-    expect(await backend.call("complete")).toMatchObject({ phaseChanged: { to: "IMPLEMENT" } });
+    expect(await reviewer.call("complete")).toMatchObject({ phaseChanged: { to: "IMPLEMENT" } }); // proposing approved it for backend
+    expect(await backend.call("complete")).toMatchObject({ action: "AGREEMENT_APPROVED", task: { phase: "IMPLEMENT" } }); // a stale approval: no error
     expect(await backend.callError("create_task", { title: "t", description: "x".repeat(60), agents: ["reviewer"] })).toMatchObject({ code: "HAS_ACTIVE_TASK" });
   });
 });
@@ -218,13 +218,13 @@ describe("full cycle through the five tools (two processes)", () => {
     await reviewer.call("send_message", { to: "backend", message: "Agreed." });
 
     const proposed = await backend.call("propose", { summary: "Registration endpoint", assignments, decisions: ["IDs are UUID"], interfaces: ["POST /users -> 201 {id: uuid}"] });
-    expect(proposed).toMatchObject({ action: "AGREEMENT_PROPOSED", nextAction: "approve" });
+    expect(proposed).toMatchObject({ action: "AGREEMENT_PROPOSED", nextAction: "wait", agreement: { approvedBy: ["backend"] } }); // proposing approves it
 
-    // reviewer wakes with the agreement, approves; backend approves -> IMPLEMENT automatically
+    // reviewer wakes with the agreement and approves -> IMPLEMENT automatically
     const reviewing = await reviewer.call("wait", { timeoutMs: 20_000 });
-    expect(reviewing.agreement).toMatchObject({ summary: "Registration endpoint", approvedBy: [] });
-    expect(await reviewer.call("complete")).toMatchObject({ action: "AGREEMENT_APPROVED", nextAction: "wait" });
-    expect(await backend.call("complete")).toMatchObject({ phaseChanged: { from: "DISCUSS", to: "IMPLEMENT" }, nextAction: "implement", assignment: { responsibility: assignments[0]!.responsibility } });
+    expect(reviewing.agreement).toMatchObject({ summary: "Registration endpoint", approvedBy: ["backend"] });
+    expect(await reviewer.call("complete")).toMatchObject({ action: "AGREEMENT_APPROVED", phaseChanged: { from: "DISCUSS", to: "IMPLEMENT" } });
+    expect(await backend.call("swarm_context")).toMatchObject({ nextAction: "implement", assignment: { responsibility: assignments[0]!.responsibility } });
 
     // IMPLEMENT
     expect(await backend.call("complete", { result: "Controller and service", filesChanged: ["src/UserController.java", "src/UserService.java"], commits: ["abc123"] })).toMatchObject({ nextAction: "wait", waitingOn: ["reviewer"] });
@@ -311,7 +311,7 @@ describe("crash recovery through swarm_context", () => {
     await backend.call("send_message", { to: "reviewer", message: "survive me" });
     await backend.call("propose", { summary: "s", assignments });
     await reviewer.call("swarm_context");
-    await reviewer.call("complete"); // approved by reviewer only; phase still DISCUSS
+    // approved by backend only (its proposal); phase still DISCUSS
     await backend.call("send_message", { to: "reviewer", message: "unread when the crash happens" });
 
     const normalize = (c: any) => {
@@ -320,7 +320,7 @@ describe("crash recovery through swarm_context", () => {
     };
     const beforeBackend = normalize(await backend.call("swarm_context"));
     const beforeReviewer = normalize(await reviewer.call("swarm_context"));
-    expect(beforeReviewer.pendingMessages).toEqual([expect.objectContaining({ content: "unread when the crash happens" })]);
+    expect(beforeReviewer.pendingMessages).toEqual([expect.objectContaining({ content: "survive me" }), expect.objectContaining({ content: "unread when the crash happens" })]);
 
     await backend.kill();
     await reviewer.kill();
@@ -330,8 +330,8 @@ describe("crash recovery through swarm_context", () => {
     expect(normalize(await backend.call("swarm_context"))).toEqual(beforeBackend);
     expect(normalize(await reviewer.call("swarm_context"))).toEqual(beforeReviewer); // unread message survived too
 
-    // protocol continues across the restart
-    expect(await backend.call("complete")).toMatchObject({ phaseChanged: { to: "IMPLEMENT" } });
+    // protocol continues across the restart: the reviewer approves (it saw the agreement in swarm_context)
+    expect(await reviewer.call("complete")).toMatchObject({ phaseChanged: { to: "IMPLEMENT" } });
     const waiting = reviewer.call("wait", { timeoutMs: 20_000 });
     await new Promise((r) => setTimeout(r, 300));
     await backend.call("complete", { result: "api" });
@@ -392,13 +392,13 @@ describe("three agents in three git worktrees", () => {
       ],
       interfaces: ["GET /users -> 200 [{id, name}]"],
     });
-    expect(proposed).toMatchObject({ action: "AGREEMENT_PROPOSED", nextAction: "approve" });
+    expect(proposed).toMatchObject({ action: "AGREEMENT_PROPOSED", nextAction: "wait" }); // its proposal is its approval
     for (const a of [frontend, qa]) {
       expect(await a.call("wait", { timeoutMs: 20_000 })).toMatchObject({ status: "MESSAGES" });
       await a.call("swarm_context"); // shows the agreement
       expect(await a.call("complete")).toMatchObject({ action: "AGREEMENT_APPROVED" });
     }
-    expect(await backend.call("complete")).toMatchObject({ phaseChanged: { to: "IMPLEMENT" }, nextAction: "implement" });
+    expect(await backend.call("swarm_context")).toMatchObject({ task: { phase: "IMPLEMENT" }, nextAction: "implement" });
 
     // IMPLEMENT in parallel, each in its own worktree; commits are optional and recorded as given (the lead merges from them)
     const shaB = ws.commit("backend", "src/UserService.ts", "export const users = () => [{ id: 1, name: 'a' }];\n");

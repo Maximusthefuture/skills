@@ -912,7 +912,7 @@ function renderStats(t){
   if(st.usage)item("токены",fmtTok(st.usage.total)+" (вход "+fmtTok(st.usage.input)+", выход "+fmtTok(st.usage.output)+(st.usage.cacheRead?", из кэша "+fmtTok(st.usage.cacheRead):"")+")");
   else if(st.countedIn.length)item("токены","учтены в "+st.countedIn.join(", ")+" (та же сессия)");
   else item("токены",st.sessions?"нет данных (CLI без JSON-вывода)":"нет данных (не через runner)");
-  if(st.costUsd!==null)item("стоимость",fmtUsd(st.costUsd,st.costEstimated)+(t.maxCostUsd?" из $"+t.maxCostUsd:"")+(st.costEstimated?" (по ценам из runners.json)":""));
+  if(st.costUsd!==null)item("стоимость",fmtUsd(st.costUsd,st.costEstimated)+(t.maxCostUsd?" из $"+t.maxCostUsd:"")+(st.costEstimated?" (по ценам из runners.json)":"")+(st.jobsCostUsd||st.criticCostUsd?" — в т.ч. "+[st.jobsCostUsd?"поручения "+fmtUsd(st.jobsCostUsd):"",st.criticCostUsd?"критик плана "+fmtUsd(st.criticCostUsd):""].filter(Boolean).join(", "):""));
   else if(t.maxCostUsd)item("лимит","$"+t.maxCostUsd);
   if(st.unpricedModels&&st.unpricedModels.length)item("нет цены для",st.unpricedModels.join(", ")+" — добавьте в \"prices\" в runners.json");
   if(st.sessions)item("сессий",String(st.sessions)+(st.sessionsWithoutUsage&&st.usage?" ("+st.sessionsWithoutUsage+" без токенов)":""));

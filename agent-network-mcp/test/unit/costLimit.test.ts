@@ -32,6 +32,43 @@ afterEach(async () => {
   ui = undefined;
 });
 
+describe("what a task costs beyond its own sessions", () => {
+  it("its delegated jobs and the plan critic count for it: in the limit, and a job stops with its lead's task", async () => {
+    const { networkDir, operator, fs, session } = await setup();
+    const { writeSpawnFile } = await import("../../src/spawner.js");
+    const { Swarm } = await import("../../src/mcp/swarm.js");
+    const { collectStats } = await import("../../src/stats.js");
+    await writeSpawnFile(networkDir, { templates: [{ name: "tester", description: "tests", config: { id: "tester", command: ["x", "{prompt}"] } }], maxPerTask: 2 });
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], maxCostUsd: 1 });
+    const swarm = async (id: string) => new Swarm(await NetworkService.create(networkDir, { id, type: "test" }));
+    const backend = await swarm("backend");
+    const reviewer = await swarm("reviewer");
+    await backend.propose({ summary: "s", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/**"] }, { agentId: "reviewer", responsibility: "review", files: [] }] });
+    await reviewer.context();
+    await reviewer.complete({});
+    const sent = await backend.delegate({ template: "tester", job: "Benchmark the order query with 10k rows" });
+
+    // a critique of the plan, as the critic writes it
+    await fs.writeJson(["tasks", task.id, "plan", "state.json"], { versions: [{ n: 1, at: "" }], feedback: [] });
+    await fs.writeJson(["tasks", task.id, "plan", "critique-v1.json"], { version: 1, risks: [], costUsd: 0.1 });
+    await operator.tasks.save({ ...(await operator.tasks.get(task.id)), planReview: true });
+
+    await session(task.id, "backend", { costUsd: 0.4 });
+    await session(sent.job as string, "tester-job1", { costUsd: 0.3 });
+    expect((await taskSpent(fs, task.id, undefined)).usd).toBeCloseTo(0.8);
+    const stats = (await collectStats(fs, await operator.tasks.list())).get(task.id)!;
+    expect(stats).toMatchObject({ jobsCostUsd: 0.3, criticCostUsd: 0.1 });
+    expect(stats.costUsd).toBeCloseTo(0.8);
+
+    // the job's next session passes the lead's limit: both stop for the operator
+    const guard = costGuard({ networkDir });
+    await session(sent.job as string, "tester-job1", { costUsd: 0.25 });
+    await guard("tester-job1", sent.job as string);
+    expect((await operator.tasks.get(task.id)).status).toBe("BLOCKED");
+    expect((await operator.tasks.get(sent.job as string)).status).toBe("BLOCKED");
+  });
+});
+
 describe("task cost limit", () => {
   it("is checked on creation and copied as given", async () => {
     const { operator } = await setup();

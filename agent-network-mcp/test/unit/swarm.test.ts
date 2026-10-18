@@ -95,13 +95,14 @@ describe("swarm_context", () => {
     await task();
     await s.backend.context();
     const proposed = await s.backend.propose({ summary: "split", assignments, decisions: ["UUID ids"], interfaces: ["POST /users"] });
-    expect(proposed).toMatchObject({ ok: true, action: "AGREEMENT_PROPOSED", nextAction: "approve", allowedActions: ["send_message", "propose", "complete", "wait"] });
-    expect(proposed.agreement).toMatchObject({ summary: "split", decisions: ["UUID ids"], approvedBy: [] });
+    // proposing it approves it: the author waits for the others, no turn of its own to approve
+    expect(proposed).toMatchObject({ ok: true, action: "AGREEMENT_PROPOSED", nextAction: "wait", allowedActions: ["send_message", "propose", "wait"], waitingOn: ["reviewer"] });
+    expect(proposed.agreement).toMatchObject({ summary: "split", decisions: ["UUID ids"], approvedBy: ["backend"] });
 
     await s.reviewer.context();
-    expect(await s.reviewer.complete({})).toMatchObject({ action: "AGREEMENT_APPROVED", nextAction: "wait", waitingOn: ["backend"] });
-    const toImpl = await s.backend.complete({});
-    expect(toImpl).toMatchObject({ task: { phase: "IMPLEMENT" }, phaseChanged: { from: "DISCUSS", to: "IMPLEMENT" }, nextAction: "implement", assignment: { responsibility: "REST API" } });
+    expect(await s.reviewer.complete({})).toMatchObject({ action: "AGREEMENT_APPROVED", phaseChanged: { from: "DISCUSS", to: "IMPLEMENT" } });
+    const toImpl = await s.backend.complete({}); // a stale approval out of habit: the fresh state, no error
+    expect(toImpl).toMatchObject({ action: "AGREEMENT_APPROVED", task: { phase: "IMPLEMENT" }, nextAction: "implement", assignment: { responsibility: "REST API" } });
 
     const impl = await s.backend.complete({ result: "api", filesChanged: ["src/Api.java"], commits: ["abc123"] });
     expect(impl).toMatchObject({ action: "IMPLEMENTATION_COMPLETED", nextAction: "wait", implementation: { status: "READY_FOR_SYNC" }, waitingOn: ["reviewer"] });
@@ -190,8 +191,8 @@ describe("replies repeat only what changed", () => {
     expect((await s.reviewer.context()).agreement).toMatchObject({ summary: "split v2" });
 
     await s.reviewer.complete({});
-    const impl = await s.backend.complete({}); // the phase moves on: the IMPLEMENT view is new to the agent
-    expect(impl).toMatchObject({ phaseChanged: { to: "IMPLEMENT" }, assignment: { responsibility: "REST API" }, ownership: { yourFiles: ["src/main/**"] } });
+    const impl = await s.backend.context(); // the phase moved on: the IMPLEMENT view is new to the agent
+    expect(impl).toMatchObject({ task: { phase: "IMPLEMENT" }, assignment: { responsibility: "REST API" }, ownership: { yourFiles: ["src/main/**"] } });
     const again = await s.backend.sendMessage({ to: "reviewer", message: "starting" });
     expect([again.assignment, again.ownership, again.agreement]).toEqual(["(unchanged)", "(unchanged)", "(unchanged)"]);
   });
@@ -342,8 +343,7 @@ describe("tool misuse (state is never corrupted, errors are actionable)", () => 
       action: "AGREEMENT_APPROVED",
       warnings: ["ignored fields not used in this phase: result"],
     });
-    const toImpl = await s.backend.complete({});
-    expect(toImpl).toMatchObject({ phaseChanged: { to: "IMPLEMENT" } });
+    expect((await s.backend.context()).task).toMatchObject({ phase: "IMPLEMENT" });
 
     // IMPLEMENT: 'status'/'findings'/'followUps' belong to later phases
     expect(await s.backend.complete({ result: "api", status: "PASS" })).toMatchObject({
@@ -399,10 +399,10 @@ describe("tool misuse (state is never corrupted, errors are actionable)", () => 
     await s.backend.propose({ summary: "v1", assignments });
     const err = await failure(s.reviewer, s.reviewer.complete({}));
     expect(err).toMatchObject({ error: "AGREEMENT_NOT_REVIEWED", nextAction: "approve", agreement: { summary: "v1", version: 1 } });
-    expect((await s.reviewer.context()).agreement).toMatchObject({ approvedBy: [] });
+    expect((await s.reviewer.context()).agreement).toMatchObject({ approvedBy: ["backend"] }); // its author's only
     // seeing it (via the error body or swarm_context) is enough
     await s.reviewer.complete({});
-    expect((await s.reviewer.context()).agreement).toMatchObject({ approvedBy: ["reviewer"] });
+    expect((await s.reviewer.context()).task).toMatchObject({ phase: "IMPLEMENT" });
   });
 
   it("a replaced agreement has to be reviewed again", async () => {

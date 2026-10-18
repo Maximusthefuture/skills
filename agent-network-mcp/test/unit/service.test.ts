@@ -83,12 +83,13 @@ describe("protocol happy path and fix loop", () => {
   });
 
   it("concurrent approvals from two processes both land and trigger the transition", async () => {
-    const { dir, s } = await network();
-    const task = await s.backend.createTask({ title: "t", description: "d", agents: ["backend", "reviewer"] });
-    await s.backend.proposeAgreement({ taskId: task.id, summary: "s", assignments: [{ agentId: "backend", responsibility: "a" }, { agentId: "reviewer", responsibility: "b" }] });
+    const { dir, s } = await network(["backend", "reviewer", "tester"]);
+    const task = await s.backend.createTask({ title: "t", description: "d", agents: ["backend", "reviewer", "tester"] });
+    // the author approves by proposing; the other two approve at the same time
+    await s.backend.proposeAgreement({ taskId: task.id, summary: "s", assignments: [{ agentId: "backend", responsibility: "a" }, { agentId: "reviewer", responsibility: "b" }, { agentId: "tester", responsibility: "c" }] });
     const other = await NetworkService.create(dir, { id: "reviewer", type: "test" });
-    await Promise.all([s.backend.approveAgreement({ taskId: task.id }), other.approveAgreement({ taskId: task.id })]);
-    expect((await s.backend.getAgreement(task.id)).approvedBy.sort()).toEqual(["backend", "reviewer"]);
+    await Promise.all([s.tester!.approveAgreement({ taskId: task.id }), other.approveAgreement({ taskId: task.id })]);
+    expect((await s.backend.getAgreement(task.id)).approvedBy.sort()).toEqual(["backend", "reviewer", "tester"]);
     expect((await s.backend.getPhase(task.id)).phase).toBe("IMPLEMENT");
   });
 
@@ -99,7 +100,7 @@ describe("protocol happy path and fix loop", () => {
     await s.backend.proposeAgreement({ taskId: task.id, summary: "v1", assignments });
     await s.backend.approveAgreement({ taskId: task.id });
     const v2 = await s.reviewer.proposeAgreement({ taskId: task.id, summary: "v2", assignments });
-    expect(v2.agreement).toMatchObject({ version: 2, approvedBy: [], proposedBy: "reviewer" });
+    expect(v2.agreement).toMatchObject({ version: 2, approvedBy: ["reviewer"], proposedBy: "reviewer" }); // backend's approval is gone, the author's proposal approves it
     await expect(s.backend.approveAgreement({ taskId: task.id, version: 1 })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 });
@@ -165,8 +166,8 @@ describe("protocol errors", () => {
     const { s } = await network();
     const t = await s.backend.createTask({ title: "t", description: "d", agents: ["backend", "reviewer"] });
     await s.backend.proposeAgreement({ taskId: t.id, summary: "s", assignments: [{ agentId: "backend", responsibility: "a" }, { agentId: "reviewer", responsibility: "b" }] });
-    await s.backend.approveAgreement({ taskId: t.id });
-    await expect(s.backend.approveAgreement({ taskId: t.id })).rejects.toMatchObject({ code: "ALREADY_COMPLETED" });
+    // the author approved it by proposing: its own approve changes nothing, it is no error
+    expect((await s.backend.approveAgreement({ taskId: t.id })).agreement.approvedBy).toEqual(["backend"]);
 
     const { s: s2 } = await network();
     const task = await toSync(s2);

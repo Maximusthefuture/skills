@@ -237,7 +237,7 @@ describe("review-only agents (files: [])", () => {
     await s.backend.complete({});
 
     const review = await s.reviewer.context();
-    expect(review).toMatchObject({ nextAction: "implement", ownership: { yourFiles: [], reviewOnly: true } });
+    expect(review).toMatchObject({ nextAction: "wait", ownership: { yourFiles: [], reviewOnly: true } }); // marked ready by the server
     expect(review.hint).toContain("Your assignment has no files");
     expect(review.ownership).toEqual({ yourFiles: [], reviewOnly: true, othersFiles: [{ agentId: "backend", files: ["README.md"] }] });
     expect((await s.reviewer.complete({ result: "review only: nothing to change" })).action).toBe("IMPLEMENTATION_COMPLETED");

@@ -310,6 +310,7 @@ describe("an answer to another agent's question", () => {
     expect(toLead).toHaveLength(1);
     expect(toLead[0]!.content).toContain("the operator answered reviewer's question");
     expect(toLead[0]!.content).toContain('Answer: Chosen: "Unchecked"');
+    expect(toLead[0]!.quiet).toBe(true); // a copy for its information: it does not wake the lead
     // the lead's own question: no copy to itself
     const own = await backend.sendMessage({ to: "operator", message: "Partial refunds?", options: [{ label: "Yes" }, { label: "No" }], recommended: "Yes" });
     await operator.answerQuestion({ taskId: task.id, messageId: own.messageId as string, answer: 'Chosen: "Yes"' });

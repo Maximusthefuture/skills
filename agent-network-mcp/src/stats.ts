@@ -1,6 +1,7 @@
 import type { TokenUsage } from "./sessionOutput.js";
 import type { FileStore } from "./storage/fileStore.js";
 import { SessionStore, type SessionRecord } from "./stores/sessionStore.js";
+import { readPlanState } from "./plan.js";
 import type { Phase, Task } from "./types.js";
 
 /** The operator's price of a model in USD per 1M tokens; cacheRead / cacheWrite default to input. */
@@ -58,6 +59,9 @@ export interface TaskStats {
   agents: { agentId: string; models: string[]; sessions: number; ms: number; usage: TokenUsage | null; costUsd: number | null; costEstimated: boolean }[];
   /** Tasks whose sessions also finished this one: its tokens are counted there. */
   countedIn: string[];
+  /** Part of costUsd: the jobs the lead delegated (their own tasks) and the plan critic's runs. */
+  jobsCostUsd?: number;
+  criticCostUsd?: number;
 }
 
 const ZERO: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
@@ -122,6 +126,31 @@ export function taskStats(task: Task, sessions: SessionRecord[], countedIn: stri
   };
 }
 
+/**
+ * What a task spent outside its own sessions: the jobs its lead delegated (tasks of their own, whose sessions are not the
+ * task's) and the plan critic's runs. Both are part of the task's price and of its cost limit.
+ */
+export async function attachedCost(fs: FileStore, task: Task, tasks: Task[], prices?: Prices): Promise<{ jobsUsd: number; criticUsd: number; unknown: number }> {
+  let jobsUsd = 0;
+  let unknown = 0;
+  const store = new SessionStore(fs);
+  for (const job of tasks.filter((t) => t.jobOf?.taskId === task.id)) {
+    for (const s of await store.list(job.id)) {
+      const c = sessionCost(s, prices);
+      if (c.usd === undefined) unknown++;
+      else jobsUsd += c.usd;
+    }
+  }
+  let criticUsd = 0;
+  if (task.planReview) {
+    for (const v of (await readPlanState(fs, task.id)).versions) {
+      const c = await fs.readJson<{ costUsd?: number }>(["tasks", task.id, "plan", `critique-v${v.n}.json`]);
+      criticUsd += c?.costUsd ?? 0;
+    }
+  }
+  return { jobsUsd, criticUsd, unknown };
+}
+
 /** Statistics of every task of the network (null for tasks without phaseHistory). */
 export async function collectStats(fs: FileStore, tasks: Task[], now = new Date(), prices?: Prices): Promise<Map<string, TaskStats | null>> {
   const store = new SessionStore(fs);
@@ -130,5 +159,16 @@ export async function collectStats(fs: FileStore, tasks: Task[], now = new Date(
   for (const [taskId, list] of sessions) {
     for (const s of list) for (const other of s.alsoFinished ?? []) countedIn.set(other, [...new Set([...(countedIn.get(other) ?? []), taskId])]);
   }
-  return new Map(tasks.map((t) => [t.id, taskStats(t, sessions.get(t.id) ?? [], countedIn.get(t.id) ?? [], now, prices)]));
+  return new Map(
+    await Promise.all(
+      tasks.map(async (t) => {
+        const stats = taskStats(t, sessions.get(t.id) ?? [], countedIn.get(t.id) ?? [], now, prices);
+        if (!stats) return [t.id, null] as const;
+        // the delegated jobs and the plan critic are part of the task's price
+        const { jobsUsd, criticUsd } = await attachedCost(fs, t, tasks, prices);
+        if (!jobsUsd && !criticUsd) return [t.id, stats] as const;
+        return [t.id, { ...stats, costUsd: (stats.costUsd ?? 0) + jobsUsd + criticUsd, ...(jobsUsd ? { jobsCostUsd: jobsUsd } : {}), ...(criticUsd ? { criticCostUsd: criticUsd } : {}) }] as const;
+      }),
+    ),
+  );
 }
