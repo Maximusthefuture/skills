@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
 
 export interface EventHubOptions {
-  /** Safety net in case the OS drops fs.watch notifications. */
+  /** Safety net in case the OS drops fs.watch notifications: every 1 s without fs.watch, every 10 s with it. */
   fallbackPollMs?: number;
   debounceMs?: number;
   log?: (msg: string) => void;
@@ -111,9 +111,12 @@ export class EventHub {
   }
 
   private ensureWatching(): void {
-    if (!this.poll) {
-      this.poll = setInterval(() => this.notify(), this.opts.fallbackPollMs ?? 1000);
-    }
+    this.startWatcher();
+    // every waiting process re-reads the network on each tick: with fs.watch working the tick is only a safety net
+    if (!this.poll) this.poll = setInterval(() => this.notify(), this.opts.fallbackPollMs ?? (this.watcher ? 10_000 : 1000));
+  }
+
+  private startWatcher(): void {
     if (this.watcher) return;
     try {
       const watcher = watch(this.rootDir, { recursive: true }, (_type, filename) => {
@@ -124,6 +127,11 @@ export class EventHub {
         this.opts.log?.(`fs.watch error, falling back to polling: ${err.message}`);
         this.watcher?.close();
         this.watcher = null;
+        // polling only now: back to the short tick
+        if (this.poll && this.opts.fallbackPollMs === undefined) {
+          clearInterval(this.poll);
+          this.poll = setInterval(() => this.notify(), 1000);
+        }
       });
       this.watcher = watcher;
     } catch (e) {

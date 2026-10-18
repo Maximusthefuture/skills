@@ -1559,7 +1559,8 @@ function resetProject(){
   ["f-agent","f-task","f-model","f-status","e-task","e-type"].forEach(id=>{$(id).dataset.sig="";$(id).value=""});expandedRuns.clear();
   $("newtask").hidden=true;$("formnote").textContent="";$("openspec").replaceChildren(new Option("— без OpenSpec —",""),new Option("+ написать новый change…","__new__"));$("proposes-row").hidden=true;
 }
-showTab();tick();setInterval(tick,2000);
+// a hidden tab does not refresh (each refresh reads the whole network); it catches up the moment it is shown again
+showTab();tick();setInterval(()=>{if(!document.hidden)tick()},2000);document.addEventListener("visibilitychange",()=>{if(!document.hidden)tick()});
 </script>
 </body>
 </html>`;

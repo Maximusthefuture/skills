@@ -84,6 +84,38 @@ describe("ownership is checked on what the branch changed", () => {
   });
 });
 
+describe("another agent's reported work in IMPLEMENT", () => {
+  it("is named with its commits to merge: they never reach this branch by themselves; waiting is no answer", async () => {
+    const r = await repo();
+    const networkDir = join(r.main, ".agent-network");
+    const operator = await NetworkService.create(networkDir, { id: "operator", type: "cli" });
+    const swarm = async (id: string, workdir: string) => new Swarm(await NetworkService.create(networkDir, { id, type: "test" }, { hub: new EventHub(networkDir, { fallbackPollMs: 50 }) }), undefined, { workdir });
+    const backendDir = r.tree("backend");
+    const testerDir = r.tree("tester");
+    const backend = await swarm("backend", backendDir);
+    const tester = await swarm("tester", testerDir);
+    await operator.createTaskAsOperator({ title: "Api", description: "an endpoint and its tests", agents: ["backend", "tester"] });
+    await backend.propose({ summary: "api", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/**"] }, { agentId: "tester", responsibility: "tests", files: ["test/**"] }] });
+    await tester.context();
+    await tester.complete({});
+    expect(String((await tester.context()).hint)).not.toContain("reported its part");
+
+    const api = r.commit(backendDir, "src/Api.java", "class Api {}");
+    await backend.complete({ result: "api", filesChanged: ["src/Api.java"], commits: [api] });
+    const told = await tester.context();
+    expect(told.hint).toContain(`backend reported its part (commits ${api.slice(0, 7)}): their commits never reach your branch by themselves`);
+    expect(told.hint).toContain(`git merge ${api.slice(0, 7)}`);
+    // waiting for "their push" anyway: the short answer at the timeout says to act, not to wait again
+    await tester.wait({ timeoutMs: 1000 });
+    const again = await tester.wait({ timeoutMs: 100 });
+    expect(again).toMatchObject({ status: "TIMEOUT", nextAction: "implement" });
+    expect(again.hint).toContain("nothing will: your next action is still implement");
+    // merged: no more news
+    git(testerDir, "merge", "-q", "--no-edit", api);
+    expect(String((await tester.context({ full: true })).hint)).not.toContain("reported its part");
+  });
+});
+
 describe("commits are checked against git, and the lead takes in what it delegated", () => {
   it("a made-up hash is refused, a short one stored in full; PASS waits until the job's commit is in the merged result", async () => {
     const { writeSpawnFile } = await import("../../src/spawner.js");

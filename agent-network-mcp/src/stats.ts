@@ -152,16 +152,18 @@ export async function attachedCost(fs: FileStore, task: Task, tasks: Task[], pri
 }
 
 /** Statistics of every task of the network (null for tasks without phaseHistory). */
-export async function collectStats(fs: FileStore, tasks: Task[], now = new Date(), prices?: Prices): Promise<Map<string, TaskStats | null>> {
+export async function collectStats(fs: FileStore, tasks: Task[], now = new Date(), prices?: Prices, only?: Set<string>): Promise<Map<string, TaskStats | null>> {
   const store = new SessionStore(fs);
-  const sessions = new Map(await Promise.all(tasks.map(async (t) => [t.id, await store.list(t.id)] as const)));
+  // only: the tasks to count (the page keeps finished ones it counted before); the others still find their jobs in tasks
+  const counted = only ? tasks.filter((t) => only.has(t.id)) : tasks;
+  const sessions = new Map(await Promise.all(counted.map(async (t) => [t.id, await store.list(t.id)] as const)));
   const countedIn = new Map<string, string[]>();
   for (const [taskId, list] of sessions) {
     for (const s of list) for (const other of s.alsoFinished ?? []) countedIn.set(other, [...new Set([...(countedIn.get(other) ?? []), taskId])]);
   }
   return new Map(
     await Promise.all(
-      tasks.map(async (t) => {
+      counted.map(async (t) => {
         const stats = taskStats(t, sessions.get(t.id) ?? [], countedIn.get(t.id) ?? [], now, prices);
         if (!stats) return [t.id, null] as const;
         // the delegated jobs and the plan critic are part of the task's price

@@ -58,6 +58,8 @@ interface Snapshot {
   missingCommits?: Record<string, string[]>;
   /** IMPLEMENT: an agent this one depends on (dependsOn) and has reported -> its commits this session's branch lacks. */
   dependencyCommits?: Record<string, string[]>;
+  /** IMPLEMENT: the commits of the other agents that reported their part, missing from this branch (dependsOn or not). */
+  reportedCommits?: Record<string, string[]>;
   /** IMPLEMENT: this session tried to complete before its dependencies reported; it waits for them instead of trying again. */
   dependencyParked?: boolean;
   /** The lead: the operator's review comments still open (each fixed or declined with resolve_comments). */
@@ -657,7 +659,10 @@ export class Swarm {
       waitingOn: ctx.waitingOn,
       allowedActions: ctx.allowedActions,
       nextAction: ctx.nextAction,
-      hint: `Nothing changed. ${ctx.hint as string} Call wait() again; call swarm_context if you need the full state.`,
+      // with work of its own, waiting changes nothing: say so instead of "wait again" (an agent once waited out the task)
+      hint: ctx.nextAction === "wait"
+        ? `Nothing changed. ${ctx.hint as string} Call wait() again; call swarm_context if you need the full state.`
+        : `Nothing changed while you waited, and nothing will: your next action is still ${ctx.nextAction as string}, do it now. ${ctx.hint as string}`,
     };
   }
 
@@ -757,7 +762,10 @@ export class Swarm {
       ...(task.phase === "IMPLEMENT" ? { ownBranch: await this.ownBranch(task) } : {}),
       ...(task.phase === "SYNC" ? { missingCommits: await this.missingCommits(task, impls) } : {}),
       ...(task.phase === "IMPLEMENT"
-        ? { dependencyCommits: await this.dependencyCommits(agreement, impls), dependencyParked: this.parkedOnDependency.has(`${task.id}:${task.syncRound}`) }
+        ? {
+            dependencyCommits: await this.dependencyCommits(agreement, impls), dependencyParked: this.parkedOnDependency.has(`${task.id}:${task.syncRound}`),
+            reportedCommits: await this.commitsNotHere(impls.filter((i) => i.status === "READY_FOR_SYNC"), task.agents.filter((a) => a !== this.me)),
+          }
         : {}),
       ...(task.openspec && task.phase !== "DONE" ? await this.readOpenspec(task.openspec.change) : {}),
       ...(task.phase === "DISCUSS" && task.agents[0] === this.me && !agreement ? await this.spawnableFor(task) : {}),
@@ -1440,9 +1448,14 @@ export class Swarm {
             : deps.length
               ? `${deps.join(", ")} reported and your branch has that work: run your work against it before complete(). `
               : "";
+        // the others' reported work never reaches this branch by itself: an agent once waited for "their push" until the task stalled
+        const theirs = Object.entries(s.reportedCommits ?? {}).filter(([a]) => !deps.includes(a));
+        const reportedHint = theirs.length
+          ? `${theirs.map(([a, c]) => `${a} reported its part (commits ${c.map((x) => x.slice(0, 7)).join(" ")})`).join("; ")}: their commits never reach your branch by themselves. If your part builds or runs against that code, git merge ${theirs.flatMap(([, c]) => c).at(-1)!.slice(0, 7)}${theirs.length > 1 ? " (and the others' last commits)" : ""}; there is nothing to wait for. `
+          : "";
         const base = (task.jobOf
           ? `A job ${task.jobOf.by} (the lead of ${task.jobOf.taskId}) delegated to you: you do it alone, nobody reviews it; your complete() ends it and sends your result to ${task.jobOf.by}. ${task.baseCommit ? `In your own git branch, first git merge ${task.baseCommit} (the lead's code). ` : ""}`
-          : task.baseCommit ? `Follow-up of ${task.parentTaskId}: in your own git branch, first git merge ${task.baseCommit}. ` : "") + dep;
+          : task.baseCommit ? `Follow-up of ${task.parentTaskId}: in your own git branch, first git merge ${task.baseCommit}. ` : "") + dep + reportedHint;
         const steps = s.subtasks.find((l) => l.agentId === this.me)?.items ?? [];
         const open = steps.filter((i) => i.status === "TODO" || i.status === "DOING");
         const plan = open.length

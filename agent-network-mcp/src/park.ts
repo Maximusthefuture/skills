@@ -10,12 +10,45 @@ import type { Task } from "./types.js";
  * session. The mark is that state; the marker in hooks/<agent>.park.json says which state the session parked on.
  */
 export async function parkMark(fs: FileStore, task: Task, agentId: string): Promise<string> {
+  const seen = await seenOf(fs, task.id);
   // a quiet note (no answer needed) is no reason to start a session
-  const toMe = (await new MessageStore(fs).list(task.id, { to: agentId })).filter((m) => !m.quiet).at(-1)?.id ?? "";
+  const toMe = seen.messages.filter((m) => m.to === agentId && !m.quiet).at(-1)?.id ?? "";
   // only what can give this agent something to do: a block and its unblock, a build, an agent added... wake nobody
-  const events = (await new EventStore(fs).list(task.id)).filter(({ event: e }) => e.sourceAgent !== agentId && (e.targetAgent == null || e.targetAgent === agentId) && WAKES.has(e.type));
+  const events = seen.wakes.filter((e) => e.source !== agentId && (e.target == null || e.target === agentId));
   const state = [task.phase, task.syncRound, JSON.stringify(task.reviewScope ?? null), JSON.stringify(task.takeover ?? null)].join(":");
   return `${state}|${toMe}|${events.at(-1)?.seq ?? 0}`;
+}
+
+/**
+ * What the mark needs of a task's messages and events, read incrementally: a parked runner checks it every few seconds,
+ * and reading every event and message of a long task each time grows with its history. Messages and events are never
+ * rewritten in what the mark uses (a message's recipient and quietness, an event's type and agents).
+ */
+interface Seen {
+  eventSeq: number;
+  wakes: { seq: number; source?: string; target?: string | null }[];
+  messageSeq: number;
+  messages: { id: string; to: string; quiet?: boolean }[];
+}
+const seenCache = new Map<string, Seen>();
+
+async function seenOf(fs: FileStore, taskId: string): Promise<Seen> {
+  const key = `${fs.root}|${taskId}`;
+  const seen = seenCache.get(key) ?? { eventSeq: 0, wakes: [], messageSeq: 0, messages: [] };
+  for (const { event: e, seq } of await new EventStore(fs).list(taskId, seen.eventSeq)) {
+    seen.eventSeq = Math.max(seen.eventSeq, seq);
+    if (WAKES.has(e.type)) seen.wakes.push({ seq, ...(e.sourceAgent ? { source: e.sourceAgent } : {}), target: e.targetAgent ?? null });
+  }
+  const messages = new MessageStore(fs);
+  for (const entry of (await fs.listNumbered(["tasks", taskId, "messages"], "msg")).filter((x) => x.seq > seen.messageSeq).sort((a, b) => a.seq - b.seq)) {
+    const m = await messages.find(taskId, entry.id);
+    if (!m) break; // being written: read it next time
+    seen.messageSeq = entry.seq;
+    seen.messages.push({ id: m.id, to: m.to, ...(m.quiet ? { quiet: true } : {}) });
+  }
+  if (seenCache.size > 500) seenCache.clear();
+  seenCache.set(key, seen);
+  return seen;
 }
 
 /** Events that may need a parked agent: a new agreement to approve, a part reported (a dependency), comments on the diff. */

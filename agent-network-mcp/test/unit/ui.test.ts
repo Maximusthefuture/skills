@@ -24,6 +24,34 @@ async function network() {
   return { dir, operator, mk };
 }
 
+describe("buildUiState of finished tasks", () => {
+  it("builds a finished task's view once and again only when its task.json changes; active tasks every time", async () => {
+    const { dir, operator, mk } = await network();
+    const fs = await FileStore.open(dir);
+    const done = await operator.createTaskAsOperator({ title: "Done", description: "d", agents: ["backend", "reviewer"] });
+    const live = await operator.createTaskAsOperator({ title: "Live", description: "d", agents: ["backend", "reviewer"] });
+    await operator.tasks.save({ ...(await operator.tasks.get(done.id)), phase: "DONE", status: "COMPLETED" });
+    const view = async (id: string) => (await buildUiState(fs)).tasks.find((t) => t.id === id)!;
+    expect((await view(done.id)).messages).toHaveLength(0);
+
+    // a file written behind the store's back: the finished task's view is kept, the active one's is not
+    const backend = await mk("backend");
+    await backend.svc.messages.create({ taskId: done.id, from: "backend", to: "reviewer", type: "INFORMATION", content: "late" });
+    await backend.svc.messages.create({ taskId: live.id, from: "backend", to: "reviewer", type: "INFORMATION", content: "now" });
+    expect((await view(done.id)).messages).toHaveLength(0);
+    expect((await view(live.id)).messages).toHaveLength(1);
+
+    // a session recorded after the task finished (the last ones are): built again, its cost counts at once
+    const { SessionStore } = await import("../../src/stores/sessionStore.js");
+    await new SessionStore(fs).create({ taskId: done.id, agentId: "backend", attempt: 1, startedAt: "t", endedAt: "t", durationMs: 1, exitCode: 0, costUsd: 0.25 });
+    expect((await view(done.id)).stats?.costUsd).toBe(0.25);
+
+    // its task.json changes (a merge, say): built again
+    await operator.tasks.save({ ...(await operator.tasks.get(done.id)), merged: { into: "main", commit: "abc", at: "t" } as never });
+    expect((await view(done.id)).messages).toHaveLength(1);
+  });
+});
+
 describe("buildUiState", () => {
   it("shows a BLOCKED task as waiting on the operator, and integration reports", async () => {
     const { dir, operator, mk } = await network();

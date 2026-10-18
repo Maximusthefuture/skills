@@ -39,6 +39,8 @@ nextAction:
   call `complete({result, filesChanged})`. Working on your own git branch (a separate worktree)? Commit your files first and pass
   `commits`: the reviewers and the lead see only committed work there (forgot the hash? the server records your branch head and
   says so in `warnings`). In a shared folder commits are optional; nothing checks them.
+  Another agent's reported commits never reach your branch by themselves: if your part builds or runs against its code,
+  `git merge` them (the hint names them); never wait for them to appear.
   An assignment with `files: []` means you change nothing: you only review the others' work. The server marks your part
   ready as IMPLEMENT starts (no call needed); you `wait()` and do your review in SYNC.
   A part with several steps: plan it with `subtasks({add: ["<step>", ...]})`, then `subtasks({start: "s1"})` and `subtasks({done: ["s1"]})`

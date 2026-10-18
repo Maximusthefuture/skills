@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { AppError } from "../errors.js";
 import { DEFAULT_MAX_FIX_ROUNDS } from "../phase/phaseManager.js";
 import type { FileStore } from "../storage/fileStore.js";
@@ -24,6 +25,9 @@ export interface NewTask {
   grill?: boolean;
   allowSpawn?: boolean;
 }
+
+/** task.json files read lately, by path: reused while the file is the same (see find). */
+const taskCache = new Map<string, { ino: number; mtimeMs: number; size: number; task: Task }>();
 
 export class TaskStore {
   constructor(private readonly fs: FileStore) {}
@@ -67,7 +71,20 @@ export class TaskStore {
   }
 
   async find(taskId: string): Promise<Task | null> {
-    return this.fs.readJson<Task>([...this.taskDir(taskId), "task.json"]);
+    const segments = [...this.taskDir(taskId), "task.json"];
+    // every wait() tick and every page refresh lists all tasks: a task.json that has not changed is not read again. A write
+    // is a rename of a new file (writeJson), so its inode tells a changed file apart even within the same millisecond
+    const path = this.fs.resolve(segments);
+    const st = await stat(path).catch(() => null);
+    if (!st) return null;
+    const cached = taskCache.get(path);
+    if (cached && cached.ino === st.ino && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return structuredClone(cached.task);
+    const task = await this.fs.readJson<Task>(segments);
+    if (task) {
+      if (taskCache.size > 2000) taskCache.clear();
+      taskCache.set(path, { ino: st.ino, mtimeMs: st.mtimeMs, size: st.size, task: structuredClone(task) });
+    }
+    return task;
   }
 
   async get(taskId: string): Promise<Task> {

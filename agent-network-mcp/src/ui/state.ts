@@ -24,6 +24,10 @@ const phases = new PhaseManager();
 
 export type EffectiveStatus = Agent["status"] | "DEAD";
 
+type CachedView = { updatedAt: string; sessions: number; at: number; view: unknown };
+/** Views of finished tasks built lately, per network (see buildUiState). */
+const viewCache = new Map<string, Map<string, CachedView>>();
+
 /** Read-only snapshot of the network for the UI. Everything comes from the filesystem. */
 export async function buildUiState(fs: FileStore, isAlive: (pid: number) => boolean = defaultIsProcessAlive, pricing: { prices?: Prices; error?: string } = {}) {
   const agentStore = new AgentStore(fs);
@@ -37,11 +41,39 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
   const messageStore = new MessageStore(fs);
 
   const [agents, tasks] = await Promise.all([agentStore.list(), taskStore.list()]);
-  const stats = await collectStats(fs, tasks, new Date(), pricing.prices);
+  // a finished task's view hardly changes: the page refreshes every 2 s, so it is built again only when its task.json
+  // changed (a merge, a revert) or once a minute
+  const cache = viewCache.get(fs.root) ?? new Map<string, CachedView>();
+  viewCache.set(fs.root, cache);
+  const now = Date.now();
+  // the last sessions of a task are recorded a few seconds after it finished: their number is part of what must not change
+  const sessionCount = new Map(await Promise.all(tasks.map(async (t) => [t.id, (await fs.listNumbered(["tasks", t.id, "sessions"], "session")).length] as const)));
+  const reuse = (t: Task): CachedView | undefined => {
+    const c = cache.get(t.id);
+    return (t.status === "COMPLETED" || t.status === "CANCELLED") && c && c.updatedAt === t.updatedAt && c.sessions === sessionCount.get(t.id) && now - c.at < 60_000 ? c : undefined;
+  };
+  const stats = await collectStats(fs, tasks, new Date(), pricing.prices, new Set(tasks.filter((t) => !reuse(t)).map((t) => t.id)));
   const queue = queueStates(tasks);
 
   const taskViews = await Promise.all(
     tasks.map(async (task) => {
+      const kept = reuse(task);
+      if (kept) {
+        return {
+          ...(kept.view as Awaited<ReturnType<typeof buildView>>), queue: queue.get(task.id) ?? "queued", followUps: tasks.filter((t) => t.parentTaskId === task.id).map((t) => t.id),
+          // the change reaches the project folder by a merge outside the task: looked at every time (one stat)
+          proposedReady: task.proposes && task.status === "COMPLETED" ? await hasChange(dirname(fs.root), task.proposes.change) : false,
+        };
+      }
+      const view = await buildView(task);
+      if (task.status === "COMPLETED" || task.status === "CANCELLED") cache.set(task.id, { updatedAt: task.updatedAt, sessions: sessionCount.get(task.id) ?? 0, at: now, view });
+      else cache.delete(task.id);
+      return view;
+    }),
+  );
+
+  async function buildView(task: Task) {
+    {
       const [agreement, impls, reports, integrationReports] = await Promise.all([
         agreements.find(task.id),
         implementations.list(task.id),
@@ -88,8 +120,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         /** A change-writing task after DONE: the change is in the project folder (merged), ready to be implemented. */
         proposedReady: task.proposes && task.status === "COMPLETED" ? await hasChange(dirname(fs.root), task.proposes.change) : false,
       };
-    }),
-  );
+    }
+  }
 
   const agentViews = agents.map((a) => {
     const alive = a.pid === undefined ? true : isAlive(a.pid);
