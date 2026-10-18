@@ -28,6 +28,7 @@ const USAGE = `Usage:
                                 --propose: the agents WRITE that OpenSpec change (the lead writes, the others review), no code
                                 --clarify: the lead first asks what is unclear (or says how it understood the task), then proposes
                                 --plan: the lead first writes an HTML plan; you comment, edit and approve it on the page, then it proposes
+                                --spawn: the lead may add agents from the spawn templates (off: it splits the work among --agents)
                                 --depth fast|standard|thorough: the preparation before the agreement (thorough = grill + plan to approve)
                                 --grill: the lead first grills you about the task in rounds of questions, then you confirm its summary
   agent-network-mcp task list [--network-dir <abs path>]
@@ -92,6 +93,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       propose: { type: "string" },
       clarify: { type: "boolean" },
       plan: { type: "boolean" },
+      spawn: { type: "boolean" },
       grill: { type: "boolean" },
       depth: { type: "string" },
       runners: { type: "string" },
@@ -179,6 +181,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       ...(values.clarify ? { clarify: true } : {}),
       ...(values.plan ? { planReview: true } : {}),
       ...(values.grill ? { grill: true } : {}),
+      ...(values.spawn ? { allowSpawn: true } : {}),
       agents: values.agents.split(",").map((a) => a.trim()).filter(Boolean),
       ...(values["max-fix-rounds"] !== undefined ? { maxFixRounds: Number(values["max-fix-rounds"]) } : {}),
       ...(values.verify ? { verifyCommand: values.verify } : {}),

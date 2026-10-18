@@ -22,6 +22,7 @@ export interface NewTask {
   clarify?: boolean;
   planReview?: boolean;
   grill?: boolean;
+  allowSpawn?: boolean;
 }
 
 export class TaskStore {
@@ -59,6 +60,7 @@ export class TaskStore {
       ...(input.clarify ? { clarify: true as const } : {}),
       ...(input.planReview ? { planReview: true as const } : {}),
       ...(input.grill ? { clarify: true as const, grill: true as const } : {}),
+      ...(input.allowSpawn ? { allowSpawn: true as const } : {}),
     };
     await this.fs.writeJson([...this.taskDir(id), "task.json"], task);
     return task;

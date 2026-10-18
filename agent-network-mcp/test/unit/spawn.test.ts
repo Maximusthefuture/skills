@@ -63,7 +63,7 @@ describe("spawn templates in runners.json", () => {
 describe("spawn_agent", () => {
   it("the lead adds agents in DISCUSS before propose, up to the limit, with fresh ids", async () => {
     const { operator, swarm } = await setup();
-    const task = await operator.createTaskAsOperator({ title: "Refunds", description: "two endpoint groups", agents: ["backend", "reviewer"] });
+    const task = await operator.createTaskAsOperator({ title: "Refunds", description: "two endpoint groups", agents: ["backend", "reviewer"], allowSpawn: true });
     const backend = await swarm("backend");
     const reviewer = await swarm("reviewer");
     await reviewer.context(); // registered: its id is taken
@@ -95,10 +95,22 @@ describe("spawn_agent", () => {
     expect(await failure(backend, backend.spawnAgent({ template: "backend", reason: "r" }))).toMatchObject({ error: "INVALID_PHASE", message: expect.stringContaining("before you propose") });
   });
 
+  it("only when the operator allowed it for the task: otherwise the lead splits the work among its team", async () => {
+    const { operator, swarm } = await setup();
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    const backend = await swarm("backend");
+    const ctx = await backend.context();
+    expect(ctx.spawnable).toBeUndefined();
+    expect(ctx.allowedActions).not.toContain("spawn_agent");
+    expect(String(ctx.hint)).not.toContain("spawn_agent");
+    expect(await failure(backend, backend.spawnAgent({ template: "tester", reason: "a load test" }))).toMatchObject({ error: "FORBIDDEN", message: expect.stringContaining("split the work among backend, reviewer") });
+    expect((await operator.tasks.get(task.id)).agents).toEqual(["backend", "reviewer"]);
+  });
+
   it("without templates there is nothing to spawn", async () => {
     const { networkDir, operator, swarm } = await setup();
     await writeSpawnFile(networkDir, undefined);
-    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], allowSpawn: true });
     const backend = await swarm("backend");
     expect((await backend.context()).spawnable).toBeUndefined();
     expect(await failure(backend, backend.spawnAgent({ template: "backend", reason: "r" }))).toMatchObject({ message: expect.stringContaining('no "spawn" templates') });
@@ -117,7 +129,7 @@ describe("the spawner", () => {
     });
     const lines: string[] = [];
     const spawner = new Spawner({ networkDir, spawn: config.spawn!, pool, log: (l) => lines.push(l) });
-    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], allowSpawn: true });
     await (await swarm("backend")).spawnAgent({ template: "tester", reason: "e2e" });
 
     await spawner.tick();
@@ -139,7 +151,7 @@ describe("the spawner", () => {
 describe("a role without a name", () => {
   it("instructions alone are a role all the same: named after the template, never a refusal", async () => {
     const { operator, swarm } = await setup();
-    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], allowSpawn: true });
     const backend = await swarm("backend");
     await backend.spawnAgent({ template: "backend", reason: "the second endpoint group", instructions: "You build /refunds only; you do not touch /orders. Report the endpoints and their status codes." });
     expect((await operator.tasks.get(task.id)).spawned![0]!.role).toMatchObject({ name: "backend-role", source: "lead" });
@@ -151,7 +163,7 @@ describe("roles of spawned agents", () => {
 
   it("the lead writes a role or takes one from the library; the operator keeps a good one; its runner reads it", async () => {
     const { networkDir, config, operator, swarm } = await setup();
-    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], allowSpawn: true });
     const backend = await swarm("backend");
     expect(await failure(backend, backend.spawnAgent({ template: "backend", reason: "r", role: "architect" }))).toMatchObject({ message: expect.stringContaining("No role \"architect\"") });
     expect(await failure(backend, backend.spawnAgent({ template: "backend", reason: "r", role: "architect", instructions: "short" }))).toMatchObject({ message: expect.stringContaining("40..6000") });
@@ -173,7 +185,7 @@ describe("roles of spawned agents", () => {
     await expect(operator.saveRole({ taskId: task.id, agentId: "backend-2" })).rejects.toMatchObject({ code: "ALREADY_COMPLETED" });
     expect(readFileSync(join(networkDir, "roles", "architect.md"), "utf8")).toMatch(/^# architect: boundaries of the new module\n\nReview the agreement/);
     await operator.cancelTask(task.id);
-    const next = await operator.createTaskAsOperator({ title: "t2", description: "d", agents: ["backend", "reviewer"] });
+    const next = await operator.createTaskAsOperator({ title: "t2", description: "d", agents: ["backend", "reviewer"], allowSpawn: true });
     const ctx = await backend.context();
     expect((ctx.spawnable as any).roles).toEqual([{ name: "architect", description: "architect: boundaries of the new module" }]);
     await backend.spawnAgent({ template: "backend", reason: "again", role: "architect" });

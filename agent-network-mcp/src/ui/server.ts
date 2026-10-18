@@ -438,7 +438,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const body = await readJson(req);
 
     if (path === "/api/tasks") {
-      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown };
+      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown; allowSpawn?: unknown };
       // a preset (fast / standard / thorough) sets the three; without one, each comes as it is
       const prep = typeof b.depth === "string" && b.depth !== "custom" ? depthFlags(b.depth) : { clarify: b.clarify === true, grill: b.grill === true, planReview: b.planReview === true };
       // the page sends "" for "no limit"; a field it leaves out gets the config's maxTaskCostUsd
@@ -455,6 +455,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         ...(prep.clarify ? { clarify: true } : {}),
         ...(prep.planReview ? { planReview: true } : {}),
         ...(prep.grill ? { grill: true } : {}),
+        ...(b.allowSpawn === true ? { allowSpawn: true } : {}),
         ...(typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? { verifyCommand: b.verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),

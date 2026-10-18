@@ -90,6 +90,8 @@ export interface NewTaskInput {
   planReview?: boolean;
   /** Clarify by a grilling: rounds of questions, then the operator confirms the lead's summary (implies clarify). */
   grill?: boolean;
+  /** The lead may add agents from the spawn templates (spawn_agent); off by default. */
+  allowSpawn?: boolean;
 }
 
 /**
@@ -338,6 +340,7 @@ export class NetworkService {
       ...(input.clarify ? { clarify: true } : {}),
       ...(input.planReview ? { planReview: true } : {}),
       ...(input.grill ? { grill: true } : {}),
+      ...(input.allowSpawn ? { allowSpawn: true } : {}),
     });
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
@@ -701,6 +704,7 @@ ${feedbackText(fb)}`;
     return this.mutate(input.taskId, async (task) => {
       if (this.phases.integrator(task) !== this.me) throw new AppError("FORBIDDEN", `Only the lead (${this.phases.integrator(task)}) adds agents to ${task.id}`);
       this.requirePhase(task, "DISCUSS");
+      if (!task.allowSpawn) throw new AppError("FORBIDDEN", `${task.id} does not let the lead add agents (the operator did not tick it): split the work among ${task.agents.join(", ")}; an agent with tests in its part writes them too`);
       if (await this.agreements.find(task.id)) throw new AppError("INVALID_PHASE", "Add agents before you propose: the agreement needs an assignment for every agent of the task");
       const { templates, maxPerTask } = await this.spawnTemplates();
       if (!templates.length) throw new AppError("INVALID_INPUT", 'Nothing to spawn from: the operator has no "spawn" templates in runners.json');
@@ -1457,6 +1461,7 @@ ${feedbackText(fb)}`;
           maxFixRounds: this.phases.maxFixRounds(task),
           ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
           ...(task.maxCostUsd !== undefined ? { maxCostUsd: task.maxCostUsd } : {}),
+          ...(task.allowSpawn ? { allowSpawn: true } : {}),
           parentTaskId: task.id,
           rootTaskId: rootId,
           ...(base ? { baseCommit: base } : {}),

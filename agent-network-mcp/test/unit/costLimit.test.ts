@@ -123,8 +123,9 @@ describe("cost limit on the page, in runners.json and in schedules", () => {
     const base = { title: "t", description: "d", agents: ["backend", "reviewer"] };
     const a = (await (await post("/api/tasks", base)).json()) as any;
     const b = (await (await post("/api/tasks", { ...base, maxCostUsd: "" })).json()) as any;
-    const c = (await (await post("/api/tasks", { ...base, maxCostUsd: "7.5" })).json()) as any;
+    const c = (await (await post("/api/tasks", { ...base, maxCostUsd: "7.5", allowSpawn: true })).json()) as any;
     expect([a.task.maxCostUsd, b.task.maxCostUsd, c.task.maxCostUsd]).toEqual([3, undefined, 7.5]);
+    expect([a.task.allowSpawn, c.task.allowSpawn]).toEqual([undefined, true]); // the lead adds agents only when ticked
     const state = (await (await fetch(`${ui.url}/api/state`)).json()) as any;
     expect(state.control.maxTaskCostUsd).toBe(3);
     expect(state.tasks.find((t: any) => t.id === a.task.id)).toMatchObject({ maxCostUsd: 3, blockedBy: null });

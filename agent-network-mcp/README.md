@@ -393,6 +393,10 @@ Codex читает `AGENTS.md` из корня проекта.
 
 - **Шаблон** — агент без `id`: любые поля агента (`model`, `command`, `instructionsFile`…), остальное из `defaults`;
   `description` обязателен — его читает lead. Проверяется при старте, как обычные агенты.
+- **Только с вашего разрешения:** галочка «Lead может добавлять агентов» в форме задачи (`task create --spawn` в
+  CLI), по умолчанию выключена. Без неё lead не видит `spawnable`, а `spawn_agent` отказывает: работа делится между
+  агентами задачи. Причина — стоимость: добавленный агент — отдельная сессия, в замерах это +$0.25–0.39 к задаче
+  за ~$0.9. Follow-up задачи наследуют галочку; поручения (`delegate`) от неё не зависят.
 - **Когда:** только lead, только в DISCUSS и до `propose()`. В `swarm_context` lead видит `spawnable` (шаблоны и
   сколько ещё можно), в подсказке — когда это оправдано. `spawn_agent({template, reason, id?})` добавляет агента в
   задачу: id свежий (`backend-2`) или свой, если не занят.
@@ -623,7 +627,7 @@ node dist/index.js task create --network-dir <dir> --agents backend,reviewer --t
 | `build` | `command?`, `timeoutMin?` | Сборка или тесты в папке агента; ответ — итог, число тестов и что упало, полный лог в файле. Без `command` — `verifyCommand` задачи. Подробнее — [Сборка и тесты через `build`](#экономия-токенов-короткая-база-и-компактный-swarm_context) |
 | `complete` | зависит от фазы | DISCUSS: без аргументов — одобрить agreement. IMPLEMENT: `{result, filesChanged?, commits?, tasksDone?}` — своя часть готова. SYNC: `{status: PASS\|NEEDS_FIX, findings?}` — ревью. INTEGRATE (lead): `{status, result, commits?, findings?, followUps?}` |
 | `plan` | `html?`, `edits?[{find, replace}]`, `note?`, `read?` | Lead, задача с «Планом на утверждение»: план HTML-страницей; оператор правит и утверждает его на странице. См. [План на утверждение](#план-на-утверждение) |
-| `spawn_agent` | `template`, `reason`, `id?`, `role?`, `instructions?` | Lead, DISCUSS до `propose`: добавить в команду агента из шаблона `spawn` |
+| `spawn_agent` | `template`, `reason`, `id?`, `role?`, `instructions?` | Lead, DISCUSS до `propose`, если оператор разрешил в задаче: добавить в команду агента из шаблона `spawn` |
 | `delegate` | `template`, `job`, `files?`, `role?`, `instructions?` | Lead, IMPLEMENT/INTEGRATE: поручить самостоятельный кусок новому раннеру; возвращается lead'у как подзадача |
 | `resolve_comments` | `resolve[{id, status, note?}]` | Lead: ответить на замечания оператора к диффу — исправлено или отклонено с причиной |
 | `wait` | `timeoutMs?` | Ждать, пока делать нечего: возвращается с сообщениями, действием, сменой фазы или по таймауту |

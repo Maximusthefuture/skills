@@ -108,6 +108,11 @@ export interface Task {
    */
   planReview?: true;
   /**
+   * The operator lets the lead add agents from the spawn templates (spawn_agent). Without it the lead splits the work
+   * among the team it was given: every added agent is a session of its own and costs as much as one of the team.
+   */
+  allowSpawn?: true;
+  /**
    * A job the lead of another task delegated (delegate): one agent, no agreement, no review; it starts in IMPLEMENT, its
    * complete() ends it (DONE), and the result goes back to the lead as its subtask.
    */

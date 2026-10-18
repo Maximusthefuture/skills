@@ -130,7 +130,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
   );
   tool(
     "spawn_agent",
-    "Lead, DISCUSS, before propose: add an agent to the team from a template the operator prepared ('spawnable' in swarm_context lists them and how many are left). It joins this task, its runner starts by itself in its own folder, and you give it an assignment in propose() like any agent. Use it when the work splits into more independent parts than the team has agents; every agent costs tokens.",
+    "Lead, DISCUSS, before propose, only when the operator allowed it for the task ('spawnable' in swarm_context lists the templates and how many are left; no 'spawnable' = not allowed): add an agent to the team from a template. It joins this task, its runner starts by itself in its own folder, and you give it an assignment in propose() like any agent. Use it when the work splits into more independent parts than the team has agents; every agent costs tokens.",
     {
       template: z.string().describe("Template name from spawnable.templates, e.g. 'backend'"),
       reason: z.string().describe("Which part of the work it takes and why the team needs it, e.g. 'the second endpoint group: /refunds, independent of /orders'"),

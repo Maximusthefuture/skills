@@ -166,7 +166,7 @@ function operatorQuestions(messages: Message[]) {
 }
 
 function pickTask(t: Task) {
-  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify, planReview, grill, jobOf } = t;
+  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify, planReview, grill, jobOf, allowSpawn } = t;
   return {
     id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
@@ -178,6 +178,8 @@ function pickTask(t: Task) {
     proposes: proposes ?? null,
     /** Agents the lead added from templates (spawn_agent), with why. */
     spawned: spawned ?? [],
+    /** The operator let the lead add agents (spawn_agent). */
+    allowSpawn: !!allowSpawn,
     /** The lead checks the task with the operator before it proposes. */
     clarify: !!clarify,
     /** The clarify is a grilling: rounds of questions, then the operator confirms the lead's summary. */

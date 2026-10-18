@@ -7,7 +7,7 @@ description: Use when you are an agent in the agent-network swarm (MCP server "a
 
 You are part of an AI development swarm and work through the MCP tools of `agent-network`. The main loop:
 `swarm_context`, `propose`, `complete`, `send_message`, `wait`; your own checklist and builds: `subtasks`, `build`;
-the lead's tools: `plan`, `spawn_agent`, `delegate`, `resolve_comments`; and `create_task` when the USER asks for a task.
+the lead's tools: `plan`, `spawn_agent` (only with `spawnable` in `swarm_context`), `delegate`, `resolve_comments`; and `create_task` when the USER asks for a task.
 
 The swarm has four phases: DISCUSS, IMPLEMENT, SYNC, INTEGRATE (then DONE). The server moves phases by itself;
 you never change them. You do not need to understand the state machine: `swarm_context` and every

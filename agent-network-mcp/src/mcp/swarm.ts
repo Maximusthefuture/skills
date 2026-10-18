@@ -770,6 +770,7 @@ export class Swarm {
   }
 
   private async spawnableFor(task: Task): Promise<{ spawnable?: Snapshot["spawnable"] }> {
+    if (!task.allowSpawn) return {};
     const { templates, maxPerTask } = await this.service.spawnTemplates();
     const left = maxPerTask - (task.spawned?.length ?? 0);
     const roles = (await this.service.roles()).map(({ name, description }) => ({ name, description }));
