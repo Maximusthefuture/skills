@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, readFileSync, rmSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { AppError } from "../errors.js";
@@ -8,6 +8,27 @@ import { assertSafeSegment } from "../validation.js";
 const LOCK_RETRY_MS = 20;
 const LOCK_TIMEOUT_MS = 10_000;
 const LOCK_STALE_MS = 30_000;
+/** A holder touches its lock this often: a long operation under it (a git merge, openspec archive) is never "stale". */
+const LOCK_BEAT_MS = 5_000;
+
+/** Locks this process holds (path -> its token): released when the process exits, not left for others to wait out. */
+const held = new Map<string, string>();
+let releaseOnExit = false;
+const lockOwner = (path: string): { pid?: number; token?: string } | null => {
+  try {
+    return JSON.parse(readFileSync(join(path, "owner"), "utf8")) as { pid?: number; token?: string };
+  } catch {
+    return null;
+  }
+};
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
 
 export interface NumberedEntry {
   /** e.g. "msg-001" */
@@ -186,13 +207,14 @@ export class FileStore {
 
   /**
    * Cross-process mutex built on mkdir. Used only for read-modify-write of task state
-   * (agreement approvals, implementation status, phase transitions). Stale locks left by
-   * crashed processes are broken after LOCK_STALE_MS.
+   * (agreement approvals, implementation status, phase transitions). The holder writes its pid and a token into it and
+   * touches it while it works; a lock whose holder is dead is broken at once, one nobody touched for LOCK_STALE_MS too.
    */
   async withLock<T>(lockDir: readonly string[], fn: () => Promise<T>): Promise<T> {
     const path = this.resolve(lockDir);
     await fs.mkdir(join(path, ".."), { recursive: true });
     const deadline = Date.now() + LOCK_TIMEOUT_MS;
+    const token = randomBytes(8).toString("hex");
     for (;;) {
       try {
         await fs.mkdir(path);
@@ -204,17 +226,36 @@ export class FileStore {
         await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
       }
     }
+    // who holds it: a lock whose holder died is broken at once, and the holder removes only its own lock
+    await fs.writeFile(join(path, "owner"), JSON.stringify({ pid: process.pid, token })).catch(() => undefined);
+    held.set(path, token);
+    if (!releaseOnExit) {
+      releaseOnExit = true;
+      process.once("exit", () => {
+        for (const [p, t] of held) if (lockOwner(p)?.token === t) rmSync(p, { recursive: true, force: true });
+      });
+    }
+    const beat = setInterval(() => {
+      const now = new Date();
+      void fs.utimes(path, now, now).catch(() => undefined);
+    }, LOCK_BEAT_MS);
+    beat.unref();
     try {
       return await fn();
     } finally {
-      await fs.rm(path, { recursive: true, force: true });
+      clearInterval(beat);
+      held.delete(path);
+      // broken as stale and taken by another process meanwhile: that lock is theirs now
+      if (lockOwner(path)?.token === token) await fs.rm(path, { recursive: true, force: true });
     }
   }
 
   private async breakStaleLock(path: string): Promise<void> {
     try {
       const st = await fs.stat(path);
-      if (Date.now() - st.mtimeMs > LOCK_STALE_MS) await fs.rm(path, { recursive: true, force: true });
+      const owner = lockOwner(path);
+      const dead = owner?.pid !== undefined && owner.pid !== process.pid && !alive(owner.pid);
+      if (dead || Date.now() - st.mtimeMs > LOCK_STALE_MS) await fs.rm(path, { recursive: true, force: true });
     } catch {
       // lock released in the meantime
     }

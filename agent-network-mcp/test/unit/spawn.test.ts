@@ -107,6 +107,19 @@ describe("spawn_agent", () => {
     expect((await operator.tasks.get(task.id)).agents).toEqual(["backend", "reviewer"]);
   });
 
+  it("two leads of different tasks adding agents at the same moment never get the same id", async () => {
+    const { operator, swarm } = await setup();
+    const a = await operator.createTaskAsOperator({ title: "A", description: "d", agents: ["backend", "reviewer"], allowSpawn: true });
+    const b = await operator.createTaskAsOperator({ title: "B", description: "d", agents: ["frontend", "qa"], allowSpawn: true });
+    const [lead1, lead2] = [await swarm("backend"), await swarm("frontend")];
+    const [x, y] = await Promise.all([lead1.spawnAgent({ template: "tester", reason: "e2e of A" }), lead2.spawnAgent({ template: "tester", reason: "e2e of B" })]);
+    expect(x.agentId).not.toBe(y.agentId);
+    const ids = [...(await operator.tasks.get(a.id)).agents, ...(await operator.tasks.get(b.id)).agents];
+    expect(new Set(ids).size).toBe(ids.length);
+    // an id given by hand that another lead already claimed is refused
+    expect(await failure(lead2, lead2.spawnAgent({ template: "tester", id: x.agentId as string, reason: "again" }))).toMatchObject({ message: expect.stringContaining("taken") });
+  });
+
   it("without templates there is nothing to spawn", async () => {
     const { networkDir, operator, swarm } = await setup();
     await writeSpawnFile(networkDir, undefined);

@@ -116,6 +116,45 @@ describe("the plan critic", () => {
     expect(seen).toHaveLength(3);
   });
 
+  it("a version that is the same page is not read again; a session on an outdated version stops for the newer one", async () => {
+    const dir = join(await tmpDir(), ".agent-network");
+    const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });
+    const backend = new Swarm(await NetworkService.create(dir, { id: "backend", type: "test" }));
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], planReview: true });
+    const read: number[] = [];
+    let hold: (() => void) | null = null;
+    const critic = new PlanCritic({
+      networkDir: dir, projectDir: dir, config: { command: ["x", "{prompt}"], promptFile: "/none" },
+      run: async (argv, _env, _cwd, _sink, signal) => {
+        read.push(Number(/"version": (\d+)/.exec(argv[1]!)![1]));
+        if (hold === null) await new Promise<void>((done) => { hold = done; signal?.addEventListener("abort", () => done()); });
+        return { code: 0, result: { text: JSON.stringify({ risks: [{ severity: "high", title: "Double refund", why: "w", suggest: "s" }] }), costUsd: 0.05 } as never };
+      },
+    });
+    const fs = await FileStore.open(dir);
+
+    // v1 is being read when the lead writes v2: the v1 session stops, v2 is read
+    await backend.plan({ html: PAGE });
+    await critic.tick();
+    await new Promise((r) => setTimeout(r, 20));
+    await backend.plan({ html: PAGE.replace("Refunds", "Partial refunds") });
+    await critic.tick();
+    await critic.idle();
+    expect(await fs.exists(["tasks", task.id, "plan", "critique-v1.json"])).toBe(false);
+    hold = () => undefined; // from now on sessions answer at once
+    await critic.tick();
+    await critic.idle();
+    expect(read).toEqual([1, 2]);
+
+    // the operator comments, the lead keeps the page as it is: v3 is v2 again, its critique holds without a session
+    await operator.planFeedback({ taskId: task.id, version: 2, comments: [{ target: "h1", text: "why partial?" }] });
+    await backend.plan({ note: "kept as it is: partial refunds are the task" });
+    await critic.tick();
+    await critic.idle();
+    expect(read).toEqual([1, 2]);
+    expect((await readCritiques(fs, task.id)).at(-1)).toMatchObject({ version: 3, sameAs: 2, costUsd: 0, risks: [{ title: "Double refund" }] });
+  });
+
   it("an answer without the JSON is kept as the error, to read on the page", async () => {
     const dir = join(await tmpDir(), ".agent-network");
     const operator = await NetworkService.create(dir, { id: "operator", type: "cli" });

@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { mkdir, readdir, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { AppError } from "../../src/errors.js";
@@ -130,6 +130,35 @@ describe("FileStore lock", () => {
     const old = new Date(Date.now() - 120_000);
     await utimes(path, old, old);
     await expect(fs.withLock(["stale-lock"], async () => "ok")).resolves.toBe("ok");
+  });
+});
+
+describe("FileStore lock and its holder", () => {
+  it("a lock whose holder process is gone is broken at once, not after the stale time", async () => {
+    const { fs } = await open();
+    const path = fs.resolve(["dead-lock"]);
+    await mkdir(path, { recursive: true });
+    await writeFile(join(path, "owner"), JSON.stringify({ pid: 2 ** 22 + 12345, token: "theirs" })); // no such process
+    const t0 = Date.now();
+    await expect(fs.withLock(["dead-lock"], async () => "ok")).resolves.toBe("ok");
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("a live holder's fresh lock is waited for; the holder removes only its own lock", async () => {
+    const { fs } = await open();
+    const path = fs.resolve(["mine"]);
+    await fs.withLock(["mine"], async () => {
+      // meanwhile another process broke it (stale) and took it: on release it stays theirs
+      await rm(path, { recursive: true, force: true });
+      await mkdir(path);
+      await writeFile(join(path, "owner"), JSON.stringify({ pid: process.pid, token: "theirs" }));
+    });
+    expect(JSON.parse(await readFile(join(path, "owner"), "utf8"))).toMatchObject({ token: "theirs" });
+    // held by a live process and touched lately: not broken, the waiter times out instead of taking it
+    const waiter = fs.withLock(["mine"], async () => "taken");
+    await expect(Promise.race([waiter, new Promise((r) => setTimeout(() => r("waiting"), 300))])).resolves.toBe("waiting");
+    await rm(path, { recursive: true, force: true }); // they release it: the waiter gets it
+    await expect(waiter).resolves.toBe("taken");
   });
 });
 

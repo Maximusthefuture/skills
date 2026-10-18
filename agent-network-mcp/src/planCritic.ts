@@ -35,6 +35,8 @@ export interface PlanCritique {
   /** The skill sets that matched the project, and the skills the critic had. */
   skillSets?: string[];
   skills?: string[];
+  /** The version is the same page as this earlier one (the lead kept it as it was): its critique, no new session. */
+  sameAs?: number;
 }
 
 /** A skill folder (dir, with SKILL.md) or a single instructions file (file: an agent definition such as critic.md). */
@@ -209,8 +211,20 @@ export class PlanCritic {
 
   /** The first plan version the lead wrote that has no critique yet: start a session on it. Public for tests. */
   async tick(): Promise<void> {
-    if (this.current) return;
     const fs = await FileStore.open(this.opts.networkDir);
+    if (this.current) {
+      // a session on a version that is no longer the one to read (a newer version, the plan approved, the task moved on):
+      // stop it, the newer version gets its own
+      const { taskId, version, abort } = this.current;
+      const task = await new TaskStore(fs).find(taskId);
+      const s = await readPlanState(fs, taskId);
+      const stale = !task || task.status !== "ACTIVE" || task.phase !== "DISCUSS" || !!s.approved || s.versions.filter((v) => v.by !== "operator").at(-1)!.n > version;
+      if (stale && !abort.signal.aborted) {
+        this.opts.log?.(`[plan critic] ${taskId}: v${version} is out of date, stopped`);
+        abort.abort();
+      }
+      return;
+    }
     for (const task of await new TaskStore(fs).list()) {
       if (!task.planReview || task.status !== "ACTIVE" || task.phase !== "DISCUSS") continue;
       const s = await readPlanState(fs, task.id);
@@ -218,6 +232,13 @@ export class PlanCritic {
       // the operator's own edits are not the lead's plan; an approved plan is past criticism
       if (!last || last.by === "operator" || s.approved) continue;
       if (await fs.exists(["tasks", task.id, "plan", `critique-v${last.n}.json`])) continue;
+      // the same page as a version read before (the lead answered the feedback with "it stays as it is"): that critique holds
+      const same = await this.samePage(fs, task.id, last.n, s.versions);
+      if (same) {
+        await fs.writeJson(["tasks", task.id, "plan", `critique-v${last.n}.json`], { ...same, version: last.n, at: new Date().toISOString(), sameAs: same.version, costUsd: 0 } satisfies PlanCritique);
+        this.opts.log?.(`[plan critic] ${task.id} v${last.n}: the same page as v${same.version}, its critique kept`);
+        continue;
+      }
       const abort = new AbortController();
       const done = this.session(task.id, task.title, task.description, last.n, abort.signal, !!task.grill, task.agents[0]!)
         .catch((e: Error) => this.opts.log?.(`[plan critic] ${task.id} v${last.n}: ${e.message}`))
@@ -227,6 +248,18 @@ export class PlanCritic {
       this.current = { taskId: task.id, version: last.n, done, abort };
       return;
     }
+  }
+
+  /** The critique of an earlier version whose page is the same as version n, if there is one. */
+  private async samePage(fs: FileStore, taskId: string, n: number, versions: { n: number }[]): Promise<PlanCritique | null> {
+    const page = (v: number) => readFile(join(this.opts.networkDir, "tasks", taskId, "plan", `v${v}.html`), "utf8").catch(() => null);
+    const html = await page(n);
+    if (html === null) return null;
+    for (const v of [...versions].reverse().filter((x) => x.n < n)) {
+      const c = await fs.readJson<PlanCritique>(["tasks", taskId, "plan", `critique-v${v.n}.json`]);
+      if (c && !c.error && (await page(v.n)) === html) return c;
+    }
+    return null;
   }
 
   private async session(taskId: string, title: string, description: string, version: number, signal: AbortSignal, grilled = false, lead = ""): Promise<void> {

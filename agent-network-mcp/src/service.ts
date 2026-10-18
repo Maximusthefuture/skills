@@ -613,7 +613,7 @@ ${feedbackText(fb)}`;
       const role = await this.roleOf(input, `${template.name}-job`);
       const ids = new Set([...(await this.agents.list()).map((a) => a.id), ...(await this.tasks.list()).flatMap((t) => t.agents), OPERATOR]);
       let agentId = "";
-      for (let n = 1; ; n++) if (!ids.has((agentId = `${template.name}-job${n}`))) break;
+      for (let n = 1; ; n++) if (!ids.has((agentId = `${template.name}-job${n}`)) && (await this.claimAgentId(agentId, task.id))) break;
       // the lead's checklist gets the job as an open step: its own complete() waits for it
       let subtask = "";
       await this.subtasks.update(task.id, lead, (list) => {
@@ -720,14 +720,22 @@ ${feedbackText(fb)}`;
       let id = input.id?.trim();
       if (id) {
         assertAgentId(id, "id");
-        if (taken.has(id)) throw new AppError("INVALID_INPUT", `The id ${id} is taken: leave id out for a fresh one`);
+        if (taken.has(id) || !(await this.claimAgentId(id, task.id))) throw new AppError("INVALID_INPUT", `The id ${id} is taken: leave id out for a fresh one`);
       } else {
-        for (let n = 2; ; n++) if (!taken.has((id = `${template.name}-${n}`))) break;
+        for (let n = 2; ; n++) if (!taken.has((id = `${template.name}-${n}`)) && (await this.claimAgentId(id, task.id))) break;
       }
       const saved = await this.tasks.save({ ...task, agents: [...task.agents, id!], spawned: [...spawned, { id: id!, template: template.name, by: this.me, at: new Date().toISOString(), reason: input.reason.trim(), ...(role ? { role } : {}) }] });
       await this.emit({ type: "AGENT_SPAWNED", taskId: task.id, sourceAgent: this.me, payload: { agentId: id, template: template.name, reason: input.reason.trim(), ...(role ? { role: role.name, roleSource: role.source } : {}) } });
       return { task: saved, agentId: id! };
     });
+  }
+
+  /**
+   * A new agent's id, claimed once for the whole network (claims/agents/<id>.json, created only if absent): two leads of
+   * different tasks adding agents at the same moment hold only their own task's lock, and must never get the same id.
+   */
+  private async claimAgentId(id: string, taskId: string): Promise<boolean> {
+    return this.fs.createJson(["claims", "agents", `${assertAgentId(id, "id")}.json`], { taskId, by: this.me, at: new Date().toISOString() });
   }
 
   /** A change-writing task: a free name in a project that uses OpenSpec (openspec/ exists; we never create it). */
