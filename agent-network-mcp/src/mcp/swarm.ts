@@ -7,7 +7,8 @@ import { changePath, readChange, validateChange, type ChangeInfo, type Exec } fr
 import { normalizePath, ownersOf } from "../ownership.js";
 import { PLAN_READ_WHOLE, planAround, planBrief, planOutline, type PlanStatus } from "../plan.js";
 import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, OPERATOR_TIMEOUT_MS, clarifies, grillConfirmed, isReviewOnly, type NetworkService } from "../service.js";
-import type { Agent, Agreement, FollowUpRequest, GitContext, Implementation, IntegrationReport, Message, Phase, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
+import { HOTSPOT_RISKS } from "../types.js";
+import type { Agent, Agreement, FollowUpRequest, GitContext, Implementation, IntegrationReport, Message, Phase, ReviewHotspot, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
 
 /** What the agent should do next, computed by the server so the agent never reasons about the state machine. */
 export type NextAction = "respond" | "propose" | "approve" | "implement" | "fix" | "sync" | "integrate" | "wait" | "done";
@@ -101,6 +102,7 @@ function progress(list: SubtaskList | undefined): string | null {
 export type SwarmContext = Record<string, unknown> & { nextAction: NextAction; allowedActions: string[] };
 
 type RawFinding = Omit<SyncFinding, "severity"> & { severity: string };
+type RawHotspot = Omit<ReviewHotspot, "risk"> & { risk: string };
 
 
 const seq = (m: Message): number => Number(m.id.slice(4));
@@ -122,6 +124,9 @@ export function openFileRequests(messages: Message[]): Message[] {
 
 
 const SEVERITIES = ["INFO", "WARNING", "ERROR"] as const;
+
+/** What the reviewer adds to complete() when the task did not turn hotspots off. */
+const HOTSPOT_HINT = ` Also add hotspots: [{risk: "HIGH"|"MEDIUM", reason, files}] to either verdict: the few places the human operator should read by hand even if tests are green (DB migrations/schema, auth and permissions, money, deleting data, concurrency, secrets/config, external calls, large or non-obvious changes). 0-7, only real ones, each with a concrete reason; none is fine. They are not defects and move no phase.`;
 
 function invalid(message: string, details?: Record<string, unknown>): AppError {
   return new AppError("INVALID_INPUT", message, details);
@@ -457,7 +462,7 @@ export class Swarm {
     return { ...this.reply(await this.contextNow()), ok: true, action: "AGREEMENT_PROPOSED", agreementVersion: res.agreement.version, ...(warnings.length ? { warnings } : {}) } as SwarmContext;
   }
 
-  async complete(input: { result?: string; filesChanged?: string[]; commits?: string[]; tasksDone?: string[]; status?: string; findings?: RawFinding[]; followUps?: FollowUpRequest[] }): Promise<SwarmContext> {
+  async complete(input: { result?: string; filesChanged?: string[]; commits?: string[]; tasksDone?: string[]; status?: string; findings?: RawFinding[]; hotspots?: RawHotspot[]; followUps?: FollowUpRequest[] }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
     const given = (keys: (keyof typeof input)[]) => keys.filter((k) => input[k] !== undefined);
@@ -467,17 +472,17 @@ export class Swarm {
 
     switch (task.phase) {
       case "DISCUSS": {
-        const extra = given(["result", "filesChanged", "commits", "tasksDone", "status", "findings", "followUps"]);
+        const extra = given(["result", "filesChanged", "commits", "tasksDone", "status", "findings", "hotspots", "followUps"]);
         action = await this.approve(task);
         warnings = this.ignoredFields(extra);
         break;
       }
       case "IMPLEMENT": {
-        const extra = given(["status", "findings", "followUps"]);
+        const extra = given(["status", "findings", "hotspots", "followUps"]);
         const started = await this.service.implementations.find(task.id, this.me);
         // the author approving its own agreement after the others did: its proposal approved it already and IMPLEMENT
         // started; a bare complete() is that stale approval, not a report: the fresh state, not an error
-        if (!given(["result", "filesChanged", "commits", "tasksDone", "status", "findings", "followUps"]).length && task.syncRound === 0 && !this.staleApprovals.has(task.id) &&
+        if (!given(["result", "filesChanged", "commits", "tasksDone", "status", "findings", "hotspots", "followUps"]).length && task.syncRound === 0 && !this.staleApprovals.has(task.id) &&
           (await this.service.agreements.find(task.id))?.proposedBy === this.me && (!started || started.auto)) {
           this.staleApprovals.add(task.id);
           return { ...this.reply(await this.contextNow()), ok: true, action: "AGREEMENT_APPROVED", note: "Your proposal approved it; the others approved too and IMPLEMENT has started." } as SwarmContext;
@@ -516,13 +521,13 @@ export class Swarm {
         if (input.status !== "PASS" && input.status !== "NEEDS_FIX") {
           throw invalid("complete() during SYNC requires 'status': \"PASS\" or \"NEEDS_FIX\" (with 'findings')");
         }
-        await this.service.submitSync({ taskId: task.id, status: input.status, findings: this.findings(input.findings) });
+        await this.service.submitSync({ taskId: task.id, status: input.status, findings: this.findings(input.findings), hotspots: this.hotspots(input.hotspots) });
         action = input.status === "PASS" ? "SYNC_PASS" : "SYNC_NEEDS_FIX";
-        warnings = this.ignoredFields(extra);
+        warnings = [...this.ignoredFields(extra), ...(task.noHotspots && input.hotspots?.length ? ["hotspots are off for this task: yours were not saved"] : [])];
         break;
       }
       case "INTEGRATE": {
-        const extra = given(["filesChanged", "tasksDone"]);
+        const extra = given(["filesChanged", "tasksDone", "hotspots"]);
         if (input.status !== "PASS" && input.status !== "NEEDS_FIX") {
           throw invalid("complete() during INTEGRATE requires 'status': \"PASS\" (merged, build and tests green) or \"NEEDS_FIX\" (with 'findings')");
         }
@@ -547,6 +552,13 @@ export class Swarm {
   /** Fields complete() got that the current phase does not use: dropped, not fatal, named in a warning. */
   private ignoredFields(extra: string[]): string[] {
     return extra.length ? [`ignored fields not used in this phase: ${extra.join(", ")}`] : [];
+  }
+
+  private hotspots(raw: RawHotspot[] | undefined): ReviewHotspot[] {
+    return (raw ?? []).map((h) => {
+      if (!(HOTSPOT_RISKS as readonly string[]).includes(h.risk)) throw invalid(`hotspot.risk must be one of ${HOTSPOT_RISKS.join(", ")}`);
+      return h as ReviewHotspot;
+    });
   }
 
   private findings(raw: RawFinding[] | undefined): SyncFinding[] {
@@ -1140,7 +1152,7 @@ export class Swarm {
         : {}),
       ...(phase === "SYNC" ? { reviewTargets: phases.reviewees(task).filter((a) => a !== this.me) } : {}),
       ...(snap.fixedFindings?.length ? { fixedFindings: snap.fixedFindings } : {}),
-      ...(full && phase === "SYNC" ? { syncReports: reports.map((r) => ({ agentId: r.agentId, status: r.status, findings: r.findings })) } : {}),
+      ...(full && phase === "SYNC" ? { syncReports: reports.map((r) => ({ agentId: r.agentId, status: r.status, findings: r.findings, ...(r.hotspots?.length ? { hotspots: r.hotspots } : {}) })) } : {}),
       ...(full && integration ? { integration: { status: integration.status, result: integration.result, commits: integration.commits, findings: integration.findings } } : {}),
       ...(fixRequests.length ? { fixRequests } : {}),
       ...(phase === "INTEGRATE" && snap.followUpBudget && phases.integrator(task) === this.me
@@ -1497,7 +1509,7 @@ export class Swarm {
         return done(
           "sync",
           ["send_message", "complete", "wait"],
-          `${fresh}Review ${scope} ('teamImplementations': their changed files and commits) against the task and the agreement: judge the code, not what its authors say about it. Work done in another branch is in its commits (git show <hash>); if a change listed in filesChanged is not visible to you, ask its author with send_message to commit it and wait() for the reply instead of reporting it missing. Look at the whole change, not only the listed files: git diff --stat ${(task.baseCommit ?? task.git?.commit ?? "<the task's base>").slice(0, 7)} <their last commit> — a file outside the agreement or unrelated to the task (pulled in by a merge, say) is an ERROR. Then read the diff one file at a time (git diff <base> <commit> -- <file>), not all of it at once: every line you read stays in your context.${task.syncRound > 1 ? " 'fixedFindings' lists what the fixes had to address: check each one." : ""}${spec ? ` Check each task in their tasksDone against its scenarios in ${spec}/specs/.` : ""} Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.`,
+          `${fresh}Review ${scope} ('teamImplementations': their changed files and commits) against the task and the agreement: judge the code, not what its authors say about it. Work done in another branch is in its commits (git show <hash>); if a change listed in filesChanged is not visible to you, ask its author with send_message to commit it and wait() for the reply instead of reporting it missing. Look at the whole change, not only the listed files: git diff --stat ${(task.baseCommit ?? task.git?.commit ?? "<the task's base>").slice(0, 7)} <their last commit> — a file outside the agreement or unrelated to the task (pulled in by a merge, say) is an ERROR. Then read the diff one file at a time (git diff <base> <commit> -- <file>), not all of it at once: every line you read stays in your context.${task.syncRound > 1 ? " 'fixedFindings' lists what the fixes had to address: check each one." : ""}${spec ? ` Check each task in their tasksDone against its scenarios in ${spec}/specs/.` : ""} Then complete({status: "PASS"}) (WARNING/INFO findings allowed) or complete({status: "NEEDS_FIX", findings}) with an ERROR naming the agent to fix in relatedAgent.${task.noHotspots ? "" : HOTSPOT_HINT}`,
           pending,
         );
       }

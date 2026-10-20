@@ -40,7 +40,7 @@ h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute
 .agent .top2,.runner .top2{display:flex;align-items:center;gap:8px;font-weight:600}.runner .top2 button{margin-left:auto}.runner .line{overflow-wrap:anywhere}
 .ONLINE .dot,.WORKING .dot{background:var(--ok)}.WAITING .dot{background:var(--warn)}.DEAD .dot{background:var(--bad)}
 .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;border:1px solid var(--line);color:var(--muted);font-weight:400}
-.badge.ONLINE,.badge.WORKING,.badge.PASS,.badge.READY_FOR_SYNC,.badge.RUNNING,.badge.running{color:var(--ok);border-color:var(--ok)}.badge.WAITING,.badge.IN_PROGRESS,.badge.queued{color:var(--warn);border-color:var(--warn)}.badge.DEAD,.badge.NEEDS_FIX,.badge.ERROR,.badge.BLOCKED,.badge.blocked{color:var(--bad);border-color:var(--bad)}.badge.STOPPED{color:var(--idle)}
+.badge.ONLINE,.badge.WORKING,.badge.PASS,.badge.READY_FOR_SYNC,.badge.RUNNING,.badge.running{color:var(--ok);border-color:var(--ok)}.badge.WAITING,.badge.IN_PROGRESS,.badge.queued{color:var(--warn);border-color:var(--warn)}.badge.DEAD,.badge.NEEDS_FIX,.badge.ERROR,.badge.BLOCKED,.badge.blocked{color:var(--bad);border-color:var(--bad)}.badge.STOPPED{color:var(--idle)}.badge.HIGH{color:var(--bad);border-color:var(--bad)}.badge.MEDIUM{color:var(--warn);border-color:var(--warn)}
 .task{margin-bottom:12px}.task.done{opacity:.75}.task h3{margin:0 0 2px;font-size:15px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .steps{display:flex;gap:4px;margin:10px 0}.step{flex:1;text-align:center;font:11px var(--mono);padding:4px 0;border-radius:5px;background:var(--bg);color:var(--muted);border:1px solid var(--line)}
 .step.past{color:var(--ok)}.step.now{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
@@ -183,10 +183,21 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 [hidden]{display:none!important}.nw{white-space:nowrap}.path{max-width:420px;overflow-wrap:anywhere}
 .app>div{min-width:0}
 @media (max-width:820px){.app{grid-template-columns:minmax(0,1fr)}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}nav{display:flex;overflow-x:auto}.grp,.foot{display:none}nav a{border-left:0;border-bottom:2px solid transparent;white-space:nowrap;padding:8px 12px}nav a.on{border-bottom-color:var(--accent)}.cols{grid-template-columns:1fr}.top{position:static;padding:8px 16px}main{padding:16px}.kpi{border-right:0;border-bottom:1px solid var(--line)}}
+.task h3.tl{cursor:pointer}.task h3.tl:hover{color:var(--accent)}
+.sidepanel{position:fixed;top:0;right:0;bottom:0;width:min(440px,100vw);z-index:40;background:var(--card);border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow-y:auto;padding:18px 20px 28px}.sidepanel[hidden]{display:none}
+.sidepanel .sp-top{display:flex;gap:10px;align-items:flex-start;justify-content:space-between}.sidepanel .sp-top h2{font-size:15px;margin:0;overflow-wrap:anywhere}.sidepanel .sp-x{flex:none;border:1px solid var(--line);background:var(--card2);color:var(--text);border-radius:6px;width:28px;height:28px;cursor:pointer}
+.sidepanel .sp-h{font-size:13px;font-weight:700;margin:22px 0 8px}.sidepanel .sp-sub{color:var(--muted);font-size:12px}
+.sidepanel .sp-crit{display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:13px}.sidepanel .sp-crit .dot{margin-top:5px;flex:none}.sidepanel .sp-crit .mk{color:var(--muted);font-size:11px;margin-left:6px}
+.sidepanel .sp-mode{font-size:15px;margin-bottom:6px}.sidepanel .sp-mode span{color:var(--muted)}.sidepanel .sp-ag{font-size:12.5px;color:var(--muted);margin:3px 0}.sidepanel .sp-ag b{color:var(--text);font-weight:500}
+.sidepanel .sp-step{padding:8px 10px;margin:4px 0;border-radius:8px;border:1px solid transparent}.sidepanel .sp-step.now{border-color:var(--ok);background:var(--okbg)}
+.sidepanel .sp-sh{display:flex;gap:8px;align-items:baseline}.sidepanel .sp-sh .dot{flex:none}.sidepanel .sp-sh b{font-size:13.5px}.sidepanel .sp-sh .rd{color:var(--muted);font-size:12px}.sidepanel .sp-sh .st{margin-left:auto;color:var(--muted);font-size:12.5px}
+.sidepanel .sp-sd{margin:4px 0 0 16px;font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}.sidepanel .sp-sd.mono{font-family:var(--mono)}
+.sidepanel .sp-step.ok .dot{background:var(--ok)}.sidepanel .sp-step.bad .dot{background:var(--bad)}.sidepanel .sp-step.wait .dot{background:var(--warn)}
 </style>
 </head>
 <body>
 <div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="sidepanel" id="sidepanel" hidden aria-label="Детали задачи"></div>
 <div class="app">
 <aside>
   <div class="brand">◆ agent network</div>
@@ -248,6 +259,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
         <label class="inline" title="Lead пишет план HTML-страницей: кто что делает, файлы, контракты, риски, вопросы к вам. Вы оставляете замечания к блокам, правите текст прямо в плане и утверждаете; соглашение и код — только после утверждения"><input type="checkbox" name="planReview"> План на утверждение: lead пишет план страницей, вы правите и утверждаете его</label>
         </details></div>
         <div class="prep"><label class="inline" title="Lead может добавить агентов из шаблонов spawn (runners.json), если решит, что работы больше, чем людей в команде. Каждый добавленный агент — отдельная сессия, примерно как ещё один участник по стоимости. Без галочки lead делит работу между выбранными агентами."><input type="checkbox" name="allowSpawn"> Lead может добавлять агентов</label></div>
+        <div class="prep"><label class="inline" title="Ревьюер в SYNC отмечает несколько самых рискованных мест (миграции, права, деньги, удаление данных, конкурентность, секреты и конфиг) с причиной: их стоит прочитать самому. Это не дефекты и на фазы не влияет. Отключается для этой задачи"><input type="checkbox" name="hotspots" checked> Ревьюер подсвечивает опасные места для ручной проверки</label></div>
         <div class="checks"><button type="submit">Создать задачу</button><span class="note" id="formnote"></span></div>
       </form>
       <div class="panel" id="schedules" hidden></div>
@@ -370,6 +382,7 @@ async function tick(){
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
   if(route.tab==="runners"){renderControl(S);renderAgents(S);renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();
+  renderPanel();
   if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y)} // a refresh never moves the page
 
 function current(){return PROJ.find(p=>p.id===route.project)}
@@ -626,7 +639,7 @@ $("others").addEventListener("change",checkSpecFolders);$("lead").addEventListen
 async function implementChange(name){const f=$("newtask");f.hidden=false;const lim=S&&S.control&&S.control.maxTaskCostUsd;f.elements.namedItem("maxCostUsd").value=lim?String(lim):"";await loadChanges();const sel=$("openspec");sel.value=name;sel.dispatchEvent(new Event("change"));
   f.elements.namedItem("title").value="";f.elements.namedItem("description").value="";f.scrollIntoView({behavior:"smooth",block:"start"});f.elements.namedItem("description").focus({preventScroll:true})}
 // after DONE: the lead's branch into the project, then the agents' worktrees away (they come back from HEAD for the next task)
-const branchState=new Map();
+const branchState=new Map();const returnState=new Map();
 function renderBranch(t){
   const key=route.project+"/"+t.id;const st=branchState.get(key)||{};const lead=t.agents[0];const wts=S.control.worktrees;
   const box=el("div","openspec");const done=t.status==="COMPLETED";box.append(el("b","",done?"Ветка lead'а":"Изменения в работе"));
@@ -648,7 +661,18 @@ function renderBranch(t){
   c.onclick=()=>run("/api/worktrees/clean",{},"Убрать worktree и ветки агентов ("+wts.join(", ")+")?"+(m?"":" Ветка lead'а ещё не влита: git её не удалит.")+" Перед следующей задачей они создадутся заново от текущего HEAD проекта.",
     res=>res.result.map(x=>x.id+": "+(x.removed?"папка убрана":"папка осталась")+(x.branchDeleted?", ветка удалена":"")+(x.note?" — "+x.note:"")).join("\n"));
   r.prepend(diffButton(t,key));
-  r.append(c);box.append(r);
+  r.append(c);
+  const rs=returnState.get(key)||{};
+  const rb=el("button","ghost",rs.open?"Не возвращать":"Вернуть с комментарием");rb.type="button";rb.title="Результат не устроил: опишите, что исправить, агенты получат новую задачу с вашим комментарием";
+  rb.onclick=()=>{returnState.set(key,{...rs,open:!rs.open});render();setTimeout(()=>{const ta=document.querySelector(".retcomment textarea");if(ta)ta.focus()},0)};r.append(rb);box.append(r);
+  if(rs.open){const f=el("div","checks retcomment");const ta=document.createElement("textarea");ta.rows=4;ta.style.width="100%";ta.placeholder="Что не так и что исправить";ta.value=rs.text||"";
+    ta.oninput=()=>{rs.text=ta.value;returnState.set(key,rs)};
+    const go=el("button","",rs.pending?"…":"Отправить");go.type="button";go.disabled=!!rs.pending;
+    go.onclick=async()=>{if(!ta.value.trim()){alert("Напишите комментарий");return}
+      returnState.set(key,{open:true,text:ta.value,pending:true});render();
+      try{const res=await post("/api/tasks/"+encodeURIComponent(t.id)+"/return",{comment:ta.value});returnState.delete(key);branchState.set(key,{output:"возвращено: создана задача "+res.task.id})}
+      catch(e){returnState.set(key,{open:true,text:ta.value});branchState.set(key,{error:e.message})}await tick()};
+    f.append(ta,go);box.append(f)}
   if(st.output||st.error)box.append(el("pre","log"+(st.error?" err":""),st.error||st.output));
   appendDiff(box,t,key);
   return box;
@@ -924,11 +948,12 @@ function renderStats(t){
   return box;
 }
 /** Text that may be long: in full when short, else a preview that opens on click (the open state survives the refresh by its key). */
+function hotRow(h,who){const row=el("div","find");row.append(el("span","badge "+h.risk,h.risk));const b=el("div","");b.append(el("div","txt",h.reason),el("div","muted mono",h.files.join(", ")+(who?" · "+who:"")));row.append(b);return row}
 function longText(text,key,limit){text=text||"";if(text.length<=limit)return el("div","txt",text);
   const d=el("details","more");d.dataset.key=key;const sm=el("summary");sm.append(el("span","pv",text.slice(0,limit).replace(/\s+\S*$/,"")+"… "),el("span","tg"));d.append(sm,el("div","txt full",text));return d}
 function renderTask(t){
   const c=el("div","card task"+(t.status!=="ACTIVE"&&t.status!=="BLOCKED"?" done":""));
-  const hd=el("div");const h3=el("h3","",t.id+" · "+t.title);const sch=scheduleOf(t);if(sch)h3.append(badge("","по расписанию "+sch));h3.append(badge(t.queue,QUEUE[t.queue]||t.queue));if(t.openspec)h3.append(badge("","OpenSpec"));hd.append(h3);hd.append(el("div","muted",t.description));
+  const hd=el("div");const h3=el("h3","tl",t.id+" · "+t.title);h3.title="детали задачи";h3.onclick=()=>openPanel(t.id);const sch=scheduleOf(t);if(sch)h3.append(badge("","по расписанию "+sch));h3.append(badge(t.queue,QUEUE[t.queue]||t.queue));if(t.openspec)h3.append(badge("","OpenSpec"));hd.append(h3);hd.append(el("div","muted",t.description));
   const chain=[];if(t.parentTaskId)chain.push("follow-up от "+t.parentTaskId);if(t.followUps&&t.followUps.length)chain.push("follow-up задачи: "+t.followUps.join(", "));if(t.followUpBudget)chain.push("бюджет follow-up: "+t.followUpBudget.used+"/"+t.followUpBudget.max);
   if(chain.length)hd.append(el("div","muted",chain.join(" · ")));
   if(t.openspec)hd.append(renderOpenspec(t));
@@ -983,8 +1008,11 @@ function renderTask(t){
       if(im.filesChanged.length){const fd=el("details","files");fd.dataset.key="changed-"+id;fd.append(el("summary","muted","изменённые файлы ("+im.filesChanged.length+")"),el("div","muted mono",im.filesChanged.join(", ")));sec.append(fd)}card.append(sec)}
     if(rep&&rep.findings.length){const sec=el("div","asec");sec.append(el("div","lbl","Ревью раунда "+t.syncRound));
       rep.findings.forEach((f,i)=>{const row=el("div","find");row.append(el("span","badge "+f.severity,f.severity),longText(f.description+(f.relatedAgent?" → "+f.relatedAgent:""),"find-"+id+"-"+i,200));sec.append(row)});card.append(sec)}
+    if(rep&&rep.hotspots&&rep.hotspots.length){const sec=el("div","asec");sec.append(el("div","lbl","Проверить вручную"));rep.hotspots.forEach(h=>sec.append(hotRow(h,h.relatedAgent?"→ "+h.relatedAgent:"")));card.append(sec)}
     cards.append(card);
   }
+  {const hs=[];(t.syncReports||[]).forEach(r=>(r.hotspots||[]).forEach(h=>hs.push({h,r})));if(hs.length){hs.sort((a,b)=>(a.h.risk==="HIGH"?0:1)-(b.h.risk==="HIGH"?0:1)||b.r.round-a.r.round);
+    const box=el("div","acard");box.append(el("div","lbl","Куда смотреть вручную ("+hs.length+")"));hs.forEach(x=>box.append(hotRow(x.h,x.r.agentId+", раунд "+x.r.round)));c.append(box)}}
   c.append(cards);
   t.integrations.filter(x=>x.round===t.syncRound).slice(-1).forEach(x=>{const d=el("div","acard icard");const hd=el("div","ah");hd.append(el("b","","Интеграция"),el("span","muted",x.agentId),el("span","stats2"));hd.lastChild.append(badge(x.status));d.append(hd);
     d.append(longText(x.result,"integ",360));if(x.commits.length)d.append(el("div","muted mono","commits: "+x.commits.join(", ")));
@@ -1064,9 +1092,53 @@ function renderSchedules(s){
   const empty=!list.length?[el("div","muted spad","Расписаний нет. «+ Расписание» — задача по cron: например, каждую ночь искать и чинить нестабильные тесты.")]:[];
   box.replaceChildren(ph,...(schedForm?[schedForm.el]:[]),...empty,...rows)}
 function scheduleOf(t){for(const x of (S.schedules||[]))if(x.runs.some(r=>r.taskId===t.id))return x.id;return null}
+// side panel of a task: criteria, route, progress; everything is built from what /api/state already has
+let panelTask=null;
+function panelCriteria(t){
+  const out=[];const ap=new Set((t.agreement&&t.agreement.approvedBy)||[]);
+  ((t.agreement&&t.agreement.assignments)||[]).forEach(a=>out.push({text:a.responsibility,done:ap.has(a.agentId),mark:ap.has(a.agentId)?"подтверждено":"ждёт подтверждения"}));
+  Object.keys(t.subtasks||{}).forEach(id=>(t.subtasks[id]||[]).filter(x=>x.status!=="DROPPED").forEach(x=>out.push({text:x.title,done:x.status==="DONE",mark:x.status==="DONE"?"сделано":x.status==="DOING"?"в работе":""})));
+  return out}
+function panelRoute(t){
+  const rs=S.control?S.control.runners:[];const ag=S.agents||[];
+  return {mode:t.agents.length===1?"Соло":"Команда",workers:t.agents.length,agents:t.agents.map((id,i)=>{
+    const r=rs.find(x=>x.id===id);const a=ag.find(x=>x.id===id);
+    const model=r&&r.model||(t.stats&&(t.stats.agents.find(x=>x.agentId===id)||{models:[]}).models[0])||"";
+    return {id,lead:i===0,role:(a&&a.role)||"",type:(a&&a.type)||"",model}})}}
+function panelSteps(t){
+  const st=[];const last=(t.phaseHistory||[]).length-1;
+  (t.phaseHistory||[]).forEach((p,i)=>st.push({at:p.at,name:p.phase,round:0,cls:i===last&&t.status==="ACTIVE"?"wait":"ok",status:i===last&&t.status==="ACTIVE"?"в работе":"пройдено",detail:"",now:i===last&&t.status==="ACTIVE"}));
+  const rounds={};(t.syncReports||[]).forEach(r=>{(rounds[r.round]=rounds[r.round]||[]).push(r)});
+  Object.keys(rounds).forEach(k=>{const rs=rounds[k];const bad=rs.some(r=>r.status==="NEEDS_FIX");
+    const f=[].concat(...rs.map(r=>r.findings||[])).filter(x=>x.severity==="ERROR");
+    st.push({at:rs.map(r=>r.createdAt).sort().pop(),name:"Ревью",round:Number(k),cls:bad?"bad":"ok",status:bad?"нужны правки":"одобрено",detail:bad?f.map(x=>x.description).join("; "):"",now:false})});
+  Object.keys(t.builds||{}).forEach(id=>{const b=t.builds[id];
+    st.push({at:b.at,name:"Тесты",round:0,cls:b.ok?"ok":"bad",status:b.ok?"прошло":b.timedOut?"таймаут":"упало",detail:"$ "+b.command+(b.tests?" · "+(b.tests.failed?b.tests.failed+"/"+b.tests.total+" упало":b.tests.total+" тестов"):"")+" · "+fmtMs(b.durationMs),mono:true,now:false})});
+  (t.integrations||[]).forEach(r=>st.push({at:r.createdAt,name:"Интеграция",round:r.round,cls:r.status==="PASS"?"ok":"bad",status:r.status==="PASS"?"прошло":"нужны правки",detail:r.result||"",now:false}));
+  return st.sort((a,b)=>(b.at||"").localeCompare(a.at||""))}
+function renderPanel(){
+  const box=$("sidepanel");const t=panelTask&&S?S.tasks.find(x=>x.id===panelTask):null;
+  if(!t){box.hidden=true;box.replaceChildren();return}
+  const keep=box.scrollTop;box.hidden=false;
+  const top=el("div","sp-top");top.append(el("h2","",t.id+" · "+t.title));const x=el("button","sp-x","✕");x.type="button";x.title="закрыть (Esc)";x.setAttribute("aria-label","закрыть");x.onclick=closePanel;top.append(x);
+  const kids=[top,el("div","sp-sub",t.description||"")];
+  const cr=panelCriteria(t);
+  if(cr.length){kids.push(el("div","sp-h","Критерии"));cr.forEach(c=>{const r=el("div","sp-crit");r.append(el("span","dot "+(c.done?"ONLINE":"WAITING")));const b=el("div","",c.text);if(c.mark)b.append(el("span","mk",c.mark));r.append(b);kids.push(r)})}
+  const ro=panelRoute(t);
+  kids.push(el("div","sp-h","Маршрут"));
+  const m=el("div","sp-mode",ro.mode);m.append(el("span",""," · воркеров: "+ro.workers));kids.push(m);
+  ro.agents.forEach(a=>{const r=el("div","sp-ag");r.append(el("b","",a.id+(a.lead?" (lead)":"")),document.createTextNode([a.role||a.type,a.model].filter(Boolean).map((x,i)=>(i?" · ":": ")+x).join("")));kids.push(r)});
+  kids.push(el("div","sp-h","Ход тикета"));
+  const steps=panelSteps(t);if(!steps.length)kids.push(el("div","sp-sub","Пока нет шагов."));
+  steps.forEach(s=>{const d=el("div","sp-step "+s.cls+(s.now?" now":""));const h=el("div","sp-sh");h.append(el("span","dot"),el("b","",s.name),...(s.round?[el("span","rd","круг "+s.round)]:[]),el("span","st",s.status));d.append(h);
+    if(s.detail)d.append(el("div","sp-sd"+(s.mono?" mono":""),s.detail));kids.push(d)});
+  box.replaceChildren(...kids);box.scrollTop=keep}
+function openPanel(id){panelTask=id;renderPanel()}
+function closePanel(){panelTask=null;renderPanel()}
+addEventListener("keydown",e=>{if(e.key==="Escape"&&panelTask&&!document.querySelector(".ovl,.modal")&&!(document.activeElement&&/TEXTAREA|INPUT/.test(document.activeElement.tagName)))closePanel()});
 function renderTasks(){
   renderSchedules(S);
-  if(document.activeElement&&document.activeElement.matches&&document.activeElement.matches("#tasks .compose textarea, #tasks .dcomment textarea"))return; // you are writing to a lead: the refresh waits
+  if(document.activeElement&&document.activeElement.matches&&document.activeElement.matches("#tasks .compose textarea, #tasks .dcomment textarea, #tasks .retcomment textarea"))return; // you are writing to a lead: the refresh waits
   const s=S;$("newbtn").hidden=!s.control;if(!s.control)$("newtask").hidden=true;
   $("tasks-lead").textContent="Текущие и завершённые задачи проекта "+s.project.name+"."+(s.control?"":" Только чтение: чтобы ставить задачи, запустите UI с --runners.");
   updateForm(s);
@@ -1115,7 +1187,7 @@ $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev
   const others=[...$("others").querySelectorAll("input:checked")].map(i=>i.value);const v=n=>f.elements.namedItem(n);
   if(!v("openspec").value&&(!v("title").value.trim()||!v("description").value.trim())){note.className="note err";note.textContent="Нужны название и описание (или выберите OpenSpec change).";return}
   btn.disabled=true;note.className="note";note.textContent="создаю…";
-  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,allowSpawn:v("allowSpawn").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value}:{openspec:v("openspec").value})});
+  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,allowSpawn:v("allowSpawn").checked,hotspots:v("hotspots").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value}:{openspec:v("openspec").value})});
     note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("openspec").value="";v("proposes").value="";$("proposes-row").hidden=true;await tick()}
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
 

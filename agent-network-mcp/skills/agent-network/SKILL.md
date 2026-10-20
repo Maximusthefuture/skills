@@ -63,6 +63,10 @@ nextAction:
   then `complete({status: "PASS"})` or `complete({status: "NEEDS_FIX", findings: [{severity, description, relatedAgent, files}]})`.
   NEEDS_FIX needs at least one `ERROR` finding (a real defect or a broken agreement); `WARNING`/`INFO` go with PASS.
   Name the agent who must fix the problem in `relatedAgent`. After a fix round only the fixes are reviewed.
+  With either verdict you may add `hotspots: [{risk: "HIGH"|"MEDIUM", reason, files}]` (only if the step's hint offers them: the operator can turn them off):
+  the few places a human should read by hand even when the tests are green (DB migrations, auth and permissions, money, deleting data,
+  concurrency, secrets/config, external calls, large or non-obvious changes). 0-7, only real ones, each with a concrete reason. They are
+  not defects: they never make NEEDS_FIX and move no phase; the operator sees them on the task page.
   Judge the code and commits against the task and the agreement, not the authors' account (SYNC does not show their summaries);
   after a fix round `fixedFindings` lists what the fixes had to address. Work done in another branch is in its commits
   (`git show <hash>`); if a listed change is not visible to you, ask its author to commit it (`send_message`, then `wait()`)

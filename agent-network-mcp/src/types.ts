@@ -108,6 +108,11 @@ export interface Task {
    */
   planReview?: true;
   /**
+   * The operator turned off the reviewers' hotspots (places for its manual review, SyncReport.hotspots); on by default,
+   * so only "off" is stored.
+   */
+  noHotspots?: true;
+  /**
    * The operator lets the lead add agents from the spawn templates (spawn_agent). Without it the lead splits the work
    * among the team it was given: every added agent is a session of its own and costs as much as one of the team.
    */
@@ -217,12 +222,26 @@ export interface SyncFinding {
   files?: string[];
 }
 
+export const HOTSPOT_RISKS = ["HIGH", "MEDIUM"] as const;
+export type HotspotRisk = (typeof HOTSPOT_RISKS)[number];
+
+/** A place the operator should read by hand (a migration, auth, money, deletion...): not a defect, it moves no phase. */
+export interface ReviewHotspot {
+  risk: HotspotRisk;
+  /** What is risky there and what to look at. */
+  reason: string;
+  files: string[];
+  relatedAgent?: string;
+}
+
 export interface SyncReport {
   id: string;
   taskId: string;
   agentId: string;
   status: SyncStatus;
   findings: SyncFinding[];
+  /** Places for the operator's manual review (absent in older reports and when the task turned them off). */
+  hotspots?: ReviewHotspot[];
   createdAt: string;
   /** Extension: SYNC round this report belongs to (reports of older rounds are history). */
   round: number;

@@ -113,6 +113,11 @@ export function registerAdvancedTools(server: McpServer, service: NetworkService
         )
         .max(100)
         .optional(),
+      hotspots: z
+        .array(z.object({ risk: z.enum(["HIGH", "MEDIUM"]), reason: text, files: z.array(filePath).min(1).max(100), relatedAgent: z.string().optional() }))
+        .max(50)
+        .optional()
+        .describe("Places for the operator's manual review; they do not move the phase."),
     },
     async (a) => service.submitSync(a),
   );

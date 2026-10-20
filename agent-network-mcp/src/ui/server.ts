@@ -438,7 +438,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const body = await readJson(req);
 
     if (path === "/api/tasks") {
-      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown; allowSpawn?: unknown };
+      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown; allowSpawn?: unknown; hotspots?: unknown };
       // a preset (fast / standard / thorough) sets the three; without one, each comes as it is
       const prep = typeof b.depth === "string" && b.depth !== "custom" ? depthFlags(b.depth) : { clarify: b.clarify === true, grill: b.grill === true, planReview: b.planReview === true };
       // the page sends "" for "no limit"; a field it leaves out gets the config's maxTaskCostUsd
@@ -456,6 +456,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         ...(prep.planReview ? { planReview: true } : {}),
         ...(prep.grill ? { grill: true } : {}),
         ...(b.allowSpawn === true ? { allowSpawn: true } : {}),
+        ...(b.hotspots === false ? { noHotspots: true } : {}),
         ...(typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? { verifyCommand: b.verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
@@ -485,7 +486,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       await acted(id, planAction[2] === "approve" ? `approved plan v${r.state.approved!.version}` : `plan feedback to ${r.message?.to}`);
       return json(201, { plan: r.state, to: r.message?.to ?? null });
     }
-    const taskAction = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel|message|merge|review|revert)$/.exec(path);
+    const taskAction = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel|message|merge|review|revert|return)$/.exec(path);
     if (taskAction) {
       const id = decodeURIComponent(taskAction[1]!);
       if (taskAction[2] === "revert") {
@@ -493,6 +494,23 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         const reverted = await operator.revertTask({ taskId: id, project: task.merged ? (await leadBranch(p, task).catch(() => null))?.project ?? p.projectDir : p.projectDir });
         await acted(id, `reverted the merge of ${id}`);
         return json(200, { task: reverted });
+      }
+      if (taskAction[2] === "return") {
+        // a finished task sent back with a free-text comment: a follow-up task for the same agents
+        const comment = String((body as { comment?: unknown }).comment ?? "").trim();
+        if (!comment) throw new AppError("INVALID_INPUT", "Write what to change: the comment must not be empty");
+        const task = await operator.tasks.get(id);
+        if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `Only a finished task can be returned; ${id} is ${task.phase} (${task.status})`);
+        const own = task.agents.filter((a) => !task.spawned?.some((s) => s.id === a));
+        const followUp = await operator.createTaskAsOperator({
+          title: `Rework ${task.id}: ${task.title}`.slice(0, 200),
+          description: `The operator got the result of ${task.id} ("${task.title}") and returns it with this comment:\n${comment}\n\nFix it in the same branches as ${task.id}; if part of the comment is wrong, say why in the result.`,
+          agents: own.length >= 2 ? own : task.agents,
+          ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+          ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
+        });
+        await acted(id, `returned with a comment: ${followUp.id}`);
+        return json(201, { task: followUp });
       }
       if (taskAction[2] === "review") {
         // the operator's comments on lines of a diff: to the lead while the task runs, a follow-up task once it is done

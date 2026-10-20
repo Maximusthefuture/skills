@@ -22,6 +22,7 @@ import { MessageStore } from "./stores/messageStore.js";
 import { SubtaskStore } from "./stores/subtaskStore.js";
 import { SyncStore } from "./stores/syncStore.js";
 import { TaskStore } from "./stores/taskStore.js";
+import { HOTSPOT_RISKS } from "./types.js";
 import type {
   Agent,
   AgentIdentity,
@@ -36,6 +37,7 @@ import type {
   NetworkEvent,
   QuestionChoices,
   ReviewComment,
+  ReviewHotspot,
   SpawnRole,
   SubtaskList,
   SyncFinding,
@@ -92,6 +94,8 @@ export interface NewTaskInput {
   grill?: boolean;
   /** The lead may add agents from the spawn templates (spawn_agent); off by default. */
   allowSpawn?: boolean;
+  /** The reviewers mark no hotspots (places for the operator's manual review); they do by default. */
+  noHotspots?: boolean;
 }
 
 /**
@@ -341,6 +345,7 @@ export class NetworkService {
       ...(input.planReview ? { planReview: true } : {}),
       ...(input.grill ? { grill: true } : {}),
       ...(input.allowSpawn ? { allowSpawn: true } : {}),
+      ...(input.noHotspots ? { noHotspots: true } : {}),
     });
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
@@ -1405,24 +1410,31 @@ ${feedbackText(fb)}`;
 
   // ---------------------------------------------------------------- sync
 
-  async submitSync(input: { taskId: string; status: SyncStatus; findings?: SyncFinding[] }): Promise<{ report: SyncReport; phase: Task["phase"] }> {
+  async submitSync(input: { taskId: string; status: SyncStatus; findings?: SyncFinding[]; hotspots?: ReviewHotspot[] }): Promise<{ report: SyncReport; phase: Task["phase"] }> {
     const findings = (input.findings ?? []).map((f) => ({
       ...f,
       ...(f.files ? { files: f.files.map(assertRelativeFilePath) } : {}),
       ...(f.relatedAgent ? { relatedAgent: assertAgentId(f.relatedAgent, "relatedAgent") } : {}),
     }));
+    const hotspots = (input.hotspots ?? []).map((h): ReviewHotspot => {
+      if (!(HOTSPOT_RISKS as readonly string[]).includes(h.risk)) throw new AppError("INVALID_INPUT", `hotspot.risk must be one of ${HOTSPOT_RISKS.join(", ")}`);
+      if (!h.reason?.trim()) throw new AppError("INVALID_INPUT", "every hotspot needs a 'reason': what is risky there and what to look at");
+      if (!h.files?.length) throw new AppError("INVALID_INPUT", "every hotspot needs 'files': where the operator should look");
+      return { risk: h.risk, reason: h.reason, files: h.files.map(assertRelativeFilePath), ...(h.relatedAgent ? { relatedAgent: assertAgentId(h.relatedAgent, "relatedAgent") } : {}) };
+    });
     checkVerdict(input.status, findings);
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "SYNC");
+      if (task.noHotspots) hotspots.length = 0; // the operator turned them off for this task: dropped, the caller warns
       if (!this.phases.reviewers(task).includes(this.me)) {
         throw new AppError("NOT_ASSIGNED", `Round ${task.syncRound} reviews only the fixes of ${this.phases.reviewees(task).join(", ")}; you have nothing to review. Wait.`);
       }
-      for (const f of findings) {
+      for (const f of [...findings, ...hotspots]) {
         if (f.relatedAgent && !task.agents.includes(f.relatedAgent)) throw new AppError("NOT_ASSIGNED", `relatedAgent '${f.relatedAgent}' is not part of ${task.id}`);
       }
       const round = await this.syncs.list(task.id, task.syncRound);
       if (round.some((r) => r.agentId === this.me)) throw new AppError("ALREADY_COMPLETED", `You already submitted a sync report for round ${task.syncRound}`);
-      const report = await this.syncs.create({ taskId: task.id, agentId: this.me, status: input.status, findings, round: task.syncRound });
+      const report = await this.syncs.create({ taskId: task.id, agentId: this.me, status: input.status, findings, ...(hotspots.length ? { hotspots } : {}), round: task.syncRound });
       await this.emit({ type: "SYNC_REPORT_CREATED", taskId: task.id, sourceAgent: this.me, payload: { reportId: report.id, agentId: this.me, status: report.status, round: report.round } });
       return { report };
     });
@@ -1478,6 +1490,7 @@ ${feedbackText(fb)}`;
           ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
           ...(task.maxCostUsd !== undefined ? { maxCostUsd: task.maxCostUsd } : {}),
           ...(task.allowSpawn ? { allowSpawn: true } : {}),
+          ...(task.noHotspots ? { noHotspots: true } : {}),
           parentTaskId: task.id,
           rootTaskId: rootId,
           ...(base ? { baseCommit: base } : {}),

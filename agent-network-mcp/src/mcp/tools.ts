@@ -20,6 +20,13 @@ const finding = z.object({
   files: z.array(z.string()).optional().describe("Project-relative paths, e.g. ['src/main/java/A.java']"),
 });
 
+const hotspot = z.object({
+  risk: z.string().describe("HIGH or MEDIUM"),
+  reason: z.string().describe("What is risky there and what the operator should look at, concretely"),
+  files: z.array(z.string()).describe("Project-relative paths where to look, e.g. ['src/main/resources/db/changelog/003.xml']"),
+  relatedAgent: z.string().optional().describe("Agent id whose change it is"),
+});
+
 /** The tools an agent sees: swarm_context, create_task, send_message, propose, plan, subtasks, complete, build, spawn_agent, delegate, resolve_comments, wait. */
 export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit?: string[] } = {}): void {
   const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, handler: (args: z.infer<z.ZodObject<S>>, signal: AbortSignal) => Promise<unknown>) => {
@@ -108,7 +115,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
   );
   tool(
     "complete",
-    "Finish your step. DISCUSS: no arguments = approve the agreement. IMPLEMENT: {result, filesChanged?, commits?, tasksDone?} = your part is ready. SYNC: {status: PASS|NEEDS_FIX, findings?} = your review (NEEDS_FIX needs an ERROR with relatedAgent). INTEGRATE (lead): {status, result, commits?, findings?, followUps?} after merging and a green build.",
+    "Finish your step. DISCUSS: no arguments = approve the agreement. IMPLEMENT: {result, filesChanged?, commits?, tasksDone?} = your part is ready. SYNC: {status: PASS|NEEDS_FIX, findings?, hotspots?} = your review (NEEDS_FIX needs an ERROR with relatedAgent; hotspots = places for the operator to read by hand, they do not move the phase). INTEGRATE (lead): {status, result, commits?, findings?, followUps?} after merging and a green build.",
     {
       result: z.string().optional().describe("IMPLEMENT: what you did. INTEGRATE: what was merged, the build/test outcome"),
       filesChanged: z.array(z.string()).optional().describe("IMPLEMENT only: project-relative paths you changed"),
@@ -116,6 +123,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
       tasksDone: z.array(z.string()).optional().describe("OpenSpec task: your finished tasks.md numbers"),
       status: z.string().optional().describe("SYNC / INTEGRATE: PASS or NEEDS_FIX"),
       findings: z.array(finding).optional().describe("SYNC / INTEGRATE; NEEDS_FIX needs an ERROR"),
+      hotspots: z.array(hotspot).optional().describe("SYNC: the riskiest places for the operator's manual review (migrations, auth, money, deletion, concurrency, secrets/config, external calls); 0-7, only real ones. Not defects: those are findings. Ignored when the task turned hotspots off"),
       followUps: z.array(followUp).optional().describe("INTEGRATE PASS, when followUps.remaining > 0: new tasks for work that is left"),
     },
     async (a) => swarm.complete(a),

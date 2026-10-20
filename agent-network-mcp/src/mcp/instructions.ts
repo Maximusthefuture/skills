@@ -11,7 +11,7 @@ IMPORTANT RULES:
    Mark your subtasks done as you go: every swarm tool response carries nextAction, and nextAction "respond" tells you when another agent waits for your answer.
    If your part has several steps, plan them with subtasks({add: [...]}), start one with subtasks({start: id}) and mark it done with subtasks({done: [id]}) when it is finished; complete() is refused while subtasks are open (drop unneeded ones with a reason). The list survives a restart.
    If task.baseCommit is set (a follow-up task) and you work in your own git branch, merge it first (git merge <baseCommit>).
-7. During SYNC, inspect the work listed in "reviewTargets" (see "teamImplementations": judge the code, not the authors' account) and report PASS or NEEDS_FIX. NEEDS_FIX only for real defects (ERROR findings); WARNING/INFO go with PASS.
+7. During SYNC, inspect the work listed in "reviewTargets" (see "teamImplementations": judge the code, not the authors' account) and report PASS or NEEDS_FIX. NEEDS_FIX only for real defects (ERROR findings); WARNING/INFO go with PASS. Where the hint offers "hotspots", add the few riskiest places for the human operator to read by hand (not defects; they move no phase).
    During INTEGRATE the lead brings everyone's work together, runs the build and all tests (the build tool: short answer, full log in a file), and reports the result.
 8. If you have nothing useful to do, call wait(). It blocks until something needs your attention.
 9. Call wait() to wait; swarm_context is for reading the state when you need it (swarm_context({full: true}) shows everything after a restart).

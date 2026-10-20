@@ -30,6 +30,7 @@ const USAGE = `Usage:
                                 --plan: the lead first writes an HTML plan; you comment, edit and approve it on the page, then it proposes
                                 --spawn: the lead may add agents from the spawn templates (off: it splits the work among --agents)
                                 --depth fast|standard|thorough: the preparation before the agreement (thorough = grill + plan to approve)
+                                --no-hotspots: reviewers do not mark places for your manual review (on by default)
                                 --grill: the lead first grills you about the task in rounds of questions, then you confirm its summary
   agent-network-mcp task list [--network-dir <abs path>]
   agent-network-mcp task stats [--id <task-001>] [--runners runners.json] [--network-dir <abs path>]
@@ -95,6 +96,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       plan: { type: "boolean" },
       spawn: { type: "boolean" },
       grill: { type: "boolean" },
+      "no-hotspots": { type: "boolean" },
       depth: { type: "string" },
       runners: { type: "string" },
       rounds: { type: "string" },
@@ -182,6 +184,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       ...(values.plan ? { planReview: true } : {}),
       ...(values.grill ? { grill: true } : {}),
       ...(values.spawn ? { allowSpawn: true } : {}),
+      ...(values["no-hotspots"] ? { noHotspots: true } : {}),
       agents: values.agents.split(",").map((a) => a.trim()).filter(Boolean),
       ...(values["max-fix-rounds"] !== undefined ? { maxFixRounds: Number(values["max-fix-rounds"]) } : {}),
       ...(values.verify ? { verifyCommand: values.verify } : {}),

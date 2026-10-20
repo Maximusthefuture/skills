@@ -1097,3 +1097,58 @@ describe("the operator's review comments", () => {
     expect((await operator.reviewComments(t.id)).map((c) => [c.id, c.status, c.note])).toEqual([["rc-1", "fixed", "limit = 30, from config"], ["rc-2", "declined", "ApiTest already covers it"]]);
   });
 });
+
+describe("hotspots: places for the operator's manual review", () => {
+  const hot = { risk: "HIGH", reason: "drops a column without expand/contract", files: ["db/changelog/003.xml"], relatedAgent: "backend" };
+
+  it("are saved with either verdict, offered in the hint, and move no phase", async () => {
+    const { s, services, task } = await setup();
+    await task();
+    await toSync(s);
+    expect(String((await s.reviewer.context()).hint)).toContain("hotspots");
+    expect(await s.backend.complete({ status: "PASS", hotspots: [hot] })).toMatchObject({ action: "SYNC_PASS", nextAction: "wait" });
+    expect(await s.reviewer.complete({ status: "NEEDS_FIX", findings: [{ severity: "ERROR", description: "broken", relatedAgent: "backend" }], hotspots: [{ risk: "MEDIUM", reason: "new auth rule", files: ["src/Auth.java"] }] }))
+      .toMatchObject({ phaseChanged: { from: "SYNC", to: "IMPLEMENT" } });
+    const reports = await services.reviewer!.syncs.list("task-001");
+    expect(reports.find((r) => r.agentId === "backend")?.hotspots).toEqual([hot]);
+    expect(reports.find((r) => r.agentId === "reviewer")?.hotspots).toEqual([{ risk: "MEDIUM", reason: "new auth rule", files: ["src/Auth.java"] }]);
+  });
+
+  it("must be well formed: risk, reason, files, relative paths, a task member", async () => {
+    const { s, task } = await setup();
+    await task();
+    await toSync(s);
+    for (const bad of [{ ...hot, risk: "CRITICAL" }, { ...hot, reason: " " }, { ...hot, files: [] }, { ...hot, files: ["/etc/passwd"] }, { ...hot, relatedAgent: "ghost" }]) {
+      expect(await failure(s.backend, s.backend.complete({ status: "PASS", hotspots: [bad] }))).toMatchObject({ error: expect.stringMatching(/INVALID_INPUT|NOT_ASSIGNED/) });
+    }
+    expect(await s.backend.complete({ status: "PASS", hotspots: [] })).toMatchObject({ action: "SYNC_PASS" }); // none is fine
+  });
+
+  it("are ignored with a warning outside SYNC", async () => {
+    const { s, task } = await setup();
+    await task();
+    await toImplement(s);
+    const res = await s.backend.complete({ result: "api", filesChanged: ["src/Api.java"], commits: ["abc123"], hotspots: [hot] });
+    expect(res.warnings).toEqual(expect.arrayContaining([expect.stringContaining("hotspots")]));
+  });
+
+  it("can be turned off for a task: not offered, not saved, a warning, and follow-ups keep the choice", async () => {
+    const { s, services, operator } = await setup();
+    const t = await operator.createTaskAsOperator({ title: "Quiet", description: "d", agents: ["backend", "reviewer"], noHotspots: true, maxFollowUps: 1 });
+    expect(t.noHotspots).toBe(true);
+    await toSync(s);
+    expect(String((await s.reviewer.context()).hint)).not.toContain("hotspots");
+    const res = await s.backend.complete({ status: "PASS", hotspots: [hot] });
+    expect(res.warnings).toEqual(expect.arrayContaining([expect.stringContaining("hotspots are off")]));
+    expect((await services.backend!.syncs.list(t.id)).find((r) => r.agentId === "backend")?.hotspots).toBeUndefined();
+    await s.reviewer.complete({ status: "PASS" });
+    const done = await s.backend.complete({ status: "PASS", result: "merged, build green", followUps: [{ title: "More", description: "Add the missing validation to src/Api.java: backend changes it, reviewer adds the test for it." }] });
+    const child = (done.followUpsCreated as { id: string }[])[0]!;
+    expect((await services.backend!.tasks.find(child.id))?.noHotspots).toBe(true);
+  });
+
+  it("a task without the flag has hotspots on", async () => {
+    const { operator } = await setup();
+    expect((await operator.createTaskAsOperator({ title: "Loud", description: "d", agents: ["backend", "reviewer"] })).noHotspots).toBeUndefined();
+  });
+});

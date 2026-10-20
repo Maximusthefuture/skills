@@ -2,6 +2,7 @@ import { request } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Swarm } from "../../src/mcp/swarm.js";
+import { RunnerPool } from "../../src/ui/runners.js";
 import { NetworkService } from "../../src/service.js";
 import { FileStore } from "../../src/storage/fileStore.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
@@ -127,7 +128,9 @@ describe("ui server", () => {
     const page = await fetch(ui.url);
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
-    expect(await page.text()).toContain("Agent Network");
+    const html = await page.text();
+    expect(html).toContain("Agent Network");
+    expect(html).toContain('id="sidepanel"');
 
     const state: any = await (await fetch(`${ui.url}/api/state`)).json();
     expect(state.tasks).toEqual([expect.objectContaining({ id: "task-001", phase: "DISCUSS" })]);
@@ -140,5 +143,40 @@ describe("ui server", () => {
       request({ host: "127.0.0.1", port, path: "/api/state", headers: { host: "evil.example.com" } }, (res) => { res.resume(); resolve(res.statusCode ?? 0); }).on("error", reject).end();
     });
     expect(status).toBe(403);
+  });
+});
+
+describe("hotspots on the page", () => {
+  it("the form has the switch on by default; a task created with it off says so; the page renders the hotspots block", async () => {
+    const { dir } = await network();
+    ui = await startUiServer(dir, { port: 0, runners: new RunnerPool(dir, []) });
+    const html = await (await fetch(ui.url)).text();
+    expect(html).toMatch(/<input type="checkbox" name="hotspots" checked>/);
+    expect(html).toContain("Куда смотреть вручную");
+    expect(html).toContain("Проверить вручную");
+
+    const post = (body: unknown) => fetch(`${ui!.url}/api/tasks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const base = { title: "t", description: "d", agents: ["backend", "reviewer"] };
+    const on = (await (await post(base)).json()) as any;
+    const off = (await (await post({ ...base, hotspots: false })).json()) as any;
+    expect([on.task.noHotspots, off.task.noHotspots]).toEqual([undefined, true]);
+    const state: any = await (await fetch(`${ui.url}/api/state`)).json();
+    expect(state.tasks.map((t: any) => t.hotspots)).toEqual([true, false]);
+  });
+
+  it("the state carries the reviewers' hotspots", async () => {
+    const { dir, operator, mk } = await network();
+    const backend = await mk("backend");
+    const reviewer = await mk("reviewer");
+    await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] });
+    await backend.swarm.propose({ summary: "s", assignments: [{ agentId: "backend", responsibility: "a", files: ["a/**"] }, { agentId: "reviewer", responsibility: "b", files: ["b/**"] }] });
+    await reviewer.swarm.context();
+    await reviewer.swarm.complete({});
+    await backend.swarm.complete({});
+    await backend.swarm.complete({ result: "a" });
+    await reviewer.swarm.complete({ result: "b" });
+    await reviewer.swarm.complete({ status: "PASS", hotspots: [{ risk: "HIGH", reason: "deletes rows", files: ["a/Cleanup.java"] }] });
+    const state = await buildUiState(await FileStore.open(dir));
+    expect(state.tasks[0]!.syncReports.find((r) => r.agentId === "reviewer")?.hotspots).toEqual([{ risk: "HIGH", reason: "deletes rows", files: ["a/Cleanup.java"] }]);
   });
 });
