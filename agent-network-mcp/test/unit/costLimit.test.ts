@@ -84,6 +84,7 @@ describe("task cost limit", () => {
     const { networkDir, operator, session } = await setup();
     const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], maxCostUsd: 1 });
     const backend = await NetworkService.create(networkDir, { id: "backend", type: "test" });
+    await backend.registerAgent();
     await expect(backend.blockForCost(task.id, 5)).rejects.toMatchObject({ code: "FORBIDDEN" });
 
     const lines: string[] = [];
@@ -199,5 +200,23 @@ describe("cost limit on the page, in runners.json and in schedules", () => {
     await scheduler.tick(); // reads the file again
     expect((await scheduler.runNow("nightly")).taskId).toBe("task-002");
     expect((await operator.tasks.list()).map((t) => t.maxCostUsd)).toEqual([4, 1.5]);
+  });
+});
+
+describe("a task's extra directories", () => {
+  it("only the operator adds them: checked and made absolute against the project", async () => {
+    const { networkDir, operator } = await setup();
+    const { mkdir } = await import("node:fs/promises");
+    const project = join(networkDir, "..");
+    await mkdir(join(project, "..", "shared"), { recursive: true });
+    const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], directories: ["../shared", " ", "../shared"] });
+    expect(task.directories).toEqual([join(project, "..", "shared")]);
+    await expect(operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], directories: ["../missing"] })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], directories: ["../a,b"] })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    const backend = await NetworkService.create(networkDir, { id: "backend", type: "test" });
+    await backend.registerAgent();
+    await (await NetworkService.create(networkDir, { id: "reviewer", type: "test" })).registerAgent();
+    await expect(backend.createTask({ title: "t", description: "d", agents: ["backend", "reviewer"], directories: ["../shared"] })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect((await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"] })).directories).toBeUndefined();
   });
 });

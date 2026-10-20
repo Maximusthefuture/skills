@@ -123,6 +123,10 @@ const tilde = (path: string): string => {
   return home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path;
 };
 
+/** A task's extra folders as the page (one per line) or a script (a list) sends them; checked by the service. */
+const directoriesOf = (v: unknown): string[] =>
+  (Array.isArray(v) ? v.map(String) : typeof v === "string" ? v.split(/\r?\n/) : []).map((d) => d.trim()).filter(Boolean);
+
 const slug = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project";
 
 /**
@@ -438,7 +442,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const body = await readJson(req);
 
     if (path === "/api/tasks") {
-      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown; allowSpawn?: unknown; hotspots?: unknown };
+      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown; allowSpawn?: unknown; hotspots?: unknown; directories?: unknown };
       // a preset (fast / standard / thorough) sets the three; without one, each comes as it is
       const prep = typeof b.depth === "string" && b.depth !== "custom" ? depthFlags(b.depth) : { clarify: b.clarify === true, grill: b.grill === true, planReview: b.planReview === true };
       // the page sends "" for "no limit"; a field it leaves out gets the config's maxTaskCostUsd
@@ -457,6 +461,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         ...(prep.grill ? { grill: true } : {}),
         ...(b.allowSpawn === true ? { allowSpawn: true } : {}),
         ...(b.hotspots === false ? { noHotspots: true } : {}),
+        // one folder per line on the page, a list from a script
+        ...(directoriesOf(b.directories).length ? { directories: directoriesOf(b.directories) } : {}),
         ...(typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? { verifyCommand: b.verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
@@ -507,6 +513,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
           description: `The operator got the result of ${task.id} ("${task.title}") and returns it with this comment:\n${comment}\n\nFix it in the same branches as ${task.id}; if part of the comment is wrong, say why in the result.`,
           agents: own.length >= 2 ? own : task.agents,
           ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+          ...(task.directories?.length ? { directories: task.directories } : {}),
           ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
         });
         await acted(id, `returned with a comment: ${followUp.id}`);
@@ -535,6 +542,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
           description: `The operator reviewed the result of ${task.id} ("${task.title}")${where} and asks for these changes:\n${lines.join("\n")}\n\nFix each one in the same branches as ${task.id}; if one is wrong, say why in the result.`,
           agents: task.agents.filter((a) => !task.spawned?.some((s) => s.id === a)).length >= 2 ? task.agents.filter((a) => !task.spawned?.some((s) => s.id === a)) : task.agents,
           ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+          ...(task.directories?.length ? { directories: task.directories } : {}),
           ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
         });
         await operator.addReviewComments(followUp.id, list); // the follow-up's lead answers them like any review comments

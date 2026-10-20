@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { buildTools, parseBuildCommand } from "./build.js";
 import { AppError } from "./errors.js";
 import { EventHub } from "./events/eventHub.js";
@@ -96,6 +96,30 @@ export interface NewTaskInput {
   allowSpawn?: boolean;
   /** The reviewers mark no hotspots (places for the operator's manual review); they do by default. */
   noHotspots?: boolean;
+  /** Folders outside the agents' own they may read and change (absolute, or relative to the project). Operator only. */
+  directories?: string[];
+}
+
+/** At most this many extra folders per task. */
+export const MAX_TASK_DIRECTORIES = 20;
+
+/**
+ * A task's extra folders as the runner passes them to the CLI: absolute, existing, no duplicates. A comma is refused:
+ * Qwen Code splits --include-directories at commas.
+ */
+export async function checkDirectories(dirs: readonly string[], projectDir: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const raw of dirs) {
+    const d = String(raw).trim();
+    if (!d) continue;
+    if (d.includes(",") || d.includes("\0")) throw new AppError("INVALID_INPUT", `Directory ${JSON.stringify(d)}: a path with a comma cannot be passed to the agent CLI`);
+    const abs = resolve(projectDir, d);
+    const st = await stat(abs).catch(() => null);
+    if (!st?.isDirectory()) throw new AppError("INVALID_INPUT", `Directory ${JSON.stringify(abs)} does not exist or is not a folder`);
+    if (!out.includes(abs)) out.push(abs);
+  }
+  if (out.length > MAX_TASK_DIRECTORIES) throw new AppError("INVALID_INPUT", `At most ${MAX_TASK_DIRECTORIES} directories per task`);
+  return out;
 }
 
 /**
@@ -335,6 +359,9 @@ export class NetworkService {
     const maxFollowUps = input.maxFollowUps ?? 0;
     if (!Number.isInteger(maxFollowUps) || maxFollowUps < 0 || maxFollowUps > 20) throw new AppError("INVALID_INPUT", "maxFollowUps must be an integer 0..20");
     const maxCostUsd = input.maxCostUsd === undefined ? undefined : checkCostLimit(input.maxCostUsd);
+    // an agent never opens folders outside its own to itself: only the operator names them
+    if (asAgent && input.directories?.length) throw new AppError("INVALID_INPUT", "Only the operator adds directories to a task");
+    const directories = input.directories?.length ? await checkDirectories(input.directories, this.projectDir) : [];
 
     const git = await readGitContext(this.projectDir);
     const description = change ? openspecDescription(change.name, input.description) : proposes ? proposeDescription(proposes, input.description) : input.description;
@@ -346,6 +373,7 @@ export class NetworkService {
       ...(input.grill ? { grill: true } : {}),
       ...(input.allowSpawn ? { allowSpawn: true } : {}),
       ...(input.noHotspots ? { noHotspots: true } : {}),
+      ...(directories.length ? { directories } : {}),
     });
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
@@ -636,6 +664,7 @@ ${feedbackText(fb)}`;
         title: `${task.id} job: ${job.split("\n")[0]!}`.slice(0, 200), description, agents: [agentId], createdBy: lead, git: task.git,
         maxFixRounds: 0, ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}), ...(task.maxCostUsd !== undefined ? { maxCostUsd: task.maxCostUsd } : {}),
         ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}), parentTaskId: task.id,
+        ...(task.directories?.length ? { directories: task.directories } : {}),
       });
       const started: Task = {
         ...created, phase: "IMPLEMENT", phaseHistory: [...(created.phaseHistory ?? []), { phase: "IMPLEMENT", at }],
@@ -1491,6 +1520,7 @@ ${feedbackText(fb)}`;
           ...(task.maxCostUsd !== undefined ? { maxCostUsd: task.maxCostUsd } : {}),
           ...(task.allowSpawn ? { allowSpawn: true } : {}),
           ...(task.noHotspots ? { noHotspots: true } : {}),
+          ...(task.directories?.length ? { directories: task.directories } : {}),
           parentTaskId: task.id,
           rootTaskId: rootId,
           ...(base ? { baseCommit: base } : {}),

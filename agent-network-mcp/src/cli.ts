@@ -32,6 +32,8 @@ const USAGE = `Usage:
                                 --depth fast|standard|thorough: the preparation before the agreement (thorough = grill + plan to approve)
                                 --no-hotspots: reviewers do not mark places for your manual review (on by default)
                                 --grill: the lead first grills you about the task in rounds of questions, then you confirm its summary
+                                --dir <folder>: a folder outside the agents' own the task needs (repeat for more); the runner opens
+                                it to the agent CLI (qwen --include-directories, claude/codex --add-dir), which refuses it by default
   agent-network-mcp task list [--network-dir <abs path>]
   agent-network-mcp task stats [--id <task-001>] [--runners runners.json] [--network-dir <abs path>]
                                 time per phase, sessions, tokens, cost (--runners: price sessions without a CLI cost with its "prices")
@@ -97,6 +99,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       spawn: { type: "boolean" },
       grill: { type: "boolean" },
       "no-hotspots": { type: "boolean" },
+      dir: { type: "string", multiple: true },
       depth: { type: "string" },
       runners: { type: "string" },
       rounds: { type: "string" },
@@ -185,6 +188,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       ...(values.grill ? { grill: true } : {}),
       ...(values.spawn ? { allowSpawn: true } : {}),
       ...(values["no-hotspots"] ? { noHotspots: true } : {}),
+      ...(values.dir?.length ? { directories: values.dir } : {}),
       agents: values.agents.split(",").map((a) => a.trim()).filter(Boolean),
       ...(values["max-fix-rounds"] !== undefined ? { maxFixRounds: Number(values["max-fix-rounds"]) } : {}),
       ...(values.verify ? { verifyCommand: values.verify } : {}),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildArgv, DEFAULT_PROMPT, isValidModel, pickTask, renderPrompt, turnLimitOf, usesModel, withModel } from "../../src/runner.js";
+import { buildArgv, DEFAULT_PROMPT, isValidModel, pickTask, renderPrompt, turnLimitOf, usesModel, withDirectories, withModel } from "../../src/runner.js";
 import type { Task } from "../../src/types.js";
 
 const task = (id: string, status: Task["status"], agents = ["backend", "reviewer"]): Task => ({
@@ -65,6 +65,17 @@ describe("model", () => {
     expect(withModel(["qwen", "-m", "{model}"], undefined)).toEqual(["qwen", "-m", "{model}"]);
     for (const ok of ["haiku", "claude-haiku-4-5", "qwen/qwen3.5-9b", "qwen2.5-coder:7b", "org/model@q4"]) expect(isValidModel(ok)).toBe(true);
     for (const bad of ["", "-rf", "--yolo", "two words", "a\nb", 42]) expect(isValidModel(bad)).toBe(false);
+  });
+});
+
+describe("withDirectories", () => {
+  it("opens the task's folders with the CLI's own flag, before its first option so no value swallows the prompt", () => {
+    expect(withDirectories(["qwen", "{prompt}", "-o", "stream-json"], ["/a", "/b"])).toEqual(["qwen", "{prompt}", "--include-directories", "/a", "--include-directories", "/b", "-o", "stream-json"]);
+    expect(withDirectories(["C:\\tools\\claude.cmd", "-p", "{prompt}"], ["/a"])).toEqual(["C:\\tools\\claude.cmd", "--add-dir", "/a", "-p", "{prompt}"]);
+    expect(withDirectories(["codex", "exec"], ["/a"])).toEqual(["codex", "exec", "--add-dir", "/a", "--"]);
+    expect(withDirectories(["qwen", "{prompt}"], ["/a"])).toEqual(["qwen", "{prompt}", "--include-directories", "/a"]);
+    expect(withDirectories(["qwen", "{prompt}", "-o", "x"], [])).toEqual(["qwen", "{prompt}", "-o", "x"]);
+    expect(withDirectories(["mytool", "-x"], ["/a"])).toEqual(["mytool", "-x"]);
   });
 });
 

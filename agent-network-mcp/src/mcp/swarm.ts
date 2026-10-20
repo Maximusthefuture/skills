@@ -1101,6 +1101,7 @@ export class Swarm {
         id: task.id, title: task.title, ...(describe ? { description: task.description } : {}), phase, status: task.status, agents: task.agents, lead: phases.integrator(task),
         ...(task.syncRound > 0 || full ? { syncRound: task.syncRound, maxFixRounds: phases.maxFixRounds(task) } : {}),
         ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+        ...(task.directories?.length ? { directories: task.directories } : {}),
         ...(task.proposes ? { proposes: { change: task.proposes.change, path: `${changePath(task.proposes.change)}/` } } : {}),
         ...(task.blockedReason ? { blockedReason: task.blockedReason } : {}),
         ...(task.parentTaskId ? { parentTaskId: task.parentTaskId } : {}),

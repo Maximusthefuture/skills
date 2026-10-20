@@ -118,6 +118,12 @@ export interface Task {
    */
   allowSpawn?: true;
   /**
+   * Folders outside the agents' own the task needs (absolute paths: a shared library, a sibling service). The runner
+   * opens them to the agent CLI (Qwen Code: --include-directories, Claude Code and Codex: --add-dir), which otherwise
+   * refuses to work outside its folder. Set by the operator only; follow-ups and delegated jobs inherit them.
+   */
+  directories?: string[];
+  /**
    * A job the lead of another task delegated (delegate): one agent, no agreement, no review; it starts in IMPLEMENT, its
    * complete() ends it (DONE), and the result goes back to the lead as its subtask.
    */

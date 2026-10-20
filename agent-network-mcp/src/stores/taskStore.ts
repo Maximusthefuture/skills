@@ -25,6 +25,7 @@ export interface NewTask {
   grill?: boolean;
   allowSpawn?: boolean;
   noHotspots?: boolean;
+  directories?: string[];
 }
 
 /** task.json files read lately, by path: reused while the file is the same (see find). */
@@ -67,6 +68,7 @@ export class TaskStore {
       ...(input.grill ? { clarify: true as const, grill: true as const } : {}),
       ...(input.allowSpawn ? { allowSpawn: true as const } : {}),
       ...(input.noHotspots ? { noHotspots: true as const } : {}),
+      ...(input.directories?.length ? { directories: input.directories } : {}),
     };
     await this.fs.writeJson([...this.taskDir(id), "task.json"], task);
     return task;

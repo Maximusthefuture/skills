@@ -116,6 +116,33 @@ export function withModel(command: string[], model: string | undefined): string[
   return model === undefined ? command : command.map((a) => a.replaceAll("{model}", model));
 }
 
+/** The agent CLI by its executable (`qwen`, `C:\...\claude.cmd`): lower case, without folder and extension. */
+const cliName = (command: string[]): string => (command[0] ?? "").split(/[\\/]/).pop()!.replace(/\.(cmd|exe|bat|ps1|js)$/i, "").toLowerCase();
+
+/**
+ * The flags that open a task's extra folders to the agent CLI, which by default works only in its own folder:
+ * `--include-directories <dir>` for Qwen Code and Gemini CLI, `--add-dir <dir>` for Claude Code and Codex; one flag
+ * per folder. Undefined for a CLI we do not know.
+ */
+export function directoryFlags(command: string[], dirs: readonly string[]): string[] | undefined {
+  const cli = cliName(command);
+  const flag = cli === "qwen" || cli === "gemini" ? "--include-directories" : cli === "claude" || cli === "codex" ? "--add-dir" : undefined;
+  return flag ? dirs.flatMap((d) => [flag, d]) : undefined;
+}
+
+/**
+ * The command with the task's extra folders. Both flags take several values and would swallow a positional argument
+ * after them (the prompt), so they go right before the first option of the command; a command without options gets
+ * them at the end, and `--` before a prompt the runner appends.
+ */
+export function withDirectories(command: string[], dirs: readonly string[]): string[] {
+  const flags = dirs.length ? directoryFlags(command, dirs) : undefined;
+  if (!flags) return command;
+  const at = command.findIndex((a, i) => i > 0 && a.startsWith("-"));
+  if (at > 0) return [...command.slice(0, at), ...flags, ...command.slice(at)];
+  return [...command, ...flags, ...(command.some((a) => a.includes("{prompt}")) ? [] : ["--"])];
+}
+
 /** A model name as it goes into the argv: no spaces, and it cannot be taken for a flag. */
 export function isValidModel(model: unknown): model is string {
   return typeof model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(model);
@@ -407,7 +434,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const prompt =
       (urgent ? URGENT.replace("{message}", urgent) : "") +
       withInstructions(renderPrompt(template, vars), instructions, vars) +
-      (brief ? `\n\nYour folder right now (from the runner, no need to run git log or git status for this):\n${brief}` : "");
+      (brief ? `\n\nYour folder right now (from the runner, no need to run git log or git status for this):\n${brief}` : "") +
+      (task.directories?.length ? `\n\nFolders outside yours that this task needs (open to you in this session; use absolute paths): ${task.directories.join("; ")}` : "");
     const env = {
       ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt), AGENT_NETWORK_RUNNER: "1",
       ...(freshPhases.length ? { AGENT_NETWORK_FRESH_PHASES: freshPhases.join(",") } : {}),
@@ -443,7 +471,9 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
         session.abort();
       }
     };
-    const { code, result } = await runSession(buildArgv(withModel(opts.command, model), prompt, system), env, opts.cwd, sink, signal?.aborted ? signal : session.signal, onActivity, onContext);
+    const dirs = task.directories ?? [];
+    if (dirs.length && !directoryFlags(opts.command, dirs)) say(`${task.id}: the task has extra directories, but "${opts.command[0]}" is no CLI the runner knows how to open them to (qwen, gemini, claude, codex); the session runs without them`);
+    const { code, result } = await runSession(buildArgv(withDirectories(withModel(opts.command, model), dirs), prompt, system), env, opts.cwd, sink, signal?.aborted ? signal : session.signal, onActivity, onContext);
     opts.urgent?.attach(null);
     signal?.removeEventListener("abort", stopAll);
     const endedAt = new Date();
