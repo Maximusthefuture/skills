@@ -14,6 +14,18 @@
 
 ## Decisions
 
+### Reference
+<!-- The existing package or class the new code copies: structure, naming, error handling, tests. Name it by path. -->
+
+### Classes
+<!-- Every class the change adds or edits. Package = the java-conventions layer (controller, service, repository, entity, mapper, config, exception, client, listener, producer, scheduler, dto, util). -->
+
+| Class | Package (layer) | New / changed | Why |
+|---|---|---|---|
+
+### API contract
+<!-- The edit of openapi.yaml: path, method, request and response schemas; the generated *Api interface and DTOs the controller implements; every error as HTTP status + code. Delete the subsection if the API does not change. -->
+
 ### Data and invariants
 <!-- Entities and relations; invariants → constraints (NOT NULL, UNIQUE, CHECK, FK); whether a changeset is needed and which -->
 

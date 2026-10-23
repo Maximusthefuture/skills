@@ -33,12 +33,16 @@ rules:
     - "For M and L changes always create design.md."
     - "Context — component type and expected load. Decisions — data and invariants (which constraints, which changeset), the transaction boundary, authorization (who, which permission, which rows), idempotency and concurrency (key, @Version or lock, outbox), observability (logs, metrics, health). Risks — failure modes and how to detect and recover from them."
     - "In Decisions pin the build order: changeset → entity and repository → service with a transaction boundary → controller or listener → error mapping → metrics."
+    - "Decisions start with Reference — the existing package the new code copies, by path."
+    - "Decisions hold a Classes table: Class | package (java-conventions layer: controller, service, repository, entity, mapper, config, exception, client, listener, producer, scheduler, dto, util) | new or changed | why. A class that is not in the table is not written."
+    - "If the API changes, Decisions hold an API contract: the openapi.yaml edit, the generated *Api interface the controller implements, every error as HTTP status + code."
     - "Migration Plan — changesets per migration-safety (CONCURRENTLY, NOT VALID, expand/contract) and rollback."
     - "If the change adds a variant to a set the code already branches on (payment method, provider, channel, document type, status), call the java-extensibility-review skill on the affected classes and record its verdict in Decisions: extend as is, or a preparatory refactoring first."
   tasks:
     - "Groups are slices in the build order from design.md. Inside a group — one task per behavior, usually per Scenario from specs."
     - "Task format: \"X.Y <Scenario or behavior> — <test level: unit | @DataJpaTest + Testcontainers | @WebMvcTest | @SpringBootTest + Testcontainers | @SpringBootTest + @EmbeddedKafka | WireMock> — verify: <test or command>\". The test is written first and must fail before the implementation."
     - "Do not move tests into a separate group at the end: every group carries its own tests."
+    - "Every task names the files it touches, taken from the Classes table of design.md."
     - "If design.md decided to refactor first, the first group is \"Preparatory refactoring\": behavior does not change, tests green before and after; the new variant is added in the following groups."
     - "The last group \"Verification\" holds only integration checks: the full run (./mvnw verify or ./gradlew check); the java-code-reviewer and critic agents on the diff — in one message, in parallel (no agents — the java-code-review skill and the critic questions from the java-dev-flow checklist); java-extensibility-review on the changed classes if branching on type or status grew in the diff; review-migration if there are changesets; test-audit on new tests; for L — the security-reviewer, schema-reviewer, incident-thinker agents by signals."
 

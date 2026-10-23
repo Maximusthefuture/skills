@@ -206,6 +206,12 @@ artifacts:
       this order. Migration Plan — changesets per migration-safety (CONCURRENTLY,
       NOT VALID, expand/contract) and rollback.
 
+      java-flow: the shape of the code is decided here, so apply has nothing to invent.
+      "Reference" names the existing package the new code copies. "Classes" lists every
+      class the change adds or edits with its java-conventions layer package; a class
+      that is not in the table is not written. "API contract" is the openapi.yaml edit
+      and the generated *Api the controller implements, with every error as status + code.
+
       java-flow: if the change adds a variant to a set the code already branches on
       (payment method, provider, channel, document type, status), call via the Skill
       tool the java-extensibility-review skill on the affected classes and record its
@@ -275,6 +281,7 @@ artifacts:
         @WebMvcTest | @SpringBootTest + Testcontainers | @SpringBootTest + @EmbeddedKafka |
         WireMock. @EmbeddedKafka only if the project has no Testcontainers. The test is
         written first and must fail before the implementation.
+      - Every task names the files it touches, taken from the Classes table of design.md.
       - If design.md decided to refactor first, the first group is "Preparatory
         refactoring": behavior does not change, tests green before and after; the new
         variant is added in the following groups.
