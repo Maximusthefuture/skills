@@ -32,6 +32,7 @@ If an OpenSpec instruction and an orchestrator rule disagree about files, paths,
 | M | `/opsx:propose <name>` |
 | L | first `/opsx:explore` (that is phase 1, clarification), then `/opsx:propose <name>` |
 | A production incident | no change — `debugging-discipline`. If behavior must change afterwards — a separate change |
+| Analysts handed over their own OpenSpec set (proposal, spec, design, tasks) | never put it into `openspec/changes/` as is: it is input. `java-spec-intake` (their spec as a page → grilling → your own `/opsx:propose` → your change next to theirs); in a swarm — `task create --propose <name> --from <path>` |
 
 If the user ran `/opsx:propose` for an S task, their choice wins. Make a short change: `design.md` is not needed if there are no signals.
 

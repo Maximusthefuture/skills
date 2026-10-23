@@ -35,7 +35,7 @@ The `agent-network` MCP tools are present and `swarm_context` shows your active 
 
 ## If the task is not development
 
-No orchestrator — call the specialist skill directly: diff or PR review — `java-code-review` (not the built-in `/code-review`); "which pattern fits" — `java-extensibility-review`; test cleanup — `test-audit`; Jira — `jira-tasks`; design only — `think-before-coding`; interview about an idea — `grilling`; OpenSpec change before code — `java-spec-review`; bug cause without a fix — `java-diagnosing-bugs`; a query, N+1, component audit — commands `explain-this-query`, `hunt-n-plus-one`, `audit`; production is on fire — agent `incident-investigator`.
+No orchestrator — call the specialist skill directly: diff or PR review — `java-code-review` (not the built-in `/code-review`); "which pattern fits" — `java-extensibility-review`; test cleanup — `test-audit`; Jira — `jira-tasks`; design only — `think-before-coding`; interview about an idea — `grilling`; OpenSpec change before code — `java-spec-review`; OpenSpec artifacts from analysts — `java-spec-intake` (they are input, not the change); bug cause without a fix — `java-diagnosing-bugs`; a query, N+1, component audit — commands `explain-this-query`, `hunt-n-plus-one`, `audit`; production is on fire — agent `incident-investigator`.
 
 ## Phase 0. Classification — always
 

@@ -1,0 +1,24 @@
+{
+  "skill_name": "java-spec-intake",
+  "setup": "Работай из корня копии orders-service (без target/). Вход аналитиков — evals/files/analyst/order-gift-wrap (скопируй куда угодно вне проекта и передай путь). Сессия в чате, не в рое: grilling через скилл grilling, страницы — файлами.",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "аналитики прислали спеку по подарочной упаковке: <path>/order-gift-wrap. не хочу брать их design как есть — прогони наш propose и grilling по этим артефактам",
+      "expected_output": "Входные файлы прочитаны, факты собраны субагентом. Страница 1 показывает их спеку как есть, с отметками расхождений: пакет giftwrap.{web,service,repo} против слоёв проекта; Flyway V12 против Liquibase (db/changelog); NOT NULL gift_wrap без default на заполненной orders; прямая отправка в Kafka при существующем OutboxPublisher; double для денег при BigDecimal в Order; интерфейс GiftWrapPricing под одну реализацию; задачи без тестов и тесты отдельной группой. Вопросы grilling — только решения: можно ли упаковку к PAID-заказу (Open Question меняет specs), стоимость 150 и валюта, нужно ли событие и кому, длина сообщения; факты (Liquibase, outbox, BigDecimal) не спрашиваются. После подтверждения итога — свой change через openspec-propose: design.md с Reference, таблицей Classes по слоям и контрактом API; сценарии с конкретными статусами и кодами (400, 404, 409); changeset Liquibase с default/expand-contract; outbox; одна задача на сценарий с тестом первым; файлы аналитиков не скопированы. Страница 2: наш change рядом с их + таблица покрытия (взято / адаптировано / отброшено / добавлено с причинами). Итог со строкой Skills.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "вот spec.md от аналитиков <path>/order-gift-wrap/specs/order-gift-wrap/spec.md — сделай по нему change",
+      "expected_output": "Скилл не кладёт файл в openspec/changes как есть и не пишет код. Читает весь набор рядом (proposal, design, tasks), если он есть, иначе работает от одного spec.md. THEN «упаковка добавляется корректно» и «ошибка» помечены как непроверяемые и переписаны в нашем change со статусом, полем и кодом ошибки. Grilling перед propose, страница 2 с покрытием.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "проверь мой change add-multi-currency перед apply",
+      "expected_output": "Это не вход аналитиков, а наш change после propose: скилл не срабатывает или передаёт работу java-spec-review.",
+      "files": []
+    }
+  ]
+}

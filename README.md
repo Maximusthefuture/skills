@@ -20,6 +20,7 @@ mkdir -p /tmp/ru-skills && tar -xzf audit/2026-10-04-ru-skills-snapshot.tar.gz -
 | [`java-code-review/`](java-code-review/) | `java-code-review` | Ревью diff: корректность, Spring/JPA, безопасность | агент `java-code-reviewer` |
 | [`java-extensibility-review/`](java-extensibility-review/) | `java-extensibility-review` | Ветвления по типу и статусу, окупится ли паттерн | фазы 2 и 5 `java-dev-flow` |
 | [`java-spec-review/`](java-spec-review/) | `java-spec-review` | Разбор OpenSpec change до кода | проекты с OpenSpec |
+| [`java-spec-intake/`](java-spec-intake/) | `java-spec-intake` | Артефакты OpenSpec от аналитиков как вход: их спека страницей → grilling → свой change → сравнение с их | задача роя `--propose --from`, проекты с OpenSpec |
 | [`jira-tasks/`](jira-tasks/) | `jira-tasks` | Задачи в Jira с подтверждением | нужен Atlassian MCP |
 | [`mattpocock-skills/`](mattpocock-skills/) | `grilling`, `grill-me`, `handoff`, `retro`, `writing-for-agents`, `git-guardrails-claude-code` | Сторонние скиллы, подробности — в их [README](mattpocock-skills/README.md) | `grilling` — фаза 1 для L |
 | [`vibe-skills/`](vibe-skills/) | `update-claude-md` | Сверка `CLAUDE.md` с кодом | — |

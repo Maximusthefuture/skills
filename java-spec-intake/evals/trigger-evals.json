@@ -1,0 +1,38 @@
+[
+  {
+    "query": "аналитики дали спеку и design по подарочной упаковке, сделай из этого нормальный change",
+    "should_trigger": true
+  },
+  {
+    "query": "вот spec.md от аналитиков, не хочу использовать его напрямую, прогони propose и grilling",
+    "should_trigger": true
+  },
+  {
+    "query": "we got proposal.md, design.md and tasks.md from the analysts — turn them into our own openspec change",
+    "should_trigger": true
+  },
+  {
+    "query": "/java-spec-intake ~/Downloads/loyalty",
+    "should_trigger": true
+  },
+  {
+    "query": "в swarm_context есть proposes.input — что делать с файлами аналитиков?",
+    "should_trigger": true
+  },
+  {
+    "query": "проверь мой change order-delivery-address перед apply, погоняй вопросами",
+    "should_trigger": false
+  },
+  {
+    "query": "сделай /opsx:propose для отмены оплаченного заказа",
+    "should_trigger": false
+  },
+  {
+    "query": "отревьюй дифф ветки feature/refunds",
+    "should_trigger": false
+  },
+  {
+    "query": "заархивируй change add-refunds",
+    "should_trigger": false
+  }
+]

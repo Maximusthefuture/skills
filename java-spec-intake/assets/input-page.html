@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Спека аналитиков: CHANGE_NAME</title>
+<!-- Page 1 of java-spec-intake: the analysts' artifacts AS THEY ARE. Built from their files only.
+     Replace CHANGE_NAME and fill every commented block; delete the example rows. No questions, no proposals here:
+     mark where the input departs from the code or a rule (class="off") and name the rule or file:line. -->
+<style>
+  body{font:15px/1.5 system-ui,sans-serif;margin:24px;max-width:1100px;color:#1d1d1f}
+  h1{font-size:24px;margin:0 0 4px} h2{font-size:19px;margin:28px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px}
+  .muted{color:#666} table{border-collapse:collapse;width:100%;margin:8px 0} th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}
+  th{background:#f5f5f7} .off{background:#fff1f0} .off .why{color:#a8071a;font-size:13px;display:block}
+  .src{color:#888;font-size:12px;font-family:ui-monospace,monospace} pre.mermaid{background:#fafafa;padding:8px;border:1px solid #eee}
+  .legend span{display:inline-block;padding:1px 8px;margin-right:8px}
+</style>
+</head>
+<body>
+<h1>Спека аналитиков: CHANGE_NAME</h1>
+<p class="muted">Их артефакты как есть. Красным — где они расходятся с кодом или правилами проекта. Вопросы будут на допросе.</p>
+<p class="legend"><span class="off">расходится</span> со ссылкой на правило или файл</p>
+
+<h2>Что они хотят</h2>
+<!-- Why and What Changes from their proposal.md in 3-6 lines, their words shortened, nothing added. -->
+<p data-source="proposal.md:1">…</p>
+
+<h2>Поток сценариев</h2>
+<!-- One sequenceDiagram per scenario (or per requirement when there are many). Participants as THEY name them. -->
+<h3 data-source="specs/CAP/spec.md:10">Scenario: …</h3>
+<pre class="mermaid">
+sequenceDiagram
+  actor Client
+  participant C as TheirController
+  participant S as TheirService
+  participant DB as orders
+  Client->>C: PUT /orders/{id}/…
+  C->>S: …
+  S->>DB: UPDATE …
+  C-->>Client: 200
+</pre>
+
+<h2>Классы и пакеты</h2>
+<table>
+  <tr><th>Класс у них</th><th>Пакет у них</th><th>Слой</th><th>Источник</th></tr>
+  <tr class="off"><td>GiftWrapController</td><td>…orders.giftwrap.web<span class="why">у нас пакеты по слоям: controller/ (java-conventions); контроллер реализует сгенерированный *Api</span></td><td>web</td><td class="src">design.md:12</td></tr>
+</table>
+
+<h2>Данные и миграции</h2>
+<!-- Their tables, columns, statuses, migration tool. An erDiagram when there are tables. -->
+<table>
+  <tr><th>Изменение</th><th>Как у них</th><th>Источник</th></tr>
+  <tr class="off"><td>orders.gift_wrap</td><td>Flyway V12, NOT NULL без default<span class="why">у нас Liquibase (db/changelog); NOT NULL на заполненной таблице — expand/contract</span></td><td class="src">design.md:20</td></tr>
+</table>
+
+<h2>Нарезка задач</h2>
+<!-- Their tasks.md groups as they are; mark tasks without a test and tests collected at the end. -->
+<table>
+  <tr><th>Группа / задача</th><th>Тест</th><th>Источник</th></tr>
+  <tr class="off"><td>1.1 Добавить контроллер</td><td>нет<span class="why">у нас тест первым, одна задача на сценарий</span></td><td class="src">tasks.md:3</td></tr>
+</table>
+
+<script type="module">import m from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";m.initialize({startOnLoad:true});</script>
+</body>
+</html>

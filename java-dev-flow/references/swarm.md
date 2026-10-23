@@ -60,7 +60,7 @@ Bring everyone's work together (merge their branches when they use worktrees), r
 
 Three layers: OpenSpec owns **what** (requirements, scenarios, design, tasks), the swarm owns **when and who**, this orchestrator owns **how**. `references/openspec.md` stays valid except for the points below.
 
-**Before the swarm.** The change is created and reviewed by a human first: `/opsx:propose` → `/java-spec-review <name>` → commit → a task on that change: the operator picks it in the UI task form or runs `task create --openspec <name>`. The task then carries `openspec` (shown in `swarm_context`); a change only named in the `description` gets none of the checks below. A swarm on a change nobody reviewed is the same as a swarm on vague scope: do not propose, ask the user. Worth it for L; S and M are cheaper with one agent and `/opsx:apply`.
+**Before the swarm.** The change is created and reviewed by a human first: `/opsx:propose` → `/java-spec-review <name>` → commit → a task on that change: the operator picks it in the UI task form or runs `task create --openspec <name>`. The task then carries `openspec` (shown in `swarm_context`); a change only named in the `description` gets none of the checks below. A swarm on a change nobody reviewed is the same as a swarm on vague scope: do not propose, ask the user. Analysts' artifacts are not a reviewed change: they go into a change-writing task (`task create --propose <name> --from <path>`), where the lead shows them as a page, grills the operator, writes its own change and the operator accepts it on a second page (`java-spec-intake`). Worth it for L; S and M are cheaper with one agent and `/opsx:apply`.
 
 **DISCUSS splits, it does not redesign.**
 - `decisions`: a link to `design.md` plus only what the split adds.
