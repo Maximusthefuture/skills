@@ -4,6 +4,8 @@ import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { isHandedOver } from "./handoff.js";
 import { isParked } from "./park.js";
+import { skillOf } from "./sessionOutput.js";
+import { disabledFromEnv, isDisabled } from "./skills.js";
 import { openFileRequests } from "./mcp/swarm.js";
 import { pickNetworkDir } from "./networkDir.js";
 import { FileStore } from "./storage/fileStore.js";
@@ -244,6 +246,17 @@ export function preShellDecision(command: string): object | null {
   return null;
 }
 
+/**
+ * PreToolUse "pre-skill": a skill the operator switched off for this agent (AGENT_NETWORK_DISABLED_SKILLS, set by the
+ * runner) is refused — the Skill tool, or reading the skill's SKILL.md (CLIs without a Skill tool read the file).
+ */
+export function preSkillDecision(toolName: string, toolInput: unknown, disabled: readonly string[]): ReturnType<typeof denyHook> | null {
+  if (!disabled.length) return null;
+  const skill = skillOf(toolName, toolInput);
+  if (!skill || !isDisabled(skill, disabled)) return null;
+  return denyHook(`The operator switched the skill "${skill}" off for you (skills off: ${disabled.join(", ")}). Do not load it and do not read its files; do that part of the work without it, or ask the operator with send_message if you cannot.`);
+}
+
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";
   const chunks: Buffer[] = [];
@@ -253,9 +266,19 @@ async function readStdin(): Promise<string> {
 
 /** `agent-network-mcp hook <post-tool|stop> [--network-dir <abs>] [--agent <id>]`; always exits 0. */
 export async function runHookCli(mode: string | undefined, args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, stdin: () => Promise<string> = readStdin, cwd: string = process.cwd()): Promise<number> {
-  if (mode !== "post-tool" && mode !== "stop" && mode !== "pre-shell" && mode !== "pre-bash") {
-    out("Usage: agent-network-mcp hook <post-tool|stop|pre-shell|pre-bash> [--network-dir <abs path>] [--agent <id>]");
+  if (mode !== "post-tool" && mode !== "stop" && mode !== "pre-shell" && mode !== "pre-bash" && mode !== "pre-skill") {
+    out("Usage: agent-network-mcp hook <post-tool|stop|pre-shell|pre-bash|pre-skill> [--network-dir <abs path>] [--agent <id>]");
     return 2;
+  }
+  if (mode === "pre-skill") {
+    try {
+      const input = JSON.parse((await stdin()) || "{}") as { tool_name?: unknown; tool_input?: unknown };
+      const decision = typeof input.tool_name === "string" ? preSkillDecision(input.tool_name, input.tool_input, disabledFromEnv(env)) : null;
+      if (decision) out(JSON.stringify(decision));
+    } catch {
+      // never break the agent's session
+    }
+    return 0;
   }
   if (mode === "pre-shell" || mode === "pre-bash") {
     try {

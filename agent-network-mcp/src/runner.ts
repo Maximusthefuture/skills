@@ -9,6 +9,7 @@ import { SessionOutput, type ActivityItem, type SessionResult } from "./sessionO
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore, defaultIsProcessAlive } from "./stores/agentStore.js";
 import { MessageStore } from "./stores/messageStore.js";
+import { DISABLED_SKILLS_ENV, disabledSkillsNote } from "./skills.js";
 import { SessionStore } from "./stores/sessionStore.js";
 import { TaskStore } from "./stores/taskStore.js";
 import type { Phase, Task } from "./types.js";
@@ -166,6 +167,8 @@ export interface RunnerOptions {
   systemPromptFile?: string;
   /** Put where the command has {model}. A function is asked before every session, so a change applies to the next one. */
   model?: string | (() => string | undefined);
+  /** Skills switched off for this agent, asked before every session: the hook "pre-skill" refuses them, the prompt names them. */
+  disabledSkills?: () => readonly string[];
   /** Extra sessions for one task after the first before the runner gives up until the task changes. Default 3. */
   maxRestarts?: number;
   /**
@@ -404,12 +407,15 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const urgent = opts.urgent?.take();
     // where the work stands on disk, so the session does not spend its first turns (and context) on git log and status
     const brief = await workBrief(opts.cwd).catch(() => "");
+    const offSkills = [...(opts.disabledSkills?.() ?? [])];
     const prompt =
       (urgent ? URGENT.replace("{message}", urgent) : "") +
       withInstructions(renderPrompt(template, vars), instructions, vars) +
+      disabledSkillsNote(offSkills) +
       (brief ? `\n\nYour folder right now (from the runner, no need to run git log or git status for this):\n${brief}` : "");
     const env = {
       ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt), AGENT_NETWORK_RUNNER: "1",
+      [DISABLED_SKILLS_ENV]: JSON.stringify(offSkills),
       ...(freshPhases.length ? { AGENT_NETWORK_FRESH_PHASES: freshPhases.join(",") } : {}),
     };
     say(`${task.id}: starting session ${attempt} (phase ${task.phase}${handoff ? ", fresh after a handoff" : afterTurnLimit ? ", going on after the turn limit" : ""}${model ? `, model ${model}` : ""})`);

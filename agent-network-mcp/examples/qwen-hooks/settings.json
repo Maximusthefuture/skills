@@ -32,6 +32,26 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /abs/path/agent-network-mcp/dist/index.js hook pre-skill",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "read_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /abs/path/agent-network-mcp/dist/index.js hook pre-skill",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

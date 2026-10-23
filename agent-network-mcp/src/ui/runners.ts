@@ -13,6 +13,7 @@ import { parseCron } from "../schedule/cron.js";
 import { DEFAULT_RULES, type DetectRules } from "../supervisor/detect.js";
 import { BUILTIN_TOOLS, parseCustomTool, type CustomTool } from "../supervisor/tools.js";
 import { assertAgentId } from "../validation.js";
+import { listSkills, SKILL_NAME, type SkillInfo } from "../skills.js";
 
 /**
  * runners.json — the agents the UI keeps working:
@@ -31,6 +32,8 @@ export interface RunnerAgentConfig {
   command: string[];
   /** Built-in tools taken out of the command (e.g. ["Agent", "Skill"] for a reviewer): their descriptions are read every turn. */
   withoutTools?: string[];
+  /** Skills the agent may not load (see src/skills.ts); the page switches them on and off, from the next session. */
+  disabledSkills?: string[];
   cwd?: string;
   /** File with the whole prompt template ({agent} {taskId} {title} {attempt} {resume}); read before every session. */
   promptFile?: string;
@@ -279,10 +282,15 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     const worktree: AgentWorktree | undefined = wantsWorktree ? { project: project!, branch: `swarm-${id}` } : undefined;
     const cwd = merged.cwd ? abs(merged.cwd) : worktree ? join(dirname(worktree.project), `${basename(worktree.project)}-${id}`) : undefined;
     const without = Array.isArray(merged.withoutTools) ? merged.withoutTools.filter((t): t is string => typeof t === "string") : [];
+    if (merged.disabledSkills !== undefined && (!Array.isArray(merged.disabledSkills) || !merged.disabledSkills.every((s) => typeof s === "string" && SKILL_NAME.test(s.replace(/:\*$/, ":x"))))) {
+      throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" "disabledSkills" must be a list of skill names, e.g. ["java-tdd", "backend-design-java:migration-safety", "backend-design-java:*"]`);
+    }
+    const disabledSkills = [...new Set(merged.disabledSkills ?? [])];
     return {
       id,
       command: withoutTools(merged.command, without),
       ...(without.length ? { withoutTools: without } : {}),
+      ...(disabledSkills.length ? { disabledSkills } : {}),
       ...(cwd ? { cwd } : {}),
       ...(worktree ? { worktree } : {}),
       ...(promptFile ? { promptFile } : {}),
@@ -617,6 +625,8 @@ export interface RunnerView {
   session: RunningSession | null;
   /** Added by a task's lead (spawn_agent): the task and the template; it is not in runners.json. */
   spawned: { taskId: string; template: string } | null;
+  /** Skills this agent may not load (from its next session). */
+  disabledSkills: string[];
 }
 
 export interface RunnerDetails extends RunnerView {
@@ -667,7 +677,7 @@ export class RunnerPool {
   constructor(
     private readonly networkDir: string,
     agents: RunnersConfig["agents"],
-    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string; onSessionEnd?: (agentId: string, taskId: string) => Promise<void>; onGiveUp?: (agentId: string, taskId: string, reason: string) => Promise<void> } = {},
+    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string; home?: string; onSessionEnd?: (agentId: string, taskId: string) => Promise<void>; onGiveUp?: (agentId: string, taskId: string, reason: string) => Promise<void> } = {},
   ) {
     for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [], urgent: [], stopSession: null, interruptAt: null });
   }
@@ -696,7 +706,31 @@ export class RunnerPool {
       models: usesModel(m.config.command) ? [...new Set([...(m.config.models ?? []), ...(m.config.model ? [m.config.model] : [])])] : [],
       session: m.session,
       spawned: m.spawnedFor ?? null,
+      disabledSkills: m.config.disabledSkills ?? [],
     }));
+  }
+
+  /** The skills installed in the user's folders and the agents' folders, for the page's on/off table. */
+  async skills(projectDir?: string): Promise<SkillInfo[]> {
+    const dirs = [...(projectDir ? [projectDir] : []), ...[...this.managed.values()].flatMap((m) => (m.config.cwd ? [m.config.cwd] : []))];
+    return listSkills(dirs, this.opts.home);
+  }
+
+  /**
+   * Switch a skill on or off for an agent from its next session (a running session keeps what it got). With a config file
+   * the list is written back there ("disabledSkills"), so it survives a restart.
+   */
+  async setSkillEnabled(id: string, skill: string, enabled: boolean): Promise<RunnerView> {
+    const m = this.get(id);
+    const name = skill.trim();
+    if (!SKILL_NAME.test(name.replace(/:\*$/, ":x"))) throw new AppError("INVALID_INPUT", `Not a skill name: ${JSON.stringify(skill)}`);
+    const now = m.config.disabledSkills ?? [];
+    const next = enabled ? now.filter((s) => s !== name) : [...new Set([...now, name])];
+    if (next.length) m.config.disabledSkills = next;
+    else delete m.config.disabledSkills;
+    if (this.opts.configPath && !this.managed.get(id)?.spawnedFor) await saveAgentField(this.opts.configPath, id, "disabledSkills", next.length ? next : null);
+    this.say(m, `[ui] skill ${name} ${enabled ? "on" : "off"}${m.controller ? " (applies from the next session)" : ""}`);
+    return this.view(id);
   }
 
   /** An agent a lead spawned: its runner joins the pool (not runners.json) and starts. Returns false when it is there already. */
@@ -811,6 +845,7 @@ export class RunnerPool {
       ...(m.config.instructionsFile ? { instructionsFile: m.config.instructionsFile } : {}),
       ...(m.config.systemPromptFile ? { systemPromptFile: m.config.systemPromptFile } : {}),
       model: () => m.config.model,
+      disabledSkills: () => m.config.disabledSkills ?? [],
       onSession: (session) => {
         m.session = session;
       },
@@ -919,7 +954,7 @@ export class RunnerPool {
 }
 
 /** Update one field of one agent in the JSON config, keeping everything else (including _comment). */
-async function saveAgentField(configPath: string, id: string, field: string, value: string | null): Promise<void> {
+async function saveAgentField(configPath: string, id: string, field: string, value: string | string[] | null): Promise<void> {
   const raw = JSON.parse(await readFile(configPath, "utf8")) as { agents?: Record<string, unknown>[] };
   const agent = raw.agents?.find((a) => a.id === id);
   if (!agent) return;

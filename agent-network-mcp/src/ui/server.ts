@@ -392,6 +392,15 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         const events = p.pool?.activity(after, limit, agent ?? undefined) ?? [];
         return json(200, { events, lastSeq: events.at(-1)?.seq ?? after });
       }
+      if (path === "/api/skills") {
+        // the skills installed for the agents and which agent has which switched off (runners.json "disabledSkills")
+        if (!p.pool) return json(200, { skills: [], agents: [] });
+        const agents = p.pool.list().map((r) => ({ id: r.id, disabled: r.disabledSkills, spawned: !!r.spawned }));
+        const known = await p.pool.skills(p.projectDir);
+        // a skill switched off but not installed (anymore) still shows, so it can be switched on again
+        for (const name of new Set(agents.flatMap((a) => a.disabled))) if (!known.some((k) => k.name === name)) known.push({ name, description: "", sources: [] });
+        return json(200, { skills: known, agents });
+      }
       if (path === "/api/roles") {
         const reader = p.operator ?? (await NetworkService.create(p.networkDir, { id: "operator", type: "ui" }));
         return json(200, { roles: await reader.roles() });
@@ -711,6 +720,11 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     if (inst) {
       const file = (body as { file?: unknown }).file;
       return json(200, await pool.setInstructionsFile(decodeURIComponent(inst[1]!), typeof file === "string" ? file : null));
+    }
+    const sk = /^\/api\/runners\/([^/]+)\/skills$/.exec(path);
+    if (sk) {
+      const b = body as { skill?: unknown; enabled?: unknown };
+      return json(200, await pool.setSkillEnabled(decodeURIComponent(sk[1]!), String(b.skill ?? ""), b.enabled !== false));
     }
     const mdl = /^\/api\/runners\/([^/]+)\/model$/.exec(path);
     if (mdl) return json(200, await pool.setModel(decodeURIComponent(mdl[1]!), String((body as { model?: unknown }).model ?? "")));

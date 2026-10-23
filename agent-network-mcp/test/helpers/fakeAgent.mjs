@@ -11,10 +11,10 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync as writeRaw } from "node:fs";
 import { join } from "node:path";
 
-const { NETWORK_DIR, AGENT_ID, AGENT_NETWORK_TASK_ID: taskId, AGENT_NETWORK_ATTEMPT, AGENT_NETWORK_FRESH_PHASES, AGENT_NETWORK_RUNNER } = process.env;
+const { NETWORK_DIR, AGENT_ID, AGENT_NETWORK_TASK_ID: taskId, AGENT_NETWORK_ATTEMPT, AGENT_NETWORK_FRESH_PHASES, AGENT_NETWORK_RUNNER, AGENT_NETWORK_DISABLED_SKILLS } = process.env;
 const [log, finishArg, ...rest] = process.argv.slice(2);
 const attempt = Number(AGENT_NETWORK_ATTEMPT);
-appendFileSync(log, JSON.stringify({ agent: AGENT_ID, networkDir: NETWORK_DIR, taskId, attempt, fresh: AGENT_NETWORK_FRESH_PHASES ?? null, runner: AGENT_NETWORK_RUNNER ?? null, args: rest }) + "\n");
+appendFileSync(log, JSON.stringify({ agent: AGENT_ID, networkDir: NETWORK_DIR, taskId, attempt, fresh: AGENT_NETWORK_FRESH_PHASES ?? null, runner: AGENT_NETWORK_RUNNER ?? null, skillsOff: AGENT_NETWORK_DISABLED_SKILLS ?? null, args: rest }) + "\n");
 
 // the network's files are written like the server writes them: to a temporary file, then renamed (a reader never sees half a file)
 const writeFileSync = (path, text) => {

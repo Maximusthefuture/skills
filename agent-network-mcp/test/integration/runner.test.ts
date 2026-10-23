@@ -23,6 +23,7 @@ interface Launch {
   attempt: number;
   fresh: string | null;
   runner: string | null;
+  skillsOff: string | null;
   args: string[];
 }
 
@@ -75,6 +76,23 @@ describe("agent runner", () => {
     expect(runs[0]!.networkDir).toBe(s.networkDir);
     expect(runs[1]!.args[0]).toContain(`Task ${t2.id} ("Archive orders") is assigned to you`);
     expect(runs[1]!.args[0]).not.toContain("previous one ended");
+  });
+
+  it("skills switched off reach the session: in its environment for the pre-skill hook and named in its prompt", async () => {
+    const s = await setup();
+    let off: string[] = ["java-tdd", "backend-design-java:*"];
+    const r = start(s.networkDir, [process.execPath, FAKE, s.log, "1", "{prompt}"], { disabledSkills: () => off });
+    const t1 = await s.newTask("With skills off");
+    await until(async () => (await s.tasks.get(t1.id)).status === "COMPLETED", "task done");
+    off = []; // switched on again: from the next session
+    const t2 = await s.newTask("All skills on");
+    await until(async () => (await s.tasks.get(t2.id)).status === "COMPLETED", "task done");
+    expect(await r.stop()).toBe(0);
+    const [first, second] = s.launches();
+    expect(JSON.parse(first!.skillsOff!)).toEqual(["java-tdd", "backend-design-java:*"]);
+    expect(first!.args[0]).toContain("Skills the operator switched off for you: java-tdd, backend-design-java:*");
+    expect(JSON.parse(second!.skillsOff!)).toEqual([]);
+    expect(second!.args[0]).not.toContain("switched off for you");
   });
 
   it("a handoff at a fresh phase starts the fresh session at once and is not a failed attempt", async () => {

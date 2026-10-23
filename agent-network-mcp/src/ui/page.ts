@@ -296,6 +296,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     <section data-panel="runners" hidden>
       <h1>Runner'ы</h1><div class="lead" id="runners-lead">Агенты проекта: запуск, модель, инструкции, лог.</div>
       <div class="grid" id="runners"></div>
+      <h2>Скиллы агентов</h2><div class="lead">Какие скиллы агент может загружать. Выключенный скилл runner называет агенту в промпте, а хук pre-skill отклоняет его загрузку (Skill или чтение SKILL.md). Действует со следующей сессии и пишется в runners.json (disabledSkills).</div><div id="skills"></div>
       <h2>Роли проекта</h2><div class="lead">Что делают агенты, которых lead добавляет сам: роль по имени из библиотеки (.agent-network/roles) или своя, написанная под задачу. На чём агент работает (CLI, модель, права), решает шаблон в runners.json.</div><div class="grid" id="roles"></div>
       <h2>Агенты в сети</h2><div class="grid" id="agents"></div>
     </section>
@@ -370,7 +371,7 @@ async function tick(){
 }
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
-  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();
+  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderSkills();renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();
   if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y)} // a refresh never moves the page
 
 function current(){return PROJ.find(p=>p.id===route.project)}
@@ -600,6 +601,27 @@ function renderReview(t){
 }
 // the project's role library on the Runners tab: what leads can give spawned agents by name
 let ROLES=null,rolesAt=0;
+// skills × agents: a checkbox per agent (checked = it may load the skill); "всем" switches the row for every agent
+let SKILLS=null,skillsAt=0;
+async function renderSkills(force){const box=$("skills");if(!box)return;if(force||Date.now()-skillsAt>15000){skillsAt=Date.now();try{SKILLS=await getJSON(q("/api/skills"))}catch(e){SKILLS={skills:[],agents:[]}}}
+  const sig=JSON.stringify([SKILLS,!!S.control]);if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.replaceChildren();
+  const agents=(SKILLS.agents||[]).filter(a=>!a.spawned);
+  if(!SKILLS.skills.length||!agents.length){box.append(el("div","muted",!agents.length?"Runner'ов нет: скиллы включаются по агентам из runners.json.":"Скиллов не нашлось: ищу в ~/.claude/skills, ~/.qwen/skills и .claude/skills проекта и агентов."));return}
+  const t=document.createElement("table");t.className="skills";const hd=document.createElement("tr");
+  hd.append(el("th","","Скилл"),...agents.map(a=>el("th","",a.id)),el("th",""));t.append(hd);
+  const toggle=async(agent,name,enabled)=>{try{await post("/api/runners/"+encodeURIComponent(agent)+"/skills",{skill:name,enabled});await renderSkills(true)}catch(e){alert(e.message)}};
+  for(const k of SKILLS.skills){const tr=document.createElement("tr");const nm=el("td","");nm.append(el("b","",k.name));if(k.sources.length)nm.append(el("span","muted small"," "+k.sources.join(", ")));else nm.append(el("span","muted small"," не найден"));nm.title=k.description||"";tr.append(nm);
+    for(const a of agents){const td=document.createElement("td");const cb=document.createElement("input");cb.type="checkbox";cb.checked=!a.disabled.includes(k.name);cb.disabled=!S.control;cb.title=(cb.checked?"выключить ":"включить ")+k.name+" для "+a.id;cb.onchange=()=>{cb.disabled=true;toggle(a.id,k.name,cb.checked)};td.append(cb);tr.append(td)}
+    const all=document.createElement("td");if(S.control){const anyOn=agents.some(a=>!a.disabled.includes(k.name));const b=el("button","ghost small",anyOn?"выкл. всем":"вкл. всем");b.type="button";
+      b.onclick=async()=>{b.disabled=true;for(const a of agents)if(a.disabled.includes(k.name)===anyOn)await post("/api/runners/"+encodeURIComponent(a.id)+"/skills",{skill:k.name,enabled:!anyOn}).catch(e=>alert(e.message));await renderSkills(true)};all.append(b)}
+    tr.append(all);t.append(tr)}
+  box.append(t);
+  // a skill that is not on disk here (a plugin's, one installed later): off for every agent by its name; plugin:* takes the whole plugin
+  if(S.control){const f=el("div","checks");const inp=document.createElement("input");inp.placeholder="имя скилла или плагин:* — например backend-design-java:*";inp.style.minWidth="320px";
+    const b=el("button","small","Выключить всем");b.type="button";const say=el("span","muted small","");
+    b.onclick=async()=>{const name=inp.value.trim();if(!name){say.textContent="Введите имя скилла";return}b.disabled=true;say.textContent="";
+      try{for(const a of agents)if(!a.disabled.includes(name))await post("/api/runners/"+encodeURIComponent(a.id)+"/skills",{skill:name,enabled:false});inp.value="";await renderSkills(true)}catch(e){say.textContent=e.message}finally{b.disabled=false}};
+    inp.oninput=()=>{say.textContent=""};f.append(inp,b,say);box.append(f)}}
 async function renderRoles(){const box=$("roles");if(!box)return;if(Date.now()-rolesAt>15000){rolesAt=Date.now();try{ROLES=(await getJSON(q("/api/roles"))).roles}catch(e){ROLES=[]}}
   const sig=JSON.stringify(ROLES);if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.replaceChildren();
   if(!ROLES||!ROLES.length){box.append(el("div","muted","Ролей пока нет. Роль, которую lead написал для добавленного агента, сохраняется кнопкой в карточке задачи; дальше lead берёт её по имени."));return}
