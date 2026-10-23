@@ -14,6 +14,7 @@ mkdir -p /tmp/ru-skills && tar -xzf audit/2026-10-04-ru-skills-snapshot.tar.gz -
 |---|---|---|---|
 | [`java-dev-flow/`](java-dev-flow/) | `java-dev-flow` | Оркестратор: тип и размер задачи (S/M/L), фазы от дизайна до отчёта | точка входа для любой задачи по коду |
 | [`backend-design-java/`](backend-design-java/) | плагин: 14 скиллов, 6 агентов, 5 команд, 3 хука | Дисциплины Spring/JPA/PostgreSQL/Liquibase: миграции, транзакции, идемпотентность, безопасность | `java-dev-flow`, `critic`, `java-spec-review` |
+| [`java-conventions/`](java-conventions/) | `java-conventions` | Правила проекта: пакеты по слоям, API через спеку и сгенерированный `*Api`, редкие комментарии по-русски | фаза 4 `java-dev-flow`, ревью |
 | [`java-tdd/`](java-tdd/) | `java-tdd` | red → green → refactor, режимы A–D | фаза 4 `java-dev-flow` |
 | [`java-diagnosing-bugs/`](java-diagnosing-bugs/) | `java-diagnosing-bugs` | Причина локального бага: воспроизведение, гипотезы, замеры | маршрут B `java-dev-flow` |
 | [`java-code-review/`](java-code-review/) | `java-code-review` | Ревью diff: корректность, Spring/JPA, безопасность | агент `java-code-reviewer` |
@@ -64,7 +65,7 @@ mkdir -p ~/.claude/skills ~/.claude/agents ~/.claude/hooks
 2. Свои скиллы:
 
 ```bash
-cp -R java-dev-flow java-tdd java-diagnosing-bugs java-code-review java-extensibility-review java-spec-review jira-tasks ~/.claude/skills/
+cp -R java-dev-flow java-conventions java-tdd java-diagnosing-bugs java-code-review java-extensibility-review java-spec-review jira-tasks ~/.claude/skills/
 ```
 
 3. Сторонние скиллы. `grilling` нужен `java-dev-flow`, `grill-me` — ручной вход в него:

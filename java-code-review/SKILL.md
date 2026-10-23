@@ -37,6 +37,7 @@ The diff is huge (more than ~3000 lines) — first show the user the file list a
 Before judging the code, learn the rules it is written by:
 
 - `CLAUDE.md` at the root and in the directories of changed files — these are the project's rules, and their violations are full findings.
+- The `java-conventions` skill, if the environment has it — its rules are project rules too: the package of a new class, an endpoint written by hand instead of through the spec and the generated `*Api`, comments that restate code. Run its `scripts/check_comments.py` on the same range instead of reading every comment by eye.
 - `pom.xml` / `build.gradle(.kts)`: the Java version (decides whether records, sealed, pattern matching, virtual threads fit), the Spring Boot version (2.x — `javax.*`, 3.x — `jakarta.*`), the libraries in use (Lombok, MapStruct, Flyway/Liquibase, Testcontainers).
 - Linter and formatter configs (Checkstyle, Spotless, PMD, ErrorProne). Do not duplicate what they already catch.
 
@@ -53,7 +54,7 @@ For every changed file check in order. Detailed checklists are in `references/`;
 5. **Security** — injections, endpoint authorization, secrets, logging PII, deserialization. → `references/security.md`
 6. **API contracts** — backward compatibility of REST/DTOs/events, response codes, versioning.
 7. **Tests** — is the new behavior covered. If the environment has the `test-audit` skill, judge the quality of the tests themselves by it, and here only note missing tests for risky logic.
-8. **Project rules** — everything CLAUDE.md explicitly demands.
+8. **Project rules** — everything CLAUDE.md and `java-conventions` explicitly demand.
 
 Do not look for problems in unchanged code unless the change breaks it (e.g. a new call of an old method with null).
 

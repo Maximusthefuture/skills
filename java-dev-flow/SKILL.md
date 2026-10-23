@@ -102,7 +102,7 @@ Phases 1–3 in detail, including moving an L task to a new session — [referen
 
 For every slice:
 
-1. Load the domain skills whose signals belong to this slice.
+1. Load the domain skills whose signals belong to this slice, and `java-conventions` once per task: package of every new class, API changes through the OpenAPI spec and the generated `*Api` interface, sparse comments.
 2. Every behavior is one `java-tdd` cycle: RED, checking the test failed for the right reason → GREEN → REFACTOR.
 3. Test skills only where needed, not all at once: for S `java-tdd` is enough; `testing-with-discernment` — at the first integration test or when the level is unclear; `test-audit` — in phase 5, as the "check tests" flag for `java-code-reviewer`.
 4. **Handle hook warnings** from `backend-design-java` and `tdd-guard`: they arrive as additional context after Write/Edit. Fix them in the same cycle or record a justification for the report. Never skip them silently.

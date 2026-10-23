@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: add-endpoint-via-spec
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  Спека shop.yaml дополнена операцией cancelOrder (operationId, ответы 200/404/409). OrdersController реализует новый метод с @Override, без @PostMapping/@PathVariable и без @RequestMapping на классе; собственных DTO, дублирующих модели, нет. Правило «только NEW» живёт в OrderService, 409 — через исключение в exception/ и GlobalExceptionHandler. Новые комментарии редкие, по-русски, до 5 слов.

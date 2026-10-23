@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: class-placement
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  Слушатель лежит в пакете listener и только вызывает сервис; переход в PAID и проверка статуса — в service. Payload события лежит в dto (не в api.model и не в entity). Настройки топика — @ConfigurationProperties в config. Нет пакетов по фичам и util с бизнес-логикой. Комментарии редкие, по-русски, до 5 слов; Javadoc на классах только если неочевиден, до 20 слов.

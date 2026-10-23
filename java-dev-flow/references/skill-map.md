@@ -21,6 +21,7 @@ Base names. A session may add a plugin prefix (`backend-design-java:`, `backend-
 | `grilling` | interview in rounds with a recommended answer to each question until no open decisions remain. From `mattpocock-skills/` | phase 1, L |
 | `think-before-coding` | 6 design steps: context and load, data, errors, authorization, retries and concurrency, observability; build order | phase 2; slice order in phase 3 |
 | `java-tdd` | red → green → refactor, proof that the test fails, modes A (feature), B (bug), C (refactoring), D (code without tests) | phase 4, routes B and C |
+| `java-conventions` | house rules: package by layer for every class, API changed in the OpenAPI spec and implemented through the generated `*Api` interface (`interfaceOnly`), sparse Russian comments (≤ 5 words per line, class Javadoc ≤ 20 words) with `scripts/check_comments.py` | phase 4, every task; phase 5 — the reviewer checks the same rules |
 | `java-diagnosing-bugs` | cause of a local bug: a command that fails on it, minimization, hypotheses, measurements, cleanup | route B, step 1 |
 | `debugging-discipline` | investigating a symptom in production or staging | route B, production |
 | `java-code-review` | diff review: correctness, concurrency, Spring/JPA, security, contracts; only findings with confidence ≥ 80 go into the report | phase 5, M and L |
