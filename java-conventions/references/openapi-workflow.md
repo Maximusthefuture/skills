@@ -18,6 +18,16 @@ Look at the plugin configuration before editing — it decides names and package
 
 Do not change these settings as part of a feature: every setting renames or reshapes all generated classes. If one blocks the task, ask.
 
+## Generation cannot run
+
+No Maven/Gradle, no network, the build is broken. Do not hand-edit generated files to compensate. Derive the signature from the generator rules and the existing generated methods:
+
+- method name = `operationId`; the interface = the tag in PascalCase + `Api`;
+- parameters in spec order: path, query, header, then the body; the type of a schema `Foo` is `Foo` + `modelNameSuffix`;
+- the return type is `ResponseEntity<T>` of the 2xx response schema, `ResponseEntity<Void>` without a body.
+
+In the report say that the signature is derived, not generated, and that the controller will not compile until the next `generate-sources`.
+
 ## Adding an operation
 
 1. Add the path and operation to the spec. Give it an `operationId` — it becomes the Java method name; without it the generator invents one from the path.
