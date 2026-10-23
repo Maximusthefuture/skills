@@ -33,6 +33,11 @@ nextAction:
   HTML page with `plan({html, note})` before `propose`; the operator comments on it, edits it in place and approves it
   on the page. Feedback arrives in `pendingMessages`: rework it with `plan({edits: [{find, replace}]})` (read the current
   page with `plan({read: true})` after the operator edited it; a big page by parts: `plan({read: true, around: "<a few words>"})`). `propose` is refused (`PLAN_NOT_APPROVED`) until approved.
+  A change-writing task with analysts' input (`proposes.input` in `swarm_context`: their files in your folder) has two
+  pages instead of a plan: `plan({stage: "input", html})` in DISCUSS (their artifacts as they are; `propose` is refused
+  with `INPUT_NOT_REVIEWED` until the operator has looked), then the grilling, then your own change and
+  `plan({stage: "change", html})` in IMPLEMENT (yours next to theirs; `complete` is refused with `CHANGE_NOT_APPROVED`
+  until the operator accepts it and while the change folder differs from the accepted page).
 - `approve` (DISCUSS): read `agreement` (assignments and each agent's files); `complete()` approves it. If you disagree, `send_message` or `propose` a replacement.
   Proposing an agreement approves it for its author: after `propose` the author only waits for the others.
 - `implement` (IMPLEMENT): work ONLY on your own assignment and change only your own files (`ownership.yourFiles`) or files granted to you. Reviewing the other agents' code is for SYNC, not now. Report blockers with `send_message`. When finished

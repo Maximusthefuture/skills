@@ -10,7 +10,8 @@ import { archiveChange, assertChangeName, changePath, hasChange, readChange, typ
 import { anyDeclared, covers, findOverlaps, matches, normalizePath, overlaps, ownersOf } from "./ownership.js";
 import { DEFAULT_MAX_FIX_ROUNDS, isHalt, PhaseManager, type Halt, type Transition } from "./phase/phaseManager.js";
 import { writeParkMarker } from "./park.js";
-import { applyEdits, checkFeedback, checkPlanHtml, feedbackText, planStatus, readPlanState, type PlanFeedback, type PlanState } from "./plan.js";
+import { applyEdits, checkFeedback, checkPlanHtml, feedbackText, inputViewed, planStatus, readPlanState, reviewsPages, type PlanFeedback, type PlanStage, type PlanState } from "./plan.js";
+import { collectInput, copyInput } from "./specInput.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore } from "./stores/agentStore.js";
 import { AgreementStore } from "./stores/agreementStore.js";
@@ -84,6 +85,11 @@ export interface NewTaskInput {
   maxCostUsd?: number;
   /** The task writes this new OpenSpec change (openspec/changes/<name>/): the lead writes it, the others review it. */
   proposes?: string;
+  /**
+   * With proposes: the analysts' artifacts (.md files or folders, absolute or relative to the project) the change is
+   * written from. Copied into the task; the lead shows them as a page, grills the operator, writes its own change.
+   */
+  from?: string[];
   /** The lead first asks what is unclear, or says how it understood the task, before it may propose. */
   clarify?: boolean;
   /** The lead writes an HTML plan first, and proposes only after the operator approved it. */
@@ -315,6 +321,9 @@ export class NetworkService {
     const change = input.openspec?.trim() ? await readChange(this.projectDir, input.openspec.trim()) : null;
     const proposes = input.proposes?.trim() ? await this.checkNewChange(input.proposes.trim(), !!change) : undefined;
     if (proposes && input.planReview) throw new AppError("INVALID_INPUT", "A task that writes an OpenSpec change has no separate plan: the change itself is what you review");
+    const from = (input.from ?? []).map((f) => f.trim()).filter(Boolean);
+    if (from.length && !proposes) throw new AppError("INVALID_INPUT", "--from (the analysts' artifacts) goes with --propose <change>: they are the input of a change-writing task");
+    const inputFiles = from.length ? await collectInput(from, this.projectDir) : [];
     const title = input.title.trim() || change?.name || (proposes ? `OpenSpec change ${proposes}` : "");
     if (!title) throw new AppError("INVALID_INPUT", "title must not be empty");
     const agents = [...new Set(input.agents.map((a) => assertAgentId(a)))];
@@ -337,11 +346,14 @@ export class NetworkService {
     const task = await this.tasks.create({
       title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps,
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}), ...(change ? { openspec: change.name } : {}), ...(proposes ? { proposes } : {}),
+      ...(inputFiles.length ? { proposesInput: inputFiles.map((f) => f.rel) } : {}),
       ...(input.clarify ? { clarify: true } : {}),
       ...(input.planReview ? { planReview: true } : {}),
-      ...(input.grill ? { grill: true } : {}),
+      // analysts' input is grilled by default: their spec is a question list as much as an answer
+      ...(input.grill || (inputFiles.length && input.grill === undefined) ? { grill: true } : {}),
       ...(input.allowSpawn ? { allowSpawn: true } : {}),
     });
+    if (inputFiles.length) await copyInput(inputFiles, join(this.fs.root, "tasks", task.id, "input"));
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return task;
   }
@@ -452,29 +464,60 @@ export class NetworkService {
     return { version: v, html: await readFile(join(this.fs.root, "tasks", taskId, "plan", `v${v}.html`), "utf8") };
   }
 
-  private async savePlanVersion(taskId: string, s: PlanState, html: string, note?: string): Promise<number> {
+  private async savePlanVersion(taskId: string, s: PlanState, html: string, note?: string, page?: { stage?: PlanStage; hash?: string }): Promise<number> {
     const n = (s.versions.at(-1)?.n ?? 0) + 1;
     await mkdir(join(this.fs.root, "tasks", taskId, "plan"), { recursive: true });
     await writeFile(join(this.fs.root, "tasks", taskId, "plan", `v${n}.html`), html);
-    s.versions.push({ n, by: this.me, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 500) } : {}), bytes: Buffer.byteLength(html) });
+    s.versions.push({ n, by: this.me, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 500) } : {}), bytes: Buffer.byteLength(html), ...(page?.stage ? { stage: page.stage } : {}), ...(page?.hash ? { hash: page.hash } : {}) });
     return n;
   }
 
+  /**
+   * A change-writing task with analysts' input: which page the lead writes now. "input" in DISCUSS before the grilling
+   * (their artifacts as they are); "change" in IMPLEMENT once the change is written (ours next to theirs). A "change"
+   * page after an acceptance is a new review when the change folder changed since (hash), and is refused otherwise.
+   */
+  private async pageStage(task: Task, s: PlanState, stage: string | undefined, hash: string | undefined): Promise<PlanStage> {
+    if (stage !== "input" && stage !== "change") throw new AppError("INVALID_INPUT", `${task.id} shows two pages: plan({stage: "input", html}) — the analysts' artifacts, in DISCUSS — and plan({stage: "change", html}) — your change next to theirs, in IMPLEMENT`);
+    if (stage === "input") {
+      this.requirePhase(task, "DISCUSS");
+      if (inputViewed(s)) throw new AppError("ALREADY_COMPLETED", "The operator has looked at the input page already: go on with the grilling, then propose()");
+      return stage;
+    }
+    this.requirePhase(task, "IMPLEMENT");
+    if (!inputViewed(s)) throw new AppError("INPUT_NOT_REVIEWED", "The operator has not looked at the input page yet");
+    if (s.versions.at(-1)?.stage === "input") {
+      // the change page starts: the input stage is settled and kept as such
+      s.inputViewed = s.approved ?? s.inputViewed;
+      delete s.approved;
+    }
+    if (s.approved) {
+      const accepted = s.versions.find((v) => v.n === s.approved!.version);
+      if (accepted?.hash && accepted.hash === hash) throw new AppError("ALREADY_COMPLETED", `The operator accepted the change (page v${accepted.n}) and the change folder is the same: validate, commit and complete()`);
+      delete s.approved; // the change changed after the acceptance (a fix round): the operator looks again
+    }
+    return stage;
+  }
+
   /** The lead: a new version of the plan, the whole page or find/replace edits of the current one. */
-  async writePlan(input: { taskId: string; html?: string; edits?: { find: string; replace: string }[]; note?: string }): Promise<{ version: number; status: string }> {
+  async writePlan(input: { taskId: string; html?: string; edits?: { find: string; replace: string }[]; note?: string; stage?: string; hash?: string }): Promise<{ version: number; status: string }> {
     await this.requireMe();
     return this.fs.withLock(this.tasks.lockPath(assertTaskId(input.taskId)), async () => {
       const task = await this.requireMember(input.taskId);
       if (task.status !== "ACTIVE") throw new AppError("ALREADY_COMPLETED", `${task.id} is ${task.status}: the plan is closed`);
-      if (!task.planReview) throw new AppError("INVALID_INPUT", `${task.id} asks for no plan: propose() the agreement`);
-      if (this.phases.integrator(task) !== this.me) throw new AppError("FORBIDDEN", `The lead (${this.phases.integrator(task)}) writes the plan; tell it what you think with send_message`);
-      this.requirePhase(task, "DISCUSS");
-      // a grilled task: the plan is written from the settled decisions, so the grilling comes first
-      if (task.grill && !grillConfirmed(await this.messages.list(task.id), this.me)) {
-        throw new AppError("CLARIFY_FIRST", `${task.id} grills the operator about the task first: finish the rounds of questions and get its "yes" to your summary ("How I understand it: ... Is that right?"); then write the plan with every decision in it.`);
-      }
+      if (!reviewsPages(task)) throw new AppError("INVALID_INPUT", `${task.id} asks for no plan: propose() the agreement`);
+      if (this.phases.integrator(task) !== this.me) throw new AppError("FORBIDDEN", `The lead (${this.phases.integrator(task)}) writes the ${task.planReview ? "plan" : "pages"}; tell it what you think with send_message`);
       const s = await this.planState(task.id);
-      if (s.approved) throw new AppError("ALREADY_COMPLETED", `The operator approved plan v${s.approved.version}: propose() the agreement as it says`);
+      const pages = !task.planReview;
+      const stage = pages ? await this.pageStage(task, s, input.stage, input.hash) : undefined;
+      if (!pages) {
+        this.requirePhase(task, "DISCUSS");
+        // a grilled task: the plan is written from the settled decisions, so the grilling comes first
+        if (task.grill && !grillConfirmed(await this.messages.list(task.id), this.me)) {
+          throw new AppError("CLARIFY_FIRST", `${task.id} grills the operator about the task first: finish the rounds of questions and get its "yes" to your summary ("How I understand it: ... Is that right?"); then write the plan with every decision in it.`);
+        }
+        if (s.approved) throw new AppError("ALREADY_COMPLETED", `The operator approved plan v${s.approved.version}: propose() the agreement as it says`);
+      }
       if (input.html !== undefined && input.edits?.length) throw new AppError("INVALID_INPUT", "Send either html (the whole page) or edits (changes of the current version), not both");
       let html: string;
       if (input.html !== undefined) html = checkPlanHtml(input.html);
@@ -482,11 +525,13 @@ export class NetworkService {
         const current = await this.planHtml(task.id);
         if (!current) throw new AppError("INVALID_INPUT", "There is no plan yet: send the whole page as html");
         html = checkPlanHtml(applyEdits(current.html, input.edits));
-      } else if (input.note?.trim() && planStatus(s) === "revising") {
-        // the lead looked at the operator's feedback and keeps the page as it is: the same page again, with why
+      } else if (input.note?.trim() && (planStatus(s) === "revising" || (stage === "change" && s.versions.at(-1)?.stage === "change"))) {
+        // the lead looked at the operator's feedback and keeps the page as it is (or shows the changed folder on the same
+        // page): the same page again, with why
         html = (await this.planHtml(task.id))!.html;
       } else throw new AppError("INVALID_INPUT", "Send html (the whole page) or edits: [{find, replace}]; after the operator's feedback, a note alone keeps the page as it is (say why)");
-      const version = await this.savePlanVersion(task.id, s, html, input.note);
+      if (stage && s.versions.at(-1)?.stage !== stage && input.html === undefined) throw new AppError("INVALID_INPUT", `The ${stage} page is a new page: send it whole as html`);
+      const version = await this.savePlanVersion(task.id, s, html, input.note, stage ? { stage, ...(stage === "change" && input.hash ? { hash: input.hash } : {}) } : undefined);
       await this.fs.writeJson(["tasks", task.id, "plan", "state.json"], s);
       await this.emit({ type: "PLAN_UPDATED", taskId: task.id, sourceAgent: this.me, payload: { version } });
       return { version, status: planStatus(s) };
@@ -501,9 +546,11 @@ export class NetworkService {
     if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator reviews the plan");
     return this.fs.withLock(this.tasks.lockPath(assertTaskId(input.taskId)), async () => {
       const task = await this.tasks.get(input.taskId);
-      if (!task.planReview) throw new AppError("INVALID_INPUT", `${task.id} has no plan to review`);
-      if (task.status !== "ACTIVE" || task.phase !== "DISCUSS") throw new AppError("INVALID_PHASE", `${task.id} is past its plan (${task.status}, ${task.phase})`);
+      if (!reviewsPages(task)) throw new AppError("INVALID_INPUT", `${task.id} has no plan to review`);
       const s = await this.planState(task.id);
+      const stage = task.planReview ? undefined : s.versions.at(-1)?.stage;
+      const phase = stage === "change" ? "IMPLEMENT" : "DISCUSS";
+      if (task.status !== "ACTIVE" || task.phase !== phase) throw new AppError("INVALID_PHASE", `${task.id} is past this page (${task.status}, ${task.phase})`);
       if (s.approved) throw new AppError("ALREADY_COMPLETED", `Plan v${s.approved.version} is approved already`);
       const last = s.versions.at(-1);
       if (!last) throw new AppError("INVALID_INPUT", "The lead has not written a plan yet");
@@ -512,7 +559,7 @@ export class NetworkService {
       // comments and edits are the lead's to look at first: it decides whether the plan changes; only answers go with an approval
       if (input.approve && planStatus(s) === "revising") throw new AppError("INVALID_INPUT", `The lead is working in your feedback on v${last.n}: approve the version it sends`);
       if (input.approve && fb.comments.length + fb.edits.length > 0) throw new AppError("INVALID_INPUT", "Send your comments and edits to the lead first: it reworks the plan (or says why not), then you approve the new version");
-      if (fb.edits.length && input.html) fb.savedAs = await this.savePlanVersion(task.id, s, checkPlanHtml(input.html), "the operator's edits");
+      if (fb.edits.length && input.html) fb.savedAs = await this.savePlanVersion(task.id, s, checkPlanHtml(input.html), "the operator's edits", last.stage ? { stage: last.stage, ...(last.hash ? { hash: last.hash } : {}) } : undefined);
       const said = fb.comments.length + fb.edits.length + fb.answers.length > 0;
       if (!said && !input.approve) throw new AppError("INVALID_INPUT", "Nothing to send: comment on a block, edit the text or answer a question");
       if (input.approve) {
@@ -522,11 +569,19 @@ export class NetworkService {
       if (said) s.feedback.push(fb);
       await this.fs.writeJson(["tasks", task.id, "plan", "state.json"], s);
       const lead = this.phases.integrator(task);
-      const content = input.approve
-        ? `The operator approved plan v${s.approved!.version}. propose() the agreement now, as the plan says (assignments, files, contracts)${said ? "; the operator's answers below are part of it" : ""}.${said ? `
-${feedbackText(fb)}` : ""}`
-        : `The operator's feedback on plan v${last.n} (round ${fb.round}). Work it in: plan({edits: [{find, replace}]}) or plan({html}), with a note on what changed; a question you cannot settle: send_message({to: "operator"}). The operator approves the plan on the page, then you propose().
-${feedbackText(fb)}`;
+      const notes = said ? `\n${feedbackText(fb)}` : "";
+      const content =
+        stage === "input"
+          ? input.approve
+            ? `The operator has looked at the analysts' artifacts (page v${s.approved!.version}). Now grill the operator: the discrepancies on the page and the operator's notes below are where the questions come from; then propose().${notes}`
+            : `The operator's notes on the input page v${last.n}: they are not edits of the analysts' artifacts but questions and decisions for the grilling. Take them into the rounds; if the page itself misrepresents the input, fix it (plan({stage: "input", edits})).${notes}`
+          : stage === "change"
+            ? input.approve
+              ? `The operator accepted the change (page v${s.approved!.version}). Change nothing in the change folder now (an edit needs a new page); run openspec validate --strict, commit and complete({result}).${notes}`
+              : `The operator returns the change for rework (page v${last.n}, round ${fb.round}). Edit the change files as the notes say (a question you cannot settle: send_message({to: "operator"})), validate, then show it again: plan({stage: "change", html or edits, note: "<what changed>"}).${notes}`
+            : input.approve
+              ? `The operator approved plan v${s.approved!.version}. propose() the agreement now, as the plan says (assignments, files, contracts)${said ? "; the operator's answers below are part of it" : ""}.${notes}`
+              : `The operator's feedback on plan v${last.n} (round ${fb.round}). Work it in: plan({edits: [{find, replace}]}) or plan({html}), with a note on what changed; a question you cannot settle: send_message({to: "operator"}). The operator approves the plan on the page, then you propose().${notes}`;
       const message = await this.messages.create({ taskId: task.id, from: OPERATOR, to: lead, type: "INFORMATION", content });
       await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: lead, sourceAgent: OPERATOR, payload: { messageId: message.id, from: OPERATOR, type: message.type } });
       await this.emit({ type: input.approve ? "PLAN_APPROVED" : "PLAN_FEEDBACK", taskId: task.id, sourceAgent: OPERATOR, payload: { version: input.approve ? s.approved!.version : last.n, comments: fb.comments.length, edits: fb.edits.length, answers: fb.answers.length } });
@@ -845,6 +900,12 @@ ${feedbackText(fb)}`;
   }): Promise<{ agreement: Agreement; phase: Task["phase"] }> {
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "DISCUSS");
+      if (task.proposes?.input?.length && !inputViewed(await this.planState(task.id))) {
+        throw new AppError(
+          "INPUT_NOT_REVIEWED",
+          `${task.id} starts from the analysts' artifacts: show them to the operator first as one page — plan({stage: "input", html, note}) — and wait() until it has looked; then the grilling, then propose().`,
+        );
+      }
       if (task.clarify && !(await this.leadWroteOperator(task))) {
         throw new AppError(
           "CLARIFY_FIRST",

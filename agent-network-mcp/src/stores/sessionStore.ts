@@ -16,6 +16,8 @@ export interface SessionRecord {
   costUsd?: number;
   numTurns?: number;
   model?: string;
+  /** The skills the session loaded (its subagents' too), in the order of their first use. */
+  skills?: string[];
   /** Other tasks the same session finished (e.g. a follow-up it went on to): their tokens are counted here. */
   alsoFinished?: string[];
   /** The session ended at its turn limit after making progress: a planned end, a fresh session went on. */

@@ -20,6 +20,8 @@ export interface NewTask {
   baseCommit?: string;
   openspec?: string;
   proposes?: string;
+  /** With proposes: the analysts' input files (names under tasks/<id>/input/). */
+  proposesInput?: string[];
   clarify?: boolean;
   planReview?: boolean;
   grill?: boolean;
@@ -60,7 +62,7 @@ export class TaskStore {
       ...(input.rootTaskId ? { rootTaskId: input.rootTaskId } : {}),
       ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
       ...(input.openspec ? { openspec: { change: input.openspec } } : {}),
-      ...(input.proposes ? { proposes: { change: input.proposes } } : {}),
+      ...(input.proposes ? { proposes: { change: input.proposes, ...(input.proposesInput?.length ? { input: input.proposesInput } : {}) } } : {}),
       ...(input.clarify ? { clarify: true as const } : {}),
       ...(input.planReview ? { planReview: true as const } : {}),
       ...(input.grill ? { clarify: true as const, grill: true as const } : {}),

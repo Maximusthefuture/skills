@@ -7,7 +7,13 @@ import type { FileStore } from "./storage/fileStore.js";
  * Kept in tasks/<id>/plan/: v<N>.html per version and state.json.
  */
 
-export interface PlanVersion { n: number; by: string; at: string; note?: string; bytes: number }
+/**
+ * A change-writing task with analysts' input shows two pages instead of a plan: "input" (the analysts' artifacts as they
+ * are, DISCUSS, the operator only looks) and "change" (our change next to theirs, IMPLEMENT, the operator accepts it or
+ * returns it). hash: the change folder the "change" page shows (complete() checks the accepted one is still what is there).
+ */
+export type PlanStage = "input" | "change";
+export interface PlanVersion { n: number; by: string; at: string; note?: string; bytes: number; stage?: PlanStage; hash?: string }
 /** A note on a block of the plan (target: its tag and first words), on selected words of it when quote is set. */
 export interface PlanComment { target: string; quote?: string; text: string }
 /** Text the operator changed in place: before "" = added (after the block "near"), after "" = removed; kind diagram: a Mermaid diagram's source. */
@@ -24,7 +30,13 @@ export interface PlanFeedback {
   /** Sent with the approval: notes to take into account, not a reason to rewrite. */
   withApproval?: true;
 }
-export interface PlanState { versions: PlanVersion[]; feedback: PlanFeedback[]; approved?: { version: number; at: string } }
+export interface PlanState {
+  versions: PlanVersion[]; feedback: PlanFeedback[];
+  /** The approval of the current stage (for a change-writing task: of its latest page). */
+  approved?: { version: number; at: string };
+  /** The operator looked at the analysts' input page (kept here once the "change" page starts). */
+  inputViewed?: { version: number; at: string };
+}
 /** none: no plan yet; awaiting: the operator reviews the latest version; revising: the lead has feedback to work in; approved. */
 export type PlanStatus = "none" | "awaiting" | "revising" | "approved";
 
@@ -60,9 +72,28 @@ export function planStatus(s: PlanState): PlanStatus {
 }
 
 /** The plan in brief for the page and the agents. */
-export function planBrief(s: PlanState): { status: PlanStatus; version: number | null; by: string | null; at: string | null; approvedVersion: number | null; versions: number; rounds: number } {
+export function planBrief(s: PlanState): { status: PlanStatus; version: number | null; by: string | null; at: string | null; approvedVersion: number | null; versions: number; rounds: number; stage: PlanStage | null } {
   const last = s.versions.at(-1);
-  return { status: planStatus(s), version: last?.n ?? null, by: last?.by ?? null, at: last?.at ?? null, approvedVersion: s.approved?.version ?? null, versions: s.versions.length, rounds: s.feedback.filter((f) => !f.withApproval).length };
+  return { status: planStatus(s), version: last?.n ?? null, by: last?.by ?? null, at: last?.at ?? null, approvedVersion: s.approved?.version ?? null, versions: s.versions.length, rounds: s.feedback.filter((f) => !f.withApproval).length, stage: last?.stage ?? null };
+}
+
+/** A task the operator reviews pages of: a plan (planReview), or a change-writing task with analysts' input (two pages). */
+export function reviewsPages(task: { planReview?: true; proposes?: { input?: string[] } }): boolean {
+  return !!task.planReview || !!task.proposes?.input?.length;
+}
+
+/** The operator has looked at the analysts' input page. */
+export function inputViewed(s: PlanState): boolean {
+  return !!s.inputViewed || (!!s.approved && s.versions.find((v) => v.n === s.approved!.version)?.stage === "input");
+}
+
+/** The operator accepted the change page, and it still shows the change folder as it is now (hash). */
+export function changeAccepted(s: PlanState, hash: string): "accepted" | "none" | "pending" | "changed" {
+  const last = s.versions.at(-1);
+  if (last?.stage !== "change") return "none";
+  if (!s.approved) return "pending";
+  const v = s.versions.find((x) => x.n === s.approved!.version);
+  return v?.stage === "change" && v.hash === hash ? "accepted" : "changed";
 }
 
 /** find/replace edits on the current version: each find must occur exactly once (like an editor's Edit tool). */

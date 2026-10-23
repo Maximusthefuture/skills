@@ -3,7 +3,8 @@ import { mkdir, readdir, readFile, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { AppError } from "./errors.js";
-import { readPlanState } from "./plan.js";
+import { readPlanState, reviewsPages, type PlanState } from "./plan.js";
+import type { Task } from "./types.js";
 import { buildArgv, FALLBACK_SYSTEM_PROMPT, isValidModel, runSession, usesModel, withModel, type SessionRun } from "./runner.js";
 import type { ActivityItem } from "./sessionOutput.js";
 import { sessionCost, type Prices } from "./stats.js";
@@ -148,6 +149,16 @@ export interface PlanCriticOptions {
 }
 
 /**
+ * Whether the critic reads the task's current page: a plan in DISCUSS, or the "change" page of a change-writing task
+ * with analysts' input in IMPLEMENT (the analysts' input page is theirs, not ours to criticise).
+ */
+function criticReads(task: Task, s: PlanState): boolean {
+  if (task.status !== "ACTIVE") return false;
+  if (task.planReview) return task.phase === "DISCUSS";
+  return task.phase === "IMPLEMENT" && s.versions.at(-1)?.stage === "change";
+}
+
+/**
  * The critic of plans (runners.json "planCritic"): every version of a plan the lead writes (task.planReview, still in
  * DISCUSS, not approved) gets one read-only session that looks for what breaks in production if it is built as written:
  * existing data, deploy and rollback, consumers, retries and races, load, security. Its risks show next to the plan on the
@@ -218,7 +229,7 @@ export class PlanCritic {
       const { taskId, version, abort } = this.current;
       const task = await new TaskStore(fs).find(taskId);
       const s = await readPlanState(fs, taskId);
-      const stale = !task || task.status !== "ACTIVE" || task.phase !== "DISCUSS" || !!s.approved || s.versions.filter((v) => v.by !== "operator").at(-1)!.n > version;
+      const stale = !task || !criticReads(task, s) || !!s.approved || s.versions.filter((v) => v.by !== "operator").at(-1)!.n > version;
       if (stale && !abort.signal.aborted) {
         this.opts.log?.(`[plan critic] ${taskId}: v${version} is out of date, stopped`);
         abort.abort();
@@ -226,8 +237,9 @@ export class PlanCritic {
       return;
     }
     for (const task of await new TaskStore(fs).list()) {
-      if (!task.planReview || task.status !== "ACTIVE" || task.phase !== "DISCUSS") continue;
+      if (!reviewsPages(task)) continue;
       const s = await readPlanState(fs, task.id);
+      if (!criticReads(task, s)) continue;
       const last = s.versions.at(-1);
       // the operator's own edits are not the lead's plan; an approved plan is past criticism
       if (!last || last.by === "operator" || s.approved) continue;

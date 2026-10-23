@@ -85,13 +85,14 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
   );
   tool(
     "plan",
-    "Lead, DISCUSS, when swarm_context has 'plan' (the operator asked for a plan before the agreement): write the plan as ONE self-contained HTML page. The operator comments on it, edits it in place and answers its questions on the page; their feedback arrives in pendingMessages; propose() is accepted once they approve it. Each call saves a new version.",
+    "Lead, when swarm_context has 'plan': write ONE self-contained HTML page for the operator. A plan (DISCUSS): the operator comments, edits it in place, answers its questions, approves it; then propose(). A change-writing task with analysts' input ('proposes.input'): stage \"input\" (DISCUSS, their artifacts as they are, the operator looks) and stage \"change\" (IMPLEMENT, your change next to theirs, the operator accepts it or returns it). Feedback arrives in pendingMessages. Each call saves a new version.",
     {
       html: z.string().optional().describe("The whole page: <!doctype html><html>... with inline <style>; for the first version or a rewrite"),
       edits: z.array(z.object({ find: z.string().describe("Exact text of the current version, occurring once"), replace: z.string().describe("Its replacement; \"\" removes it") })).optional().describe("Changes of the current version instead of the whole page (cheaper after feedback)"),
       note: z.string().optional().describe("What changed in this version, e.g. 'tester takes the API tests; the retry moved to the client'. After the operator's feedback, a note alone sends the same page again (nothing needed to change, and why)"),
       read: z.boolean().optional().describe("true: return the current version's html (after the operator edited it in place), save nothing; a big page comes as its headings, read it by parts with around"),
       around: z.string().optional().describe("Read only the parts of the current version around this text (a few words of it), save nothing"),
+      stage: z.enum(["input", "change"]).optional().describe("A change-writing task with analysts' input: which page — \"input\" (their artifacts) or \"change\" (yours next to theirs)"),
     },
     async (a) => swarm.plan(a),
   );

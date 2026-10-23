@@ -92,8 +92,7 @@
       "id": "reviewer",
       "instructionsFile": "instructions/reviewer.md",
       "withoutTools": [
-        "Agent",
-        "Skill"
+        "Agent"
       ]
     },
     {

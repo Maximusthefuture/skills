@@ -227,6 +227,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
         <label>OpenSpec change (необязательно): агенты делят его tasks.md по номерам задач — или пишут новый<select name="openspec" id="openspec"><option value="">— без OpenSpec —</option><option value="__new__">+ написать новый change…</option></select></label>
         <div id="specfolders" class="note" hidden></div>
         <label id="proposes-row" hidden>Имя нового change (латиница, цифры, -): lead пишет его, остальные ревьюят; код не меняется<input name="proposes" placeholder="add-loyalty-discount" maxlength="60"></label>
+        <label id="from-row" hidden>Артефакты аналитиков (необязательно): путь к папке или .md-файлам, по одному на строку. Это вход, а не change: lead покажет их страницей, проведёт допрос и напишет свой change по правилам проекта, а вы примете его на второй странице<textarea name="from" rows="2" placeholder="/Users/me/Downloads/loyalty-discount/"></textarea></label>
         <label>Название<input name="title" maxlength="200" placeholder="Отмена заказа: POST /orders/{id}/cancel"></label>
         <label>Описание — конкретно: что сделать, где, ожидаемое поведение, кто что делает (с OpenSpec change — необязательно)<textarea name="description" placeholder="Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты."></textarea></label>
         <div class="row"><label>Lead (интегрирует)<select name="lead" id="lead"></select></label><label>Остальные агенты<div class="checks" id="others"></div></label></div>
@@ -419,7 +420,8 @@ function renderOverview(){
   if(s.control){const ph=el("div","ph","Runner'ы");ph.append(el("span","end",rs.filter(r=>r.session).length+" работают · "+rs.filter(r=>!r.running).length+" остановлено"));rp.append(ph);
     const t=el("table");t.append(head(["Агент","Модель","Сейчас","Расход · "+win.replace("h","ч").replace("d","д")]));
     rs.forEach(r=>{const cur=r.session?s.tasks.find(x=>x.id===r.session.taskId):null;const subs=cur&&cur.subtasks&&cur.subtasks[r.id]||[];const live=subs.filter(x=>x.status!=="DROPPED");
-      const nowTxt=r.session?(r.session.taskId+(cur?" · "+cur.phase:"")+(live.length?" · "+live.filter(x=>x.status==="DONE").length+"/"+live.length+" подзадач":"")):r.running?"ждёт задачу":"остановлен";
+      const skillNow=cur?skillsOf(r.id,cur,true).now:null;
+      const nowTxt=r.session?(r.session.taskId+(cur?" · "+cur.phase:"")+(live.length?" · "+live.filter(x=>x.status==="DONE").length+"/"+live.length+" подзадач":"")+(skillNow?" · скилл "+skillNow:"")):r.running?"ждёт задачу":"остановлен";
       const mine=done.filter(x=>x.agentId===r.id&&x.costUsd!==null);const c1=el("td","nw");c1.append(dot(r.session?"ok":r.running?"warn":""),r.id);
       t.append(row([c1,td(r.model||"из command","mono"),td(nowTxt,r.session?"":"muted"),td(mine.length?fmtUsd(mine.reduce((a,x)=>a+x.costUsd,0),mine.some(x=>x.costEstimated)):"—","mono")]))});
     rp.append(t);if(!rs.length)rp.append(el("div","empty","В runners.json нет агентов."))}
@@ -496,6 +498,10 @@ function phaseBar(t){
     if(visits.length>1&&visits.length<=8){const rd=el("span","rd");visits.forEach((v,j)=>rd.append(el("i",j===visits.length-1?"last":"")));seg.append(rd)}
     seg.title=p+(m?": "+fmtMs(m):"")+(visits.length>1?"\n"+visits.map((v,j)=>(p==="SYNC"?"раунд ":"заход ")+(j+1)+": "+fmtMs(v)).join("\n"):"")+(now?"\n— сейчас":"");bar.append(seg)});
   return bar}
+// the skills an agent loaded on a task: its finished sessions (stats) and the running one (the feed); the latest one of a busy agent is "now"
+function skillsOf(agent,t,busy){const seen=[...((t.stats&&(t.stats.agents.find(a=>a.agentId===agent)||{}).skills)||[])];let now=null;
+  for(const e of ACT)if(e.agentId===agent&&e.taskId===t.id&&e.kind==="tool_use"&&e.skill){if(!seen.includes(e.skill))seen.push(e.skill);now=e.skill}
+  return{all:seen,now:busy?now:null}}
 function lastCall(agent,taskId){for(let i=ACT.length-1;i>=0;i--){const e=ACT[i];if(e.agentId===agent&&e.kind==="tool_use"&&(!e.taskId||e.taskId===taskId))return e}return null}
 /** What each agent of an open task is doing: its subtasks as a bar, its current step or why it waits, its last call. */
 function progressBlock(t){
@@ -527,6 +533,7 @@ function progressBlock(t){
     nm.append(el("b","",id),el("span","",[id===lead?"lead":"",model].filter(Boolean).join(" · ")));
     const mid=el("div");mid.append(wait&&!d?pbar([],"wait"):pbar(subs.length?[[d/subs.length,"g"],[doing?1/subs.length:0,"b"]]:[]));
     const line=el("div","st "+cls,st+(last?" · "+(last.tool||"")+" "+last.summary+" · "+ago(last.at):""));line.title=line.textContent;mid.append(line);
+    const sk=skillsOf(id,t,busy);if(sk.all.length){const sl=el("div","st muted small","скиллы: "+sk.all.map(k=>k===sk.now?"▶ "+k:k).join(" · "));sl.title="Скиллы, которые агент загрузил в этой задаче"+(sk.now?"; ▶ — последний в идущей сессии":"");mid.append(sl)}
     const cnt=el("div","cnt");if(subs.length){cnt.append(el("b","",String(d)),"/"+subs.length)}else cnt.append("—");
     row.append(nm,mid,cnt);list.append(row)}
   box.append(list);
@@ -722,7 +729,12 @@ function renderDiff(x,taskId,t){
 }
 // the lead's HTML plan (task.planReview): a line in the card, the review in a full-window view (one iframe that the refresh never rebuilds)
 const PLAN_STATUS={none:"lead пишет план…",awaiting:"план ждёт вас",revising:"lead дорабатывает план по вашему отзыву",approved:"план утверждён"};
-function renderPlan(t){const p=t.plan;const box=el("div","openspec planline");box.append(el("b","","План "),el("span",p.status==="awaiting"?"badge WARNING":p.status==="approved"?"badge PASS":"badge",PLAN_STATUS[p.status]));
+// a change-writing task with analysts' input shows two pages instead of a plan: their spec (you look), our change (you accept or return it)
+const PAGE_WORDS={
+  input:{name:"Спека аналитиков ",status:{none:"lead готовит страницу…",awaiting:"ждёт просмотра",revising:"lead смотрит ваши замечания",approved:"просмотрена"},approve:"Посмотрел",send:"Отправить замечания",ask:"Отметить спеку аналитиков просмотренной? Дальше lead проведёт допрос и напишет свой change.",sendAsk:" Замечания станут вопросами допроса.",phase:"DISCUSS",yes:"Да, посмотрел",done:"просмотрена",view:"Их спека как есть: отмечено, где она расходится с кодом и правилами проекта.",sent:"Lead смотрит ваши замечания — новая версия откроется здесь сама."},
+  change:{name:"Change ",status:{none:"lead пишет change…",awaiting:"change ждёт вас",revising:"lead дорабатывает change",approved:"change принят"},approve:"Принять change",send:"Вернуть на доработку",ask:"Принять change? Дальше ревьюер проверит его, и после DONE его можно реализовать.",sendAsk:" Lead поправит change и покажет новую версию.",phase:"IMPLEMENT",yes:"Да, принять",done:"принят",view:"Наш change рядом с их: что взято, что адаптировано, отброшено или добавлено — и почему.",sent:"Lead дорабатывает change — новая версия откроется здесь сама."}};
+function planWords(t,stage){const w=stage&&PAGE_WORDS[stage];return w||{name:"План ",status:PLAN_STATUS,approve:"Утвердить план",send:"Отправить lead'у",ask:null,sendAsk:" Он посмотрит и пришлёт новую версию плана.",phase:"DISCUSS",yes:"Да, утвердить",done:"утверждён",view:"Вопросы плана отмечайте прямо на странице; ответы уйдут с отзывом.",sent:"Lead дорабатывает план — новая версия откроется здесь сама."}}
+function renderPlan(t){const p=t.plan;const w=planWords(t,p.stage);const box=el("div","openspec planline");box.append(el("b","",w.name),el("span",p.status==="awaiting"?"badge WARNING":p.status==="approved"?"badge PASS":"badge",w.status[p.status]));
   if(p.version){box.append(el("span","muted"," · v"+p.version+(p.by?" от "+p.by:"")+(p.at?" "+time(p.at).slice(0,5):"")+(p.rounds?" · отзывов: "+p.rounds:"")+(p.approvedVersion?" · утверждена v"+p.approvedVersion:"")));
     const b=el("button",p.status==="awaiting"&&S.control?"small":"ghost small",p.status==="awaiting"&&S.control?"Открыть и проверить":"Открыть план");b.type="button";b.onclick=()=>openPlan(t.id);box.append(" ",b)}
   else box.append(el("span","muted"," · появится здесь, когда lead его напишет; соглашение — после вашего «Утвердить»"));
@@ -749,7 +761,9 @@ async function loadPlanVersion(v){PV.version=v;PV.confirm=null;PV.error=null;PV.
 function planSay(m){if(PV&&PV.el.fr.contentWindow)PV.el.fr.contentWindow.postMessage(m,"*")}
 const planWaits=new Map();let planSeq=0;
 function planCollect(){return new Promise((ok,fail)=>{const id=++planSeq;planWaits.set(id,ok);planSay({type:"collect",id});setTimeout(()=>{if(planWaits.delete(id))fail(new Error("страница плана не ответила"))},4000)})}
-async function planDiff(){if(!PV)return;const prev=PV.version-1;if(!PV.diff||prev<1){planSay({type:"diff",prev:null});PV.diffCount=null;renderPlanSide();return}
+// the version before this one on the same page (an input page is no "before" of a change page)
+function planPrev(){const vs=PV&&PV.plan?PV.plan.versions:[];const cur=vs.find(x=>x.n===PV.version);const prev=vs.find(x=>x.n===PV.version-1);return prev&&(prev.stage||null)===(cur&&cur.stage||null)?prev.n:0}
+async function planDiff(){if(!PV)return;const prev=planPrev();if(!PV.diff||prev<1){planSay({type:"diff",prev:null});PV.diffCount=null;renderPlanSide();return}
   try{const j=await getJSON(q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/"+prev));planSay({type:"diff",prev:j.html})}catch(e){toast("bad","Не удалось загрузить v"+prev,e.message)}}
 addEventListener("message",ev=>{if(!PV||ev.source!==PV.el.fr.contentWindow)return;const m=ev.data||{};if(!m.an)return;
   if(m.type==="ready"){PV.ready=true;planSay({type:"mode",mode:PV.mode});if(PV.diff)planDiff();renderPlanSide()}
@@ -777,17 +791,17 @@ async function planSend(approve){const v=PV.version;PV.confirm=null;PV.error=nul
   catch(e){PV.pending=false;PV.error="Не отправлено: "+e.message;renderPlanSide()}}
 function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&&S.tasks.find(x=>x.id===PV.taskId);
   e.title.textContent=PV.taskId+(t?" · "+t.title:"");
-  const vs=p?p.versions:[];e.ver.replaceChildren(...vs.map(x=>new Option("v"+x.n+" · "+x.by+" · "+time(x.at).slice(0,5)+(p.approved&&p.approved.version===x.n?" · утверждена":""),String(x.n))));e.ver.value=String(PV.version);e.ver.hidden=vs.length<2;
+  const vs=p?p.versions:[];e.ver.replaceChildren(...vs.map(x=>new Option("v"+x.n+" · "+x.by+" · "+time(x.at).slice(0,5)+(p.approved&&p.approved.version===x.n?" · "+(x.stage==="input"?"просмотрена":x.stage==="change"?"принята":"утверждена"):""),String(x.n))));e.ver.value=String(PV.version);e.ver.hidden=vs.length<2;
   const last=vs.at(-1);const latest=last&&PV.version===last.n;const qs=(S&&S.openQuestions||[]).filter(q=>q.taskId===PV.taskId);
-  const live=t&&t.status==="ACTIVE"&&t.phase==="DISCUSS";const can=!!(S&&S.control)&&latest&&live&&!p.approved;
-  e.st.textContent=!vs.length?"плана ещё нет":p.approved?"утверждён v"+p.approved.version:!latest?"старая версия: только просмотр":!live?"задача уже не на плане":t.plan&&t.plan.status==="revising"?"lead дорабатывает план":"";
+  const W=planWords(t,last&&last.stage);const live=t&&t.status==="ACTIVE"&&t.phase===W.phase;const can=!!(S&&S.control)&&latest&&live&&!p.approved;
+  e.st.textContent=!vs.length?"плана ещё нет":p.approved?W.done+" v"+p.approved.version:!latest?"старая версия: только просмотр":!live?"задача уже не на этом шаге":t.plan&&t.plan.status==="revising"?W.status.revising:"";
   const side=e.side;side.replaceChildren();
   const cur=vs.find(x=>x.n===PV.version);if(cur&&cur.note)side.append(el("div","pnote","v"+cur.n+": "+cur.note));
   if(can){const w=el("div","win pmode");[["view","Просмотр"],["comment","Замечание"],["edit","Править текст"]].forEach(([m,l])=>{const b=el("button",PV.mode===m?"on":"",l);b.type="button";
       b.onclick=()=>{PV.mode=m;PV.pick=null;PV.diagram=null;planSay({type:"mode",mode:m});renderPlanSide()};w.append(b)});side.append(w);
-    side.append(el("div","muted small",PV.mode==="comment"?"Кликните блок или выделите слова — и напишите, что не так.":PV.mode==="edit"?"Правьте текст прямо на странице: lead получит «было → стало». Клик по схеме — правка её кода Mermaid.":"Вопросы плана отмечайте прямо на странице; ответы уйдут с отзывом."))}
-  if(PV.version>1){const l=el("label","pdiff");const cb=document.createElement("input");cb.type="checkbox";cb.checked=PV.diff;cb.onchange=()=>{PV.diff=cb.checked;planDiff()};
-    l.append(cb," подсветить новое с v"+(PV.version-1)+(PV.diff&&PV.diffCount!==null?" ("+PV.diffCount+")":""));side.append(l)}
+    side.append(el("div","muted small",PV.mode==="comment"?"Кликните блок или выделите слова — и напишите, что не так.":PV.mode==="edit"?"Правьте текст прямо на странице: lead получит «было → стало». Клик по схеме — правка её кода Mermaid.":W.view))}
+  if(PV.version>1&&planPrev()){const l=el("label","pdiff");const cb=document.createElement("input");cb.type="checkbox";cb.checked=PV.diff;cb.onchange=()=>{PV.diff=cb.checked;planDiff()};
+    l.append(cb," подсветить новое с v"+planPrev()+(PV.diff&&PV.diffCount!==null?" ("+PV.diffCount+")":""));side.append(l)}
   if(PV.pick&&can){const f=el("div","ppick");f.append(el("div","muted","к "+PV.pick.target));if(PV.pick.quote)f.append(el("div","pquote","«"+PV.pick.quote+"»"));
     const ta=document.createElement("textarea");ta.rows=3;ta.placeholder="Что поменять…";ta.value=PV.pick.text;ta.oninput=()=>{PV.pick.text=ta.value};
     const add=el("button","small","Добавить");add.type="button";add.onclick=()=>{if(!ta.value.trim())return;PV.comments.push({target:PV.pick.target,...(PV.pick.quote?{quote:PV.pick.quote}:{}),text:ta.value.trim()});PV.pick=null;planSay({type:"unpick"});renderPlanSide()};
@@ -804,7 +818,7 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
     PV.comments.forEach(c=>{const r=el("div","pitem");r.append(el("div","muted",c.target),...(c.quote?[el("div","pquote","«"+c.quote+"»")]:[]),el("div","",c.text));
       const x=el("button","ghost small","×");x.type="button";x.title="убрать";x.onclick=()=>{PV.comments=PV.comments.filter(y=>y!==c);renderPlanSide()};r.append(x);l.append(r)});side.append(l)}
   if(PV.edited&&can)side.append(el("div","note","Есть правки: они уйдут lead'у и сохранятся новой версией плана."));
-  if(planDirty()&&can)side.append(el("div","muted small","«Утвердить» станет доступно, когда lead посмотрит ваши замечания и правки и пришлёт новую версию."));
+  if(planDirty()&&can)side.append(el("div","muted small","«"+W.approve+"» станет доступно, когда lead посмотрит ваши замечания и правки и пришлёт новую версию."));
   const fb=p?p.feedback:[];if(fb.length){const d=el("details","phist");d.append(el("summary","muted","История отзывов ("+fb.length+")"));
     fb.slice().reverse().forEach(f=>{const r=el("div","pitem");r.append(el("div","muted",time(f.at).slice(0,5)+" · v"+f.onVersion+(f.withApproval?" · с утверждением":" · раунд "+f.round)+(f.savedAs?" → правки в v"+f.savedAs:"")));
       f.comments.forEach(c=>r.append(el("div","","• "+c.target+": "+c.text)));f.edits.forEach(x=>r.append(el("div","mono",x.kind==="diagram"?"схема изменена":!x.before?"+ "+x.after:!x.after?"− "+x.before:x.before+" → "+x.after)));f.answers.forEach(a=>r.append(el("div","","? "+a.question+": "+a.value.join(", "))));d.append(r)});side.append(d)}
@@ -812,7 +826,7 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
   const sent=p?p.feedback.filter(f=>!f.withApproval).at(-1):null;
   if(sent&&latest&&live&&!p.approved&&(sent.onVersion===PV.version||sent.savedAs===PV.version)){const n=(k,a,b,c)=>k+" "+(k%10===1&&k%100!==11?a:k%10>=2&&k%10<=4&&(k%100<10||k%100>=20)?b:c);
     const what=[sent.comments.length?n(sent.comments.length,"замечание","замечания","замечаний"):"",sent.edits.length?n(sent.edits.length,"правка","правки","правок"):"",sent.answers.length?n(sent.answers.length,"ответ","ответа","ответов"):""].filter(Boolean).join(", ");
-    side.append(el("div","psent","✓ Отправлено lead'у "+(t?t.agents[0]:"")+" в "+time(sent.at).slice(0,5)+(what?": "+what:"")+". "+(qs.length?"Lead ждёт вашего ответа на вопрос — он ниже.":"Lead дорабатывает план — новая версия откроется здесь сама.")))}
+    side.append(el("div","psent","✓ Отправлено lead'у "+(t?t.agents[0]:"")+" в "+time(sent.at).slice(0,5)+(what?": "+what:"")+". "+(qs.length?"Lead ждёт вашего ответа на вопрос — он ниже.":W.sent)))}
   // the critic's risks for this version: what breaks in production if it is built as written; one click makes a risk a comment
   if(PV.critic&&PV.critic.enabled&&cur&&cur.by!=="operator"){const cr=(PV.critiques||[]).find(c=>c.version===PV.version);const box=el("div","pcritic");
     if(PV.critic.running===PV.version)box.append(el("b","","Критик читает план v"+PV.version+"…"),el("div","muted small","ищет, что сломается в проде: данные, деплой и откат, контракты, гонки, нагрузка, безопасность"));
@@ -846,13 +860,13 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
   if(PV.pending)side.append(el("div","muted small","Отправляю…"));
   if(PV.error)side.append(el("div","note bad",PV.error));
   if(PV.confirm&&can){const q=el("div","pconfirm");const a=PV.confirm.approve;
-    q.append(el("div","",a?"Утвердить план v"+PV.version+"?"+(PV.confirm.what?" Вместе с ним lead получит ваши ответы: "+PV.confirm.what+".":"")+" Дальше lead предложит соглашение по плану.":"Отправить lead'у: "+PV.confirm.what+"? Он посмотрит и пришлёт новую версию плана."));
-    const yes=el("button","small",a?"Да, утвердить":"Да, отправить");yes.type="button";yes.onclick=()=>planSend(a);
+    q.append(el("div","",a?(W.ask||"Утвердить план v"+PV.version+"?"+(PV.confirm.what?" Вместе с ним lead получит ваши ответы: "+PV.confirm.what+".":"")+" Дальше lead предложит соглашение по плану."):W.send+": "+PV.confirm.what+"?"+W.sendAsk));
+    const yes=el("button","small",a?W.yes:"Да, отправить");yes.type="button";yes.onclick=()=>planSend(a);
     const no=el("button","ghost small","Отмена");no.type="button";no.onclick=()=>{PV.confirm=null;renderPlanSide()};q.append(yes," ",no);side.append(q)}
-  if(can){const bar=el("div","checks pactions");const send=el("button","",PV.pending?"…":"Отправить lead'у");send.type="button";send.disabled=PV.pending||!PV.ready||!planHasNotes();
+  if(can){const bar=el("div","checks pactions");const send=el("button","",PV.pending?"…":W.send);send.type="button";send.disabled=PV.pending||!PV.ready||!planHasNotes();
     if(!planHasNotes())send.title="Нечего отправлять: добавьте замечание, правку или ответ на вопрос";send.onclick=()=>planAsk(false);
     const revising=t&&t.plan&&t.plan.status==="revising";
-    const ap=el("button",planDirty()||revising?"ghost":"",PV.pending?"…":"Утвердить план v"+PV.version);ap.type="button";ap.disabled=PV.pending||!PV.ready||planDirty()||revising;
+    const ap=el("button",planDirty()||revising?"ghost":"",PV.pending?"…":W.approve+" v"+PV.version);ap.type="button";ap.disabled=PV.pending||!PV.ready||planDirty()||revising;
     if(revising)ap.title="Lead смотрит ваш отзыв: утвердите версию, которую он пришлёт (если менять нечего, он пришлёт ту же страницу с пояснением)";
     else if(planDirty())ap.title="Сначала отправьте замечания и правки lead'у: он посмотрит, доработает план и пришлёт новую версию — её и утвердите";ap.onclick=()=>planAsk(true);bar.append(send,ap);side.append(bar)}}
 
@@ -933,7 +947,7 @@ function renderTask(t){
   if(chain.length)hd.append(el("div","muted",chain.join(" · ")));
   if(t.openspec)hd.append(renderOpenspec(t));
   if(t.proposes)hd.append(renderProposes(t));
-  if(t.planReview&&t.plan)hd.append(renderPlan(t));
+  if(t.plan)hd.append(renderPlan(t));
   if(t.jobOf)hd.append(el("div","muted","Поручение от "+t.jobOf.taskId+" (lead "+t.jobOf.by+", его подзадача "+t.jobOf.subtask+"): один агент, без ревью; результат уходит lead'у."));
   {const jobs=(S.tasks||[]).filter(x=>x.jobOf&&x.jobOf.taskId===t.id);if(jobs.length){const box=el("div","openspec");box.append(el("b","","Поручения ("+jobs.length+")"));
     jobs.forEach(j=>{const r=el("div","srow2");r.append(badge(j.status==="COMPLETED"?"PASS":j.status==="CANCELLED"?"INFO":j.status==="BLOCKED"?"FAIL":"WAITING",j.status==="COMPLETED"?"готово":j.status==="CANCELLED"?"отменено":j.status==="BLOCKED"?"BLOCKED":"в работе"),el("span","mono"," "+j.id+" · "+j.agents[0]),el("span",""," "+j.title.replace(/^task-\d+ job: /,"")));
@@ -1097,7 +1111,7 @@ async function loadChanges(){try{const j=await getJSON(q("/api/openspec/changes"
   sel.replaceChildren(new Option("— без OpenSpec —",""),new Option("+ написать новый change…","__new__"),...j.changes.map(c=>{const o=new Option(c.name+(c.error?" (не читается: "+c.error+")":" ("+c.done+"/"+c.total+" задач отмечено)"),c.name);o.disabled=!!c.error;return o}));
   if([...sel.options].some(o=>o.value===keep))sel.value=keep;sel.title=j.changes.length?"":"в "+j.projectDir+"/openspec/changes нет change'ей"}catch(e){}}
 $("openspec").addEventListener("focus",loadChanges);
-$("openspec").addEventListener("change",ev=>{const f=$("newtask");const isNew=ev.target.value==="__new__";$("proposes-row").hidden=!isNew;
+$("openspec").addEventListener("change",ev=>{const f=$("newtask");const isNew=ev.target.value==="__new__";$("proposes-row").hidden=!isNew;$("from-row").hidden=!isNew;
   f.elements.namedItem("title").placeholder=isNew?"(необязательно) OpenSpec change <имя>":ev.target.value||"Отмена заказа: POST /orders/{id}/cancel";
   f.elements.namedItem("description").placeholder=isNew?"Что нужно — вашими словами: зачем, что меняется для пользователя, ограничения. Lead напишет proposal, specs, design и tasks; вопросы о решениях придут вам.":"Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты.";
   if(isNew)f.elements.namedItem("proposes").focus();checkSpecFolders()});
@@ -1110,13 +1124,15 @@ $("newtask").elements.namedItem("depth").addEventListener("change",applyDepth);
 ["clarify","grill","planReview"].forEach(k=>$("newtask").elements.namedItem(k).addEventListener("change",()=>setTimeout(syncDepth,0)));
 applyDepth();
 $("newtask").elements.namedItem("grill").addEventListener("change",e=>{if(e.target.checked)$("newtask").elements.namedItem("clarify").checked=true});
+// analysts' input is grilled by default: filling the path turns the grilling on (it can be turned off again)
+$("newtask").elements.namedItem("from").addEventListener("input",e=>{const f=$("newtask");if(e.target.value.trim()&&!e.target.dataset.grilled){e.target.dataset.grilled="1";f.elements.namedItem("clarify").checked=true;f.elements.namedItem("grill").checked=true;syncDepth()}if(!e.target.value.trim())delete e.target.dataset.grilled});
 $("newtask").elements.namedItem("clarify").addEventListener("change",e=>{if(!e.target.checked)$("newtask").elements.namedItem("grill").checked=false});
 $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev.target;const note=$("formnote");const btn=f.querySelector("button");
   const others=[...$("others").querySelectorAll("input:checked")].map(i=>i.value);const v=n=>f.elements.namedItem(n);
   if(!v("openspec").value&&(!v("title").value.trim()||!v("description").value.trim())){note.className="note err";note.textContent="Нужны название и описание (или выберите OpenSpec change).";return}
   btn.disabled=true;note.className="note";note.textContent="создаю…";
-  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,allowSpawn:v("allowSpawn").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value}:{openspec:v("openspec").value})});
-    note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("openspec").value="";v("proposes").value="";$("proposes-row").hidden=true;await tick()}
+  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,allowSpawn:v("allowSpawn").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value,from:v("from").value.split("\n").map(x=>x.trim()).filter(Boolean)}:{openspec:v("openspec").value})});
+    note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("openspec").value="";v("proposes").value="";v("from").value="";delete v("from").dataset.grilled;$("proposes-row").hidden=true;$("from-row").hidden=true;await tick()}
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
 
 /* ---------- runs ---------- */

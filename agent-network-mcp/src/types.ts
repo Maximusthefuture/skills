@@ -91,7 +91,15 @@ export interface Task {
    * The task WRITES this OpenSpec change (openspec/changes/<change>/, which does not exist yet): the lead writes it, the
    * others review it; no code is changed. After DONE the operator merges it and starts a task that implements it.
    */
-  proposes?: { change: string };
+  proposes?: {
+    change: string;
+    /**
+     * Analysts' artifacts the change is written from (files under tasks/<id>/input/, project-relative names): input, not
+     * the change. The lead shows them to the operator as a page first (plan stage "input"), grills the operator, writes its
+     * own change and shows it next to the input (plan stage "change"); complete() waits for the operator's acceptance.
+     */
+    input?: string[];
+  };
   /**
    * The lead checks the task before anything else: it asks the operator what is unclear, or tells it how it understood
    * the task (fyi). propose() is refused until it has written to the operator.

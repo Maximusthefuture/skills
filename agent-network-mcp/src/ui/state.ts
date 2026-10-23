@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
 import { isAppError } from "../errors.js";
 import { changePath, hasChange, readChange } from "../openspec.js";
-import { planBrief, readPlanState } from "../plan.js";
+import { planBrief, readPlanState, reviewsPages } from "../plan.js";
 import { defaultIsProcessAlive } from "../stores/agentStore.js";
 import { queueStates } from "./runs.js";
 import { AgentStore } from "../stores/agentStore.js";
@@ -81,9 +81,11 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         integrations.list(task.id),
       ]);
       const current = reports.filter((r) => r.round === task.syncRound);
-      // a task with planReview, still in DISCUSS: where the lead's plan stands (waiting on the operator or the lead)
-      const plan = task.planReview ? planBrief(await readPlanState(fs, task.id)) : null;
-      const planWait = plan && task.status === "ACTIVE" && task.phase === "DISCUSS" && !agreement && plan.status !== "approved" ? [plan.status === "awaiting" ? "operator" : task.agents[0]!] : null;
+      // a task with planReview, still in DISCUSS: where the lead's plan stands (waiting on the operator or the lead); a
+      // change-writing task with analysts' input: its pages (the input in DISCUSS, the change in IMPLEMENT)
+      const plan = reviewsPages(task) ? planBrief(await readPlanState(fs, task.id)) : null;
+      const pageOpen = task.planReview ? task.phase === "DISCUSS" && !agreement : plan?.stage === "change" ? task.phase === "IMPLEMENT" : task.phase === "DISCUSS" && !agreement;
+      const planWait = plan && task.status === "ACTIVE" && pageOpen && plan.status !== "approved" ? [plan.status === "awaiting" ? "operator" : task.agents[0]!] : null;
       const [msgs, evs] = await Promise.all([tail<Message>(fs, ["tasks", task.id, "messages"], "msg"), tail<NetworkEvent>(fs, ["tasks", task.id, "events"], "event")]);
       return {
         ...pickTask(task),

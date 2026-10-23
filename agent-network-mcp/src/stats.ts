@@ -1,7 +1,7 @@
 import type { TokenUsage } from "./sessionOutput.js";
 import type { FileStore } from "./storage/fileStore.js";
 import { SessionStore, type SessionRecord } from "./stores/sessionStore.js";
-import { readPlanState } from "./plan.js";
+import { readPlanState, reviewsPages } from "./plan.js";
 import type { Phase, Task } from "./types.js";
 
 /** The operator's price of a model in USD per 1M tokens; cacheRead / cacheWrite default to input. */
@@ -56,7 +56,7 @@ export interface TaskStats {
   /** Models of sessions that have tokens but no cost and no price: add them to "prices". */
   unpricedModels: string[];
   /** models: what the sessions reported (the runner's choice may differ from what the CLI actually used). */
-  agents: { agentId: string; models: string[]; sessions: number; ms: number; usage: TokenUsage | null; costUsd: number | null; costEstimated: boolean }[];
+  agents: { agentId: string; models: string[]; sessions: number; ms: number; usage: TokenUsage | null; costUsd: number | null; costEstimated: boolean; skills: string[] }[];
   /** Tasks whose sessions also finished this one: its tokens are counted there. */
   countedIn: string[];
   /** Part of costUsd: the jobs the lead delegated (their own tasks) and the plan critic's runs. */
@@ -101,8 +101,9 @@ export function taskStats(task: Task, sessions: SessionRecord[], countedIn: stri
     if (s.usage && cost === undefined) unpriced.add(s.model ?? "unknown model");
     if (cost !== undefined) costUsd = (costUsd ?? 0) + cost;
     if (estimated) costEstimated = true;
-    const a = agents.get(s.agentId) ?? { agentId: s.agentId, models: [], sessions: 0, ms: 0, usage: null, costUsd: null, costEstimated: false };
+    const a = agents.get(s.agentId) ?? { agentId: s.agentId, models: [], sessions: 0, ms: 0, usage: null, costUsd: null, costEstimated: false, skills: [] };
     if (s.model && !a.models.includes(s.model)) a.models.push(s.model);
+    for (const k of s.skills ?? []) if (!a.skills.includes(k)) a.skills.push(k);
     a.sessions += 1;
     a.ms += s.durationMs;
     a.usage = add(a.usage, s.usage);
@@ -142,7 +143,7 @@ export async function attachedCost(fs: FileStore, task: Task, tasks: Task[], pri
     }
   }
   let criticUsd = 0;
-  if (task.planReview) {
+  if (reviewsPages(task)) {
     for (const v of (await readPlanState(fs, task.id)).versions) {
       const c = await fs.readJson<{ costUsd?: number }>(["tasks", task.id, "plan", `critique-v${v.n}.json`]);
       criticUsd += c?.costUsd ?? 0;

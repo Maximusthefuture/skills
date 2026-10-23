@@ -116,8 +116,8 @@ describe("taskStats", () => {
     expect(st.phases.map((p) => p.visits.length)).toEqual([1, 2, 2, 1]); // a fix round: IMPLEMENT and SYNC again
     expect(st.usage?.total).toBe(1500);
     expect(st.agents).toEqual([
-      { agentId: "a", models: ["haiku", "sonnet"], sessions: 3, ms: 90_001, usage: { input: 1480, output: 20, cacheRead: 0, cacheCreation: 0, total: 1500 }, costUsd: expect.closeTo(0.03), costEstimated: false },
-      { agentId: "b", models: [], sessions: 1, ms: 10_000, usage: null, costUsd: null, costEstimated: false },
+      { agentId: "a", models: ["haiku", "sonnet"], sessions: 3, ms: 90_001, usage: { input: 1480, output: 20, cacheRead: 0, cacheCreation: 0, total: 1500 }, costUsd: expect.closeTo(0.03), costEstimated: false, skills: [] },
+      { agentId: "b", models: [], sessions: 1, ms: 10_000, usage: null, costUsd: null, costEstimated: false, skills: [] },
     ]);
     expect(st).toMatchObject({ costEstimated: false, unpricedModels: [] });
   });

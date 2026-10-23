@@ -32,6 +32,8 @@ export type ErrorCode =
   | "SPEC_ONLY"
   | "CLARIFY_FIRST"
   | "PLAN_NOT_APPROVED"
+  | "INPUT_NOT_REVIEWED"
+  | "CHANGE_NOT_APPROVED"
   | "JOBS_OPEN"
   | "VERIFY_REQUIRED"
   | "REVIEW_OPEN"

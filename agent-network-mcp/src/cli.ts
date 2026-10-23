@@ -26,6 +26,8 @@ const USAGE = `Usage:
   agent-network-mcp task create --title <t> --agents <a,b[,c]> [--description <d>] [--verify <build/test command>]
                                 [--max-fix-rounds 3] [--follow-ups 0] [--max-cost <usd>] [--openspec <change> | --propose <new-change>] [--network-dir <abs path>]
                                 --propose: the agents WRITE that OpenSpec change (the lead writes, the others review), no code
+                                --from <path> (repeatable, with --propose): the analysts' artifacts (.md files or a folder) the change
+                                  is written from: shown to you as a page, grilled on, then the lead writes its own change (grill on by default)
                                 --clarify: the lead first asks what is unclear (or says how it understood the task), then proposes
                                 --plan: the lead first writes an HTML plan; you comment, edit and approve it on the page, then it proposes
                                 --spawn: the lead may add agents from the spawn templates (off: it splits the work among --agents)
@@ -91,6 +93,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       "follow-ups": { type: "string" },
       openspec: { type: "string" },
       propose: { type: "string" },
+      from: { type: "string", multiple: true },
       clarify: { type: "boolean" },
       plan: { type: "boolean" },
       spawn: { type: "boolean" },
@@ -177,6 +180,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       description: values.description ?? (values.openspec || values.propose ? "" : values.title!),
       ...(values.openspec ? { openspec: values.openspec } : {}),
       ...(values.propose ? { proposes: values.propose } : {}),
+      ...(values.from?.length ? { from: values.from } : {}),
       ...(values.depth ? depthFlags(values.depth) : {}),
       ...(values.clarify ? { clarify: true } : {}),
       ...(values.plan ? { planReview: true } : {}),

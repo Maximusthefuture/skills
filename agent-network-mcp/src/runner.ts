@@ -436,8 +436,10 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const onContext = (tokens: number): void => {
       if (opts.maxContextTokens && tokens > opts.maxContextTokens && !contextFull) contextFull = tokens;
     };
+    const skills: string[] = [];
     const onActivity = (e: ActivityItem): void => {
       opts.onActivity?.(e);
+      if (e.skill && !skills.includes(e.skill)) skills.push(e.skill);
       if (contextFull && !contextEnded && e.kind === "tool_result") {
         contextEnded = true;
         session.abort();
@@ -481,6 +483,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
         ...(result?.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
         ...(result?.numTurns !== undefined ? { numTurns: result.numTurns } : {}),
         ...(result?.model || model ? { model: result?.model ?? model } : {}), // what the CLI reported, else what it was asked for
+        ...(skills.length ? { skills } : {}),
         ...(alsoTasks.length ? { alsoFinished: alsoTasks.map((t) => t.id) } : {}),
         ...(plannedTurnLimit ? { turnLimit: true as const } : {}),
         phase: task.phase, ...(ended ? { endPhase: ended.phase } : {}), endedBy,

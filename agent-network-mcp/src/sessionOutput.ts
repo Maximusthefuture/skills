@@ -59,6 +59,8 @@ export interface ActivityItem {
   sub?: true;
   /** tool_use / tool_result: the tool's name. */
   tool?: string;
+  /** tool_use: the skill the call loads (the Skill tool, or a read of a skill's SKILL.md). */
+  skill?: string;
   /** tool_result: the tool reported an error (a refused command, a failing call). */
   isError?: boolean;
   /** tool_result: time since its tool_use. */
@@ -89,6 +91,22 @@ function shortPath(p: unknown): string {
   const s = String(p ?? "");
   const parts = s.split("/");
   return s.length > 70 && parts.length > 4 ? `…/${parts.slice(-3).join("/")}` : s;
+}
+
+/**
+ * The skill a tool call loads, if any: Claude Code's Skill tool ({skill: "java-tdd"} or "plugin:skill"), or reading a
+ * skill's SKILL.md (CLIs without a Skill tool, e.g. Qwen, read the file): the folder's name.
+ */
+export function skillOf(name: string, input: unknown): string | undefined {
+  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const n = name.toLowerCase();
+  if (n === "skill" && typeof (i.skill ?? i.command ?? i.name) === "string") return String(i.skill ?? i.command ?? i.name).trim().replace(/^\//, "") || undefined;
+  if (n === "read" || n === "read_file" || n === "read_many_files") {
+    const path = String(i.file_path ?? i.absolute_path ?? i.path ?? "");
+    const m = /([^/\\]+)[/\\]SKILL\.md$/i.exec(path);
+    return m?.[1];
+  }
+  return undefined;
 }
 
 /** The one line that says what a tool call does: the command, the file, the pattern; MCP tools by their arguments. */
@@ -188,7 +206,8 @@ export class SessionOutput {
       else if (b.type === "thinking" && b.thinking?.trim()) emit({ kind: "thinking", summary: cut(firstLine(b.thinking), 300), detail: cut(b.thinking.trim(), MAX_DETAIL) });
       else if (b.type === "tool_use" && b.name) {
         if (b.id) this.calls.set(b.id, { tool: b.name, at: this.now() });
-        emit({ kind: "tool_use", tool: b.name, summary: toolSummary(b.name, b.input), detail: cut(JSON.stringify(b.input ?? {}, null, 2), MAX_DETAIL) });
+        const skill = skillOf(b.name, b.input);
+        emit({ kind: "tool_use", tool: b.name, ...(skill ? { skill } : {}), summary: toolSummary(b.name, b.input), detail: cut(JSON.stringify(b.input ?? {}, null, 2), MAX_DETAIL) });
       }
     }
   }
