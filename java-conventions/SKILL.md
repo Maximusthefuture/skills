@@ -28,7 +28,7 @@ dto/         DTOs and event payloads that are NOT in the OpenAPI spec
 util/        final class, static pure functions, no Spring, no business rules
 ```
 
-`controller → service → repository`, never back and never skipping a layer. The service returns DTOs mapped inside its transaction, so lazy associations are read while the session is open. A class that fits nowhere usually does two jobs — split it. Naming, sub-packages, test doubles: [references/project-structure.md](references/project-structure.md) — only if the tree above does not answer.
+`controller → service → repository`, never back and never skipping a layer. Settings (topic, URL, limits) go into a `@ConfigurationProperties` class in `config/`, not as `${...}` in annotations or `@Value` in fields — one typed place to read and test them. The service returns DTOs mapped inside its transaction, so lazy associations are read while the session is open. A class that fits nowhere usually does two jobs — split it. Naming, sub-packages, test doubles: [references/project-structure.md](references/project-structure.md) — only if the tree above does not answer.
 
 ## 2. API: spec → generated interface → @Override
 
@@ -45,7 +45,7 @@ Generation cannot run, a new tag, a model/entity name clash, an old controller w
 
 - **Line comment** — only *why* the code cannot say: an outside rule, a constraint, a workaround, an order that matters. **≤ 5 words** (a ticket key does not count). Unclear *what* → rename or extract a method instead.
 - **Javadoc on a class or method** — first decide if it is needed: the name, package and signature usually say it. Needed for an invariant, a boundary, thread-safety, a hidden contract (returns `null`, side effect, which exception). **≤ 20 words**, no retelling of the name.
-- **Never:** comments that restate code, `@param id идентификатор`, dividers (`// ===== поля =====`), `@author`/`@since`, commented-out code, `TODO` without a ticket.
+- **Never:** comments that restate code, `@param id идентификатор`, dividers (`// ===== поля =====`), `@author`/`@since`, commented-out code, `TODO` without a ticket — delete it and ask for the ticket, do not reword it into a plain comment like `// пока только …`.
 - Untouched code keeps its comments; a comment your change made false — fix or remove.
 
 ```java
