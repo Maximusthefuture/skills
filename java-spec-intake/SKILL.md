@@ -16,7 +16,7 @@ You find facts yourself; you ask the operator for decisions. Talk to the user in
 
 | Mode | Input | Questions | Pages |
 |---|---|---|---|
-| Swarm (agent-network, `proposes.input` in `swarm_context`) | `proposes.input` — their files in your folder | `send_message({to: "operator", options, recommended})`, one per question | `plan({stage: "input" \| "change", html, note})`; the operator answers on the task card |
+| Swarm (agent-network, `proposes.input` in `swarm_context`) | `proposes.input` — their files in your folder | `send_message({to: "operator", options, recommended})`, one per question | `plan({stage: "input", departures})` / `plan({stage: "change", coverage})` — the server builds the page from the files; the operator answers on the task card |
 | Chat | the path in the argument or the message | the `grilling` skill | write the page to a file, show it, wait for "ok" / notes |
 
 In the swarm follow `nextAction` and `hint` too: the server enforces the order (`INPUT_NOT_REVIEWED`, `CLARIFY_FIRST`, `CHANGE_NOT_APPROVED`).
@@ -39,7 +39,7 @@ Check the subagent's verdicts yourself before they go on a page: they are hypoth
 
 ## 2. Page 1 — their spec as it is
 
-One self-contained HTML page from [assets/input-page.html](assets/input-page.html). Four sections, built **from their files only**:
+In chat: one self-contained HTML page from [assets/input-page.html](assets/input-page.html). In the swarm the server builds it from their files — you send only the departures and, if they help, the diagrams (below). Four sections, built **from their files only**:
 
 1. **Scenario flows** — a Mermaid `sequenceDiagram` per scenario (or per requirement when there are many): caller → their controller → service → storage / events → response or error.
 2. **Classes and packages** — what their design names, with the package and layer it would land in.
@@ -48,7 +48,7 @@ One self-contained HTML page from [assets/input-page.html](assets/input-page.htm
 
 Mark every departure from the code or the rules in place (`class="off"` + the rule or `file:line`): feature packages instead of layers, Flyway instead of Liquibase, a hand-written `@RestController` instead of the generated `*Api`, a NOT NULL column without a default on a filled table, direct publishing where the code has an outbox, tasks without tests. No questions and no proposals on this page — it shows what they wrote and where it does not fit.
 
-Swarm: `plan({stage: "input", html, note})`, then `wait()` until the operator marks it viewed; its notes become grilling questions. Chat: show the file and continue after the user's "ok".
+Swarm: `plan({stage: "input", departures: [{where, what, rule}], diagrams: ["sequenceDiagram …"], note})` — no html; then `wait()` until the operator marks it viewed; its notes come with «Посмотрел» and become grilling questions. Chat: show the file and continue after the user's "ok".
 
 ## 3. Grilling
 
@@ -58,7 +58,8 @@ Questions come from the `decide` and `contradicts` rows, from the operator's not
 - Every question with options grounded in the project and your recommendation. A new framework, database or dependency may be an option, never your recommendation unless the input really needs it and the operator agrees.
 - Their own answers are not decisions until the operator confirms them: "analysts say X — keep it?" is a fair question when X is costly or risky.
 - Work in rounds: everything whose prerequisites are settled, now; dependent questions — next round.
-- End with the summary: "How I understand it: <every decision, short>. Is that right?" — options "Yes, that's it" / "No, I will correct it".
+- Number the questions Q1, Q2… across rounds: `design.md` must record each answered Qn, `complete()` checks it.
+- End with the summary: "How I understand it: <every decision, short>. Is that right?" — options "Yes, that's it" / "No, I will correct it", sent with `summary: true` in the swarm.
 
 Swarm: one `send_message({to: "operator", message: "Q1 …", options, recommended})` per question, then `wait()`. Chat: call the `grilling` skill with the questions.
 
@@ -79,9 +80,9 @@ Run `openspec validate <name> --strict` and fix what it reports.
 
 ## 5. Page 2 — our change next to theirs
 
-From [assets/change-page.html](assets/change-page.html): the same four sections for **our** change, each with a column "the analysts had", plus the **coverage table** — every requirement and scenario of the input: taken / adapted / dropped / added, and why (Qn, the rule, `file:line`). Nothing of the input may be missing from it.
+In chat from [assets/change-page.html](assets/change-page.html); in the swarm the server builds it from the change files, the operator's decisions and their input. The same four sections for **our** change, each with a column "the analysts had", plus the **coverage table** — every requirement and scenario of the input: taken / adapted / dropped / added, and why (Qn, the rule, `file:line`). Nothing of the input may be missing from it.
 
-Swarm: commit the change, `plan({stage: "change", html, note})`, `wait()`. Returned for rework → edit the change files as the notes say, validate, `plan({stage: "change", edits | html, note: "<what changed>"})`. Accepted → change nothing more (an edit after the acceptance needs a new page), then `complete({result})`. Chat: show the page; on "ok" — done, on notes — edit and show again.
+Swarm: commit the change, `plan({stage: "change", coverage: [{analyst, outcome: "taken" | "adapted" | "dropped" | "added", where, why}], diagrams, note})`, `wait()`. Returned for rework → edit the change files as the notes say, validate, `plan({stage: "change", note: "<what changed>"})` — the page is built again from the files, the coverage carries over. Accepted → change nothing more (an edit after the acceptance needs a new page), then `complete({result})`. Chat: show the page; on "ok" — done, on notes — edit and show again.
 
 ## 6. Result
 

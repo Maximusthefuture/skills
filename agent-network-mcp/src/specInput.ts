@@ -109,3 +109,12 @@ export async function changeHash(dir: string, changeDir: string): Promise<string
   }
   return h.digest("hex").slice(0, 16);
 }
+
+/** The Markdown files under dir/rel, named rel/…, in a stable order: the files a review page shows. */
+export async function readMarkdownTree(dir: string, rel: string): Promise<{ name: string; text: string }[]> {
+  const files: string[] = [];
+  await allFiles(join(dir, rel), rel, files);
+  const out: { name: string; text: string }[] = [];
+  for (const f of files.filter((x) => x.toLowerCase().endsWith(".md"))) out.push({ name: f, text: await readFile(join(dir, f), "utf8") });
+  return out;
+}

@@ -275,6 +275,8 @@ export interface Message {
    * wait() returns for it, a parked agent stays parked — and comes with the agent's next reply.
    */
   quiet?: true;
+  /** The lead's summary of a grilling ("How I understand it … Is that right?"): the operator's yes to it closes the grilling. */
+  summary?: true;
 }
 
 /** The operator's comment on a line of the diff: the lead fixes it (or has it fixed) or declines it with a reason. */

@@ -13,7 +13,11 @@ import type { FileStore } from "./storage/fileStore.js";
  * returns it). hash: the change folder the "change" page shows (complete() checks the accepted one is still what is there).
  */
 export type PlanStage = "input" | "change";
-export interface PlanVersion { n: number; by: string; at: string; note?: string; bytes: number; stage?: PlanStage; hash?: string }
+export interface PlanVersion {
+  n: number; by: string; at: string; note?: string; bytes: number; stage?: PlanStage; hash?: string;
+  /** The server built the page from the files with these (pageRender.ts); a re-render without them reuses them. */
+  render?: { departures?: unknown[]; coverage?: unknown[]; diagrams?: string[] };
+}
 /** A note on a block of the plan (target: its tag and first words), on selected words of it when quote is set. */
 export interface PlanComment { target: string; quote?: string; text: string }
 /** Text the operator changed in place: before "" = added (after the block "near"), after "" = removed; kind diagram: a Mermaid diagram's source. */

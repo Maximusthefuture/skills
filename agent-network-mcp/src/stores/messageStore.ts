@@ -14,6 +14,7 @@ export interface NewMessage {
   files?: string[];
   choices?: QuestionChoices;
   quiet?: boolean;
+  summary?: boolean;
 }
 
 export interface MessageFilter {
@@ -42,6 +43,7 @@ export class MessageStore {
       ...(input.urgent ? { urgent: true as const } : {}),
       ...(input.choices ? { choices: input.choices } : {}),
       ...(input.quiet ? { quiet: true as const } : {}),
+      ...(input.summary ? { summary: true as const } : {}),
       createdAt: new Date().toISOString(),
     }));
   }

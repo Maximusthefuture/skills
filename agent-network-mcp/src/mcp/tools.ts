@@ -59,6 +59,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
         .describe("A question to 'operator' with 2-6 choices it picks on the page; give them whenever there are options"),
       recommended: z.string().optional().describe("With options: the label you would take (taken if nobody answers in time); fit the project as it is, no new framework or dependency unless the task asks"),
       multiSelect: z.boolean().optional().describe("With options: true when several may be picked"),
+      summary: z.boolean().optional().describe("true: this question to 'operator' is your summary of a grilling (\"How I understand it: … Is that right?\"); its yes ends the grilling"),
     },
     async (a) => swarm.sendMessage(a),
   );
@@ -92,7 +93,10 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
       note: z.string().optional().describe("What changed in this version, e.g. 'tester takes the API tests; the retry moved to the client'. After the operator's feedback, a note alone sends the same page again (nothing needed to change, and why)"),
       read: z.boolean().optional().describe("true: return the current version's html (after the operator edited it in place), save nothing; a big page comes as its headings, read it by parts with around"),
       around: z.string().optional().describe("Read only the parts of the current version around this text (a few words of it), save nothing"),
-      stage: z.enum(["input", "change"]).optional().describe("A change-writing task with analysts' input: which page — \"input\" (their artifacts) or \"change\" (yours next to theirs)"),
+      stage: z.enum(["input", "change"]).optional().describe("A change-writing task with analysts' input: which page — \"input\" (their artifacts) or \"change\" (yours next to theirs). Without html the server builds the page from the files"),
+      departures: z.array(z.object({ where: z.string(), what: z.string(), rule: z.string() })).optional().describe("stage input: where their artifacts depart from the project — where (file, section), what, rule (java-conventions, CLAUDE.md, file:line)"),
+      coverage: z.array(z.object({ analyst: z.string(), outcome: z.enum(["taken", "adapted", "dropped", "added"]), where: z.string().optional(), why: z.string().optional() })).optional().describe("stage change: every requirement and scenario of their input — taken / adapted / dropped / added, where in your change, why (Qn, rule, code)"),
+      diagrams: z.array(z.string()).optional().describe("Mermaid sources to show, e.g. a sequenceDiagram per scenario"),
     },
     async (a) => swarm.plan(a),
   );

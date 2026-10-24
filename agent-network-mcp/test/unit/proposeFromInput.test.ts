@@ -81,7 +81,7 @@ describe("a change written from the analysts' artifacts", () => {
     const first = await backend.context();
     expect(first.task).toMatchObject({ proposes: { input: `.agent-network/input/${task.id}`, inputFiles: ["loyalty/proposal.md", "loyalty/specs/loyalty/spec.md"] } });
     expect(existsSync(join(project, ".agent-network", "input", task.id, "loyalty", "proposal.md"))).toBe(true);
-    expect(String(first.hint)).toContain('plan({stage: "input", html, note})');
+    expect(String(first.hint)).toContain('plan({stage: "input", departures');
     expect(first.allowedActions).toContain("plan");
     expect(await failure(backend, backend.propose(SPLIT))).toMatchObject({ error: "INPUT_NOT_REVIEWED" });
     expect(await failure(backend, backend.plan({ html: PAGE }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("two pages") });
@@ -151,6 +151,61 @@ describe("a change written from the analysts' artifacts", () => {
     expect(viewed.message?.content).toContain("Now grill the operator");
     expect(viewed.message?.content).toContain("and the currency?");
     expect(viewed.state.approved).toMatchObject({ version: 1 });
+  });
+
+  it("without html the server builds both pages from the files; the coverage carries over to the next version", async () => {
+    const { project, operator, backend, reviewer } = await setup();
+    const task = await operator.createTaskAsOperator({ title: "", description: "Loyalty discount.", agents: ["backend", "reviewer"], proposes: "add-loyalty", from: [await analystInput()], grill: false });
+    await backend.context();
+    await backend.plan({ stage: "input", departures: [{ where: "loyalty/proposal.md", what: "Flyway migration", rule: "the project uses Liquibase" }], diagrams: ["sequenceDiagram\n  Client->>Api: PUT"] });
+    const p1 = (await operator.planHtml(task.id))!.html;
+    expect(p1).toContain("Flyway migration");
+    expect(p1).toContain("the project uses Liquibase");
+    expect(p1).toContain("Discounts."); // their proposal, as it is
+    expect(p1).toContain('class="mermaid"');
+    await operator.planFeedback({ taskId: task.id, version: 1, approve: true });
+    const q = await backend.sendMessage({ to: "operator", message: "Q1 — From the 5th order?", options: [{ label: "5th" }, { label: "6th" }], recommended: "5th" });
+    await operator.answerQuestion({ taskId: task.id, messageId: q.messageId as string, answer: 'Chosen: "5th"' });
+    await backend.propose(SPLIT);
+    await reviewer.context();
+    await reviewer.complete({});
+    await backend.complete({});
+    expect(await failure(backend, backend.plan({ stage: "change" }))).toMatchObject({ message: expect.stringContaining("has no files yet") });
+    writeProposal(project, "add-loyalty");
+    await backend.plan({ stage: "change", coverage: [{ analyst: "Requirement: Discount", outcome: "adapted", where: "specs/loyalty/spec.md", why: "Q1" }] });
+    const p2 = (await operator.planHtml(task.id))!.html;
+    expect(p2).toContain("Requirement: Discount");
+    expect(p2).toContain("адаптировано");
+    expect(p2).toContain("From the 5th order?"); // the operator's decisions
+    expect(p2).toContain("openspec/changes/add-loyalty/design.md");
+    expect(p2).toContain("Regular customers get a discount."); // our proposal
+    // a rework: the page is built again from the changed files, the coverage carried over
+    await operator.planFeedback({ taskId: task.id, version: 2, comments: [{ target: "h1", text: "add Q1 to the design" }] });
+    writeFileSync(join(project, "openspec", "changes", "add-loyalty", "design.md"), "## Decisions\n### Q1 — the 5th order\n");
+    await backend.plan({ stage: "change", note: "Q1 in design.md" });
+    const p3 = (await operator.planHtml(task.id))!.html;
+    expect(p3).toContain("Q1 — the 5th order");
+    expect(p3).toContain("Requirement: Discount");
+  });
+
+  it("the summary is marked with summary: true; every numbered decision must be in design.md before the change is handed in", async () => {
+    const { project, operator, backend, reviewer } = await setup();
+    const task = await operator.createTaskAsOperator({ title: "", description: "Loyalty discount.", agents: ["backend", "reviewer"], proposes: "add-loyalty", grill: true });
+    await backend.context();
+    const q1 = await backend.sendMessage({ to: "operator", message: "Q1 — From the 5th order or the 6th?", options: [{ label: "5th" }, { label: "6th" }], recommended: "5th" });
+    await operator.answerQuestion({ taskId: task.id, messageId: q1.messageId as string, answer: 'Chosen: "5th"' });
+    // words no rule would recognise: the flag alone makes it the summary
+    const sum = await backend.sendMessage({ to: "operator", message: "Итак: 5% с пятого заказа. Годится?", options: [{ label: "Годится" }, { label: "Поправлю" }], recommended: "Годится", summary: true });
+    await operator.answerQuestion({ taskId: task.id, messageId: sum.messageId as string, answer: 'Chosen: "Годится"' });
+    await backend.context();
+    await backend.propose(SPLIT);
+    await reviewer.context();
+    await reviewer.complete({});
+    await backend.complete({});
+    writeProposal(project, "add-loyalty"); // its design.md has no Q1
+    expect(await failure(backend, backend.complete({ result: "written" }))).toMatchObject({ error: "DECISIONS_MISSING", message: expect.stringContaining("Q1") });
+    writeFileSync(join(project, "openspec", "changes", "add-loyalty", "design.md"), "## Decisions\n### Q1 — from the 5th order\nThe 5th order gets it.\n");
+    await backend.complete({ result: "1 capability" });
   });
 
   it("a change-writing task without input still clarifies first when asked to (it used to be told to propose and refused)", async () => {

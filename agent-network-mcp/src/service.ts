@@ -10,7 +10,7 @@ import { archiveChange, assertChangeName, changePath, hasChange, readChange, typ
 import { anyDeclared, covers, findOverlaps, matches, normalizePath, overlaps, ownersOf } from "./ownership.js";
 import { DEFAULT_MAX_FIX_ROUNDS, isHalt, PhaseManager, type Halt, type Transition } from "./phase/phaseManager.js";
 import { writeParkMarker } from "./park.js";
-import { applyEdits, checkFeedback, checkPlanHtml, feedbackRounds, feedbackText, inputViewed, planStatus, readPlanState, reviewsPages, type PlanFeedback, type PlanStage, type PlanState } from "./plan.js";
+import { applyEdits, checkFeedback, checkPlanHtml, feedbackRounds, feedbackText, inputViewed, planStatus, readPlanState, reviewsPages, type PlanFeedback, type PlanStage, type PlanState, type PlanVersion } from "./plan.js";
 import { collectInput, copyInput } from "./specInput.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore } from "./stores/agentStore.js";
@@ -119,10 +119,16 @@ const SUMMARY = /(how i understand|my understanding|summary|как я понял
  * A grilled task is clear once the operator said yes to the lead's summary: a question of the lead that starts with how it
  * understood the task, answered with its first option ("Yes, that's it") or a plain yes.
  */
-export function grillConfirmed(messages: Pick<Message, "id" | "from" | "to" | "type" | "content" | "replyTo" | "choices">[], lead: string): boolean {
-  // the summary: it starts with how the lead understood the task (markdown around it is fine), or it offers yes / no
-  const summary = (q: (typeof messages)[number]) =>
-    UNDERSTOOD.test(q.content) || (SUMMARY.test(q.content.slice(0, 200)) && (q.choices?.options.length ?? 2) === 2) || (CONFIRM_YES.test(q.choices?.options[0]?.label ?? "") && /^\s*(no|нет)(?![a-zа-яё])/i.test(q.choices?.options[1]?.label ?? ""));
+/**
+ * The lead's summary of a grilling: marked with send_message({summary: true}); without the flag (older agents) the words
+ * tell it — it starts with how the lead understood the task (markdown around it is fine), or it offers yes / no.
+ */
+export function isSummaryQuestion(q: Pick<Message, "content" | "choices" | "summary">): boolean {
+  return !!q.summary || UNDERSTOOD.test(q.content) || (SUMMARY.test(q.content.slice(0, 200)) && (q.choices?.options.length ?? 2) === 2) || (CONFIRM_YES.test(q.choices?.options[0]?.label ?? "") && /^\s*(no|нет)(?![a-zа-яё])/i.test(q.choices?.options[1]?.label ?? ""));
+}
+
+export function grillConfirmed(messages: Pick<Message, "id" | "from" | "to" | "type" | "content" | "replyTo" | "choices" | "summary">[], lead: string): boolean {
+  const summary = isSummaryQuestion;
   return messages.some((q) => q.from === lead && q.to === OPERATOR && q.type === "QUESTION" && summary(q) &&
     messages.some((a) => a.from === OPERATOR && a.replyTo === q.id && (
       (q.choices?.options[0] && a.content.startsWith(`Chosen: "${q.choices.options[0].label}"`)) ||
@@ -467,11 +473,11 @@ export class NetworkService {
     return { version: v, html: await readFile(join(this.fs.root, "tasks", taskId, "plan", `v${v}.html`), "utf8") };
   }
 
-  private async savePlanVersion(taskId: string, s: PlanState, html: string, note?: string, page?: { stage?: PlanStage; hash?: string }): Promise<number> {
+  private async savePlanVersion(taskId: string, s: PlanState, html: string, note?: string, page?: { stage?: PlanStage; hash?: string; render?: PlanVersion["render"] }): Promise<number> {
     const n = (s.versions.at(-1)?.n ?? 0) + 1;
     await mkdir(join(this.fs.root, "tasks", taskId, "plan"), { recursive: true });
     await writeFile(join(this.fs.root, "tasks", taskId, "plan", `v${n}.html`), html);
-    s.versions.push({ n, by: this.me, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 500) } : {}), bytes: Buffer.byteLength(html), ...(page?.stage ? { stage: page.stage } : {}), ...(page?.hash ? { hash: page.hash } : {}) });
+    s.versions.push({ n, by: this.me, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 500) } : {}), bytes: Buffer.byteLength(html), ...(page?.stage ? { stage: page.stage } : {}), ...(page?.hash ? { hash: page.hash } : {}), ...(page?.render ? { render: page.render } : {}) });
     return n;
   }
 
@@ -503,7 +509,7 @@ export class NetworkService {
   }
 
   /** The lead: a new version of the plan, the whole page or find/replace edits of the current one. */
-  async writePlan(input: { taskId: string; html?: string; edits?: { find: string; replace: string }[]; note?: string; stage?: string; hash?: string }): Promise<{ version: number; status: string }> {
+  async writePlan(input: { taskId: string; html?: string; edits?: { find: string; replace: string }[]; note?: string; stage?: string; hash?: string; render?: PlanVersion["render"] }): Promise<{ version: number; status: string }> {
     await this.requireMe();
     return this.fs.withLock(this.tasks.lockPath(assertTaskId(input.taskId)), async () => {
       const task = await this.requireMember(input.taskId);
@@ -534,7 +540,7 @@ export class NetworkService {
         html = (await this.planHtml(task.id))!.html;
       } else throw new AppError("INVALID_INPUT", "Send html (the whole page) or edits: [{find, replace}]; after the operator's feedback, a note alone keeps the page as it is (say why)");
       if (stage && s.versions.at(-1)?.stage !== stage && input.html === undefined) throw new AppError("INVALID_INPUT", `The ${stage} page is a new page: send it whole as html`);
-      const version = await this.savePlanVersion(task.id, s, html, input.note, stage ? { stage, ...(stage === "change" && input.hash ? { hash: input.hash } : {}) } : undefined);
+      const version = await this.savePlanVersion(task.id, s, html, input.note, stage ? { stage, ...(stage === "change" && input.hash ? { hash: input.hash } : {}), ...(input.render ? { render: input.render } : {}) } : undefined);
       await this.fs.writeJson(["tasks", task.id, "plan", "state.json"], s);
       await this.emit({ type: "PLAN_UPDATED", taskId: task.id, sourceAgent: this.me, payload: { version } });
       return { version, status: planStatus(s) };
@@ -915,7 +921,7 @@ export class NetworkService {
         throw new AppError(
           "CLARIFY_FIRST",
           task.grill
-            ? `${task.id} asks the lead to grill the operator about the task first: rounds of questions (send_message({to: "operator", message, options, recommended}), one per question, each with your recommendation), then your summary as a question — send_message({to: "operator", message: "How I understand it: <the decisions>. Is that right?", options: [{label: "Yes, that's it"}, {label: "No, I will correct it"}], recommended: "Yes, that's it"}). propose() after the operator's yes.`
+            ? `${task.id} asks the lead to grill the operator about the task first: rounds of questions (send_message({to: "operator", message, options, recommended}), one per question, each with your recommendation), then your summary as a question — send_message({to: "operator", message: "How I understand it: <the decisions>. Is that right?", options: [{label: "Yes, that's it"}, {label: "No, I will correct it"}], recommended: "Yes, that's it", summary: true}). propose() after the operator's yes.`
             : `${task.id} asks the lead to check the task first: ask the operator what is unclear (send_message({to: "operator", message, options, recommended})), or tell it how you understood the task (send_message({to: "operator", fyi: true, message: "How I understand it: ... No questions."})); then propose().`,
         );
       }
@@ -1074,7 +1080,7 @@ export class NetworkService {
 
   // ---------------------------------------------------------------- messages
 
-  async sendMessage(input: { taskId: string; to: string; type: MessageType; content: string; replyTo?: string; files?: string[]; choices?: QuestionChoices; quiet?: boolean }): Promise<Message> {
+  async sendMessage(input: { taskId: string; to: string; type: MessageType; content: string; replyTo?: string; files?: string[]; choices?: QuestionChoices; quiet?: boolean; summary?: boolean }): Promise<Message> {
     await this.requireMe();
     const task = await this.requireMember(input.taskId);
     if (task.status === "COMPLETED") throw new AppError("ALREADY_COMPLETED", "The task is completed");
@@ -1089,7 +1095,7 @@ export class NetworkService {
       await this.messages.get(task.id, input.replyTo);
     }
     const quiet = input.quiet && to !== OPERATOR && input.type === "INFORMATION";
-    const message = await this.messages.create({ taskId: task.id, from: this.me, to, type: input.type, content: input.content, replyTo: input.replyTo, files: input.files, ...(choices ? { choices } : {}), ...(quiet ? { quiet: true } : {}) });
+    const message = await this.messages.create({ taskId: task.id, from: this.me, to, type: input.type, content: input.content, replyTo: input.replyTo, files: input.files, ...(choices ? { choices } : {}), ...(quiet ? { quiet: true } : {}), ...(input.summary ? { summary: true } : {}) });
     await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: to, sourceAgent: this.me, payload: { messageId: message.id, from: this.me, type: message.type, ...(message.files ? { files: message.files } : {}), ...(quiet ? { quiet: true } : {}) } });
     return message;
   }
