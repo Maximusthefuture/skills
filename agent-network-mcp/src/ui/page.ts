@@ -66,7 +66,7 @@ button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:
 .planbody{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 340px;grid-template-rows:minmax(0,1fr);min-height:0}.planbody iframe{width:100%;height:100%;border:0;background:#fff}
 .planside{border-left:1px solid var(--line);padding:12px;overflow:auto;min-height:0;display:flex;flex-direction:column;gap:10px;background:var(--side)}.planside textarea{width:100%}.planside .small{font-size:12px}
 .pmode{align-self:flex-start}.pnote{font-size:13px}.pquote{font-style:italic;color:var(--muted)}.pitem{border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--card);position:relative;margin-top:6px;font-size:13px}.pitem>button{position:absolute;top:2px;right:2px}
-.pdiag textarea{font:12px/1.4 var(--mono);white-space:pre;min-height:180px}.pdiag .dst{font-size:12px;margin:4px 0}.pdiag .dst.bad{color:var(--bad)}.pconfirm{border:1px solid var(--accent);background:var(--accbg);border-radius:6px;padding:8px 10px;font-size:13px}.pconfirm div{margin-bottom:6px}.pqs .card{margin:6px 0 0;padding:8px;font-size:13px}.pqs textarea{min-height:44px}.pact summary{cursor:pointer}.pstep{font-size:12px;margin:3px 0;overflow-wrap:anywhere}.pstep.err{color:var(--bad)}.pcritic{border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--card);font-size:13px}.prisk{border-top:1px solid var(--line);padding:6px 0;margin-top:6px}.prisk .psug{color:var(--accent)}.prisk button{margin-top:4px}.psent{border:1px solid var(--ok);background:var(--okbg);border-radius:6px;padding:8px 10px;font-size:13px}.ppick{border:1px solid var(--qline);background:var(--qbg);border-radius:6px;padding:8px}.planside>*{flex-shrink:0}.pdiff{display:flex;gap:6px;align-items:center;font-size:13px}.pdiff input{width:auto;margin:0}.pactions{margin-top:auto;padding-top:8px}.phist summary{cursor:pointer}.planline button{vertical-align:baseline}
+.pdiag textarea{font:12px/1.4 var(--mono);white-space:pre;min-height:180px}.pdiag .dst{font-size:12px;margin:4px 0}.pdiag .dst.bad{color:var(--bad)}.pconfirm{border:1px solid var(--accent);background:var(--accbg);border-radius:6px;padding:8px 10px;font-size:13px}.pconfirm div{margin-bottom:6px}.pqs .card{margin:6px 0 0;padding:8px;font-size:13px}.pqs textarea{min-height:44px}.pact summary{cursor:pointer}.pstep{font-size:12px;margin:3px 0;overflow-wrap:anywhere}.pstep.err{color:var(--bad)}.pcritic{border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--card);font-size:13px}.prisk{border-top:1px solid var(--line);padding:6px 0;margin-top:6px}.prisk .psug{color:var(--accent)}.prisk button{margin-top:4px}.psent{border:1px solid var(--ok);background:var(--okbg);border-radius:6px;padding:8px 10px;font-size:13px}.ppick{border:1px solid var(--qline);background:var(--qbg);border-radius:6px;padding:8px}.planside>*{flex-shrink:0}.pdiff{display:flex;gap:6px;align-items:center;font-size:13px}.pdiff input{width:auto;margin:0}.pactions{padding-top:4px}.pfoot{position:sticky;bottom:-12px;margin-top:auto;background:var(--side);padding:8px 0 12px;display:flex;flex-direction:column;gap:8px}.phist summary{cursor:pointer}.planline button{vertical-align:baseline}
 @media (max-width:860px){.planbody{grid-template-columns:1fr;grid-template-rows:55vh minmax(0,1fr)}.planside{border-left:0;border-top:1px solid var(--line)}}
 .askov{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px}.askbox{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;max-width:460px;white-space:pre-line;box-shadow:0 8px 30px rgba(0,0,0,.25)}.askbox .checks{margin-top:12px}
 .prep{margin:6px 0}.prep .prepmore{margin-top:4px}.prep .prepmore label{display:block;margin:4px 0}
@@ -821,7 +821,14 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
   const last=vs.at(-1);const latest=last&&PV.version===last.n;const qs=(S&&S.openQuestions||[]).filter(q=>q.taskId===PV.taskId);
   const W=planWords(t,last&&last.stage);const live=t&&t.status==="ACTIVE"&&t.phase===W.phase;const can=!!(S&&S.control)&&latest&&live&&!p.approved;
   e.st.textContent=!vs.length?"плана ещё нет":p.approved?W.done+" v"+p.approved.version:!latest?"старая версия: только просмотр":!live?"задача уже не на этом шаге":t.plan&&t.plan.status==="revising"?W.status.revising:"";
+  // the refresh calls this every few seconds: rebuild only when something shown changed, so a click lands where it was aimed
+  const steps=t&&typeof ACT!=="undefined"?ACT.filter(x=>x.agentId===t.agents[0]&&(!x.taskId||x.taskId===t.id)).slice(-6).map(x=>x.seq).join(","):"";
+  const sig=JSON.stringify([PV.version,PV.mode,PV.comments,PV.pick,PV.diagram,PV.confirm,PV.pending,PV.error,PV.ready,PV.edited,PV.answered,PV.diff,PV.diffCount,PV.critiques,PV.critic,PV.criticAdded?[...PV.criticAdded]:null,PV.actOpen,
+    p&&p.versions.length,p&&p.approved,p&&p.feedback&&p.feedback.length,t&&t.plan,t&&t.status,t&&t.phase,t&&t.queue,qs.map(q=>q.messageId),steps,can]);
+  if(sig===PV.sideSig)return;PV.sideSig=sig;
   const side=e.side;side.replaceChildren();
+  // the confirmation and the buttons stay at the bottom of the panel, whatever grows above them
+  const foot=el("div","pfoot");
   const cur=vs.find(x=>x.n===PV.version);if(cur&&cur.note)side.append(el("div","pnote","v"+cur.n+": "+cur.note));
   if(can){const w=el("div","win pmode");[["view","Просмотр"],["comment","Замечание"],["edit","Править текст"]].forEach(([m,l])=>{const b=el("button",PV.mode===m?"on":"",l);b.type="button";
       b.onclick=()=>{PV.mode=m;PV.pick=null;PV.diagram=null;planSay({type:"mode",mode:m});renderPlanSide()};w.append(b)});side.append(w);
@@ -889,7 +896,7 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
   if(PV.confirm&&can){const q=el("div","pconfirm");const a=PV.confirm.approve;
     q.append(el("div","",a?(W.ask||"Утвердить план v"+PV.version+"?"+(PV.confirm.what?" Вместе с ним lead получит ваши ответы: "+PV.confirm.what+".":"")+" Дальше lead предложит соглашение по плану."):W.send+": "+PV.confirm.what+"?"+W.sendAsk));
     const yes=el("button","small",a?W.yes:"Да, отправить");yes.type="button";yes.onclick=()=>planSend(a);
-    const no=el("button","ghost small","Отмена");no.type="button";no.onclick=()=>{PV.confirm=null;renderPlanSide()};q.append(yes," ",no);side.append(q)}
+    const no=el("button","ghost small","Отмена");no.type="button";no.onclick=()=>{PV.confirm=null;renderPlanSide()};q.append(yes," ",no);foot.append(q)}
   if(can){const bar=el("div","checks pactions");const send=el("button","",PV.pending?"…":W.send);send.type="button";send.disabled=PV.pending||!PV.ready||!planHasNotes();
     if(!planHasNotes())send.title="Нечего отправлять: добавьте замечание, правку или ответ на вопрос";send.onclick=()=>planAsk(false);
     // the analysts' input page: notes are grilling questions, they go along with «Посмотрел» (only in-place edits wait for the lead)
@@ -897,7 +904,8 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
     const revising=!viewOnly&&t&&t.plan&&t.plan.status==="revising";
     const ap=el("button",blocked||revising?"ghost":"",PV.pending?"…":W.approve+" v"+PV.version);ap.type="button";ap.disabled=PV.pending||!PV.ready||blocked||revising;
     if(revising)ap.title="Lead смотрит ваш отзыв: утвердите версию, которую он пришлёт (если менять нечего, он пришлёт ту же страницу с пояснением)";
-    else if(planDirty())ap.title="Сначала отправьте замечания и правки lead'у: он посмотрит, доработает план и пришлёт новую версию — её и утвердите";ap.onclick=()=>planAsk(true);bar.append(send,ap);side.append(bar)}}
+    else if(planDirty())ap.title="Сначала отправьте замечания и правки lead'у: он посмотрит, доработает план и пришлёт новую версию — её и утвердите";ap.onclick=()=>planAsk(true);bar.append(send,ap);foot.append(bar)}
+  if(foot.childElementCount)side.append(foot)}
 
 // the state refresh: a new version from the lead opens by itself unless you have notes or edits in progress
 function planSync(){if(!PV||!S)return;const t=S.tasks.find(x=>x.id===PV.taskId);if(!t||!t.plan||!PV.plan)return;
