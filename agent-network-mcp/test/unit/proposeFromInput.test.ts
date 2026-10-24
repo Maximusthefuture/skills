@@ -134,6 +134,25 @@ describe("a change written from the analysts' artifacts", () => {
     expect(String(review.hint)).toContain("every requirement and scenario of the input is covered");
   });
 
+  it("an empty --from is refused; notes on the input page go along with «Посмотрел»; rounds are counted per page", async () => {
+    const { operator, backend } = await setup();
+    const base = { title: "", description: "d", agents: ["backend", "reviewer"], proposes: "add-loyalty" };
+    await expect(operator.createTaskAsOperator({ ...base, from: [""] })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("path is empty") });
+    await expect(operator.createTaskAsOperator({ ...base, from: ["  "] })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+    const task = await operator.createTaskAsOperator({ ...base, from: [await analystInput()] });
+    await backend.context();
+    await backend.plan({ stage: "input", html: PAGE });
+    const notes = await operator.planFeedback({ taskId: task.id, version: 1, comments: [{ target: "h1", text: "is the wrap always paid?" }] });
+    expect(notes.state.feedback[0]).toMatchObject({ round: 1 });
+    // the lead has not answered yet, and notes come along: «Посмотрел» is accepted all the same (in-place edits are not)
+    await expect(operator.planFeedback({ taskId: task.id, version: 1, approve: true, edits: [{ before: "Page", after: "Their page" }] })).rejects.toMatchObject({ message: expect.stringContaining("Send your comments and edits to the lead first") });
+    const viewed = await operator.planFeedback({ taskId: task.id, version: 1, approve: true, comments: [{ target: "p", text: "and the currency?" }] });
+    expect(viewed.message?.content).toContain("Now grill the operator");
+    expect(viewed.message?.content).toContain("and the currency?");
+    expect(viewed.state.approved).toMatchObject({ version: 1 });
+  });
+
   it("a change-writing task without input still clarifies first when asked to (it used to be told to propose and refused)", async () => {
     const { operator, backend } = await setup();
     await operator.createTaskAsOperator({ title: "", description: "Loyalty discount.", agents: ["backend", "reviewer"], proposes: "add-loyalty", clarify: true });

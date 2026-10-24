@@ -71,10 +71,16 @@ export function planStatus(s: PlanState): PlanStatus {
   return fb && !fb.withApproval && (fb.onVersion === last.n || fb.savedAs === last.n) ? "revising" : "awaiting";
 }
 
+/** Rounds of feedback (not counting notes sent with an approval) on the versions of one page (stage; a plan has none). */
+export function feedbackRounds(s: PlanState, stage: PlanStage | undefined): number {
+  const stageOf = (n: number) => s.versions.find((v) => v.n === n)?.stage;
+  return s.feedback.filter((f) => !f.withApproval && stageOf(f.onVersion) === stage).length;
+}
+
 /** The plan in brief for the page and the agents. */
 export function planBrief(s: PlanState): { status: PlanStatus; version: number | null; by: string | null; at: string | null; approvedVersion: number | null; versions: number; rounds: number; stage: PlanStage | null } {
   const last = s.versions.at(-1);
-  return { status: planStatus(s), version: last?.n ?? null, by: last?.by ?? null, at: last?.at ?? null, approvedVersion: s.approved?.version ?? null, versions: s.versions.length, rounds: s.feedback.filter((f) => !f.withApproval).length, stage: last?.stage ?? null };
+  return { status: planStatus(s), version: last?.n ?? null, by: last?.by ?? null, at: last?.at ?? null, approvedVersion: s.approved?.version ?? null, versions: s.versions.length, rounds: feedbackRounds(s, last?.stage), stage: last?.stage ?? null };
 }
 
 /** A task the operator reviews pages of: a plan (planReview), or a change-writing task with analysts' input (two pages). */

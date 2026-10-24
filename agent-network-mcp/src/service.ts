@@ -10,7 +10,7 @@ import { archiveChange, assertChangeName, changePath, hasChange, readChange, typ
 import { anyDeclared, covers, findOverlaps, matches, normalizePath, overlaps, ownersOf } from "./ownership.js";
 import { DEFAULT_MAX_FIX_ROUNDS, isHalt, PhaseManager, type Halt, type Transition } from "./phase/phaseManager.js";
 import { writeParkMarker } from "./park.js";
-import { applyEdits, checkFeedback, checkPlanHtml, feedbackText, inputViewed, planStatus, readPlanState, reviewsPages, type PlanFeedback, type PlanStage, type PlanState } from "./plan.js";
+import { applyEdits, checkFeedback, checkPlanHtml, feedbackRounds, feedbackText, inputViewed, planStatus, readPlanState, reviewsPages, type PlanFeedback, type PlanStage, type PlanState } from "./plan.js";
 import { collectInput, copyInput } from "./specInput.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore } from "./stores/agentStore.js";
@@ -322,6 +322,7 @@ export class NetworkService {
     const proposes = input.proposes?.trim() ? await this.checkNewChange(input.proposes.trim(), !!change) : undefined;
     if (proposes && input.planReview) throw new AppError("INVALID_INPUT", "A task that writes an OpenSpec change has no separate plan: the change itself is what you review");
     const from = (input.from ?? []).map((f) => f.trim()).filter(Boolean);
+    if (input.from?.length && !from.length) throw new AppError("INVALID_INPUT", "--from: the path is empty; give the analysts' .md files or their folder");
     if (from.length && !proposes) throw new AppError("INVALID_INPUT", "--from (the analysts' artifacts) goes with --propose <change>: they are the input of a change-writing task");
     const inputFiles = from.length ? await collectInput(from, this.projectDir) : [];
     const title = input.title.trim() || change?.name || (proposes ? `OpenSpec change ${proposes}` : "");
@@ -555,10 +556,12 @@ export class NetworkService {
       const last = s.versions.at(-1);
       if (!last) throw new AppError("INVALID_INPUT", "The lead has not written a plan yet");
       if (input.version !== last.n) throw new AppError("INVALID_INPUT", `You looked at v${input.version}, the current plan is v${last.n}: open it and send again`);
-      const fb: PlanFeedback = { round: s.feedback.filter((f) => !f.withApproval).length + 1, at: new Date().toISOString(), onVersion: last.n, ...checkFeedback(input) };
+      const fb: PlanFeedback = { round: feedbackRounds(s, last.stage) + 1, at: new Date().toISOString(), onVersion: last.n, ...checkFeedback(input) };
       // comments and edits are the lead's to look at first: it decides whether the plan changes; only answers go with an approval
-      if (input.approve && planStatus(s) === "revising") throw new AppError("INVALID_INPUT", `The lead is working in your feedback on v${last.n}: approve the version it sends`);
-      if (input.approve && fb.comments.length + fb.edits.length > 0) throw new AppError("INVALID_INPUT", "Send your comments and edits to the lead first: it reworks the plan (or says why not), then you approve the new version");
+      // the analysts' input page is only looked at: notes on it are grilling questions and go along with «Посмотрел»
+      const viewOnly = stage === "input";
+      if (input.approve && !viewOnly && planStatus(s) === "revising") throw new AppError("INVALID_INPUT", `The lead is working in your feedback on v${last.n}: approve the version it sends`);
+      if (input.approve && fb.edits.length + (viewOnly ? 0 : fb.comments.length) > 0) throw new AppError("INVALID_INPUT", "Send your comments and edits to the lead first: it reworks the plan (or says why not), then you approve the new version");
       if (fb.edits.length && input.html) fb.savedAs = await this.savePlanVersion(task.id, s, checkPlanHtml(input.html), "the operator's edits", last.stage ? { stage: last.stage, ...(last.hash ? { hash: last.hash } : {}) } : undefined);
       const said = fb.comments.length + fb.edits.length + fb.answers.length > 0;
       if (!said && !input.approve) throw new AppError("INVALID_INPUT", "Nothing to send: comment on a block, edit the text or answer a question");

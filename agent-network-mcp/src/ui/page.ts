@@ -754,7 +754,7 @@ const PLAN_STATUS={none:"lead пишет план…",awaiting:"план ждё�
 // a change-writing task with analysts' input shows two pages instead of a plan: their spec (you look), our change (you accept or return it)
 const PAGE_WORDS={
   input:{name:"Спека аналитиков ",status:{none:"lead готовит страницу…",awaiting:"ждёт просмотра",revising:"lead смотрит ваши замечания",approved:"просмотрена"},approve:"Посмотрел",send:"Отправить замечания",ask:"Отметить спеку аналитиков просмотренной? Дальше lead проведёт допрос и напишет свой change.",sendAsk:" Замечания станут вопросами допроса.",phase:"DISCUSS",yes:"Да, посмотрел",done:"просмотрена",view:"Их спека как есть: отмечено, где она расходится с кодом и правилами проекта.",sent:"Lead смотрит ваши замечания — новая версия откроется здесь сама."},
-  change:{name:"Change ",status:{none:"lead пишет change…",awaiting:"change ждёт вас",revising:"lead дорабатывает change",approved:"change принят"},approve:"Принять change",send:"Вернуть на доработку",ask:"Принять change? Дальше ревьюер проверит его, и после DONE его можно реализовать.",sendAsk:" Lead поправит change и покажет новую версию.",phase:"IMPLEMENT",yes:"Да, принять",done:"принят",view:"Наш change рядом с их: что взято, что адаптировано, отброшено или добавлено — и почему.",sent:"Lead дорабатывает change — новая версия откроется здесь сама."}};
+  change:{name:"Change ",status:{none:"lead пишет change…",awaiting:"ждёт вас",revising:"lead дорабатывает",approved:"принят"},approve:"Принять change",send:"Вернуть на доработку",ask:"Принять change? Дальше ревьюер проверит его, и после DONE его можно реализовать.",sendAsk:" Lead поправит change и покажет новую версию.",phase:"IMPLEMENT",yes:"Да, принять",done:"принят",view:"Наш change рядом с их: что взято, что адаптировано, отброшено или добавлено — и почему.",sent:"Lead дорабатывает change — новая версия откроется здесь сама."}};
 function planWords(t,stage){const w=stage&&PAGE_WORDS[stage];return w||{name:"План ",status:PLAN_STATUS,approve:"Утвердить план",send:"Отправить lead'у",ask:null,sendAsk:" Он посмотрит и пришлёт новую версию плана.",phase:"DISCUSS",yes:"Да, утвердить",done:"утверждён",view:"Вопросы плана отмечайте прямо на странице; ответы уйдут с отзывом.",sent:"Lead дорабатывает план — новая версия откроется здесь сама."}}
 function renderPlan(t){const p=t.plan;const w=planWords(t,p.stage);const box=el("div","openspec planline");box.append(el("b","",w.name),el("span",p.status==="awaiting"?"badge WARNING":p.status==="approved"?"badge PASS":"badge",w.status[p.status]));
   if(p.version){box.append(el("span","muted"," · v"+p.version+(p.by?" от "+p.by:"")+(p.at?" "+time(p.at).slice(0,5):"")+(p.rounds?" · отзывов: "+p.rounds:"")+(p.approvedVersion?" · утверждена v"+p.approvedVersion:"")));
@@ -778,8 +778,11 @@ async function openPlan(taskId){const e=planEl();PV={taskId,plan:null,version:0,
 function closePlan(force){if(!PV)return;if(!force&&planDirty())return;PV.el.o.hidden=true;PV.el.fr.src="about:blank";document.body.classList.remove("noscroll");PV=null}
 async function reloadPlan(toLatest){const j=await getJSON(q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan"));PV.plan=j.plan;PV.critiques=j.critiques||[];PV.critic=j.critic||{enabled:false};const last=j.plan.versions.at(-1);
   if(toLatest&&last)await loadPlanVersion(last.n);else renderPlanSide()}
+// a new frame for every version: a frame whose page is sandboxed by its CSP may not navigate to the next one when its
+// src changes (no request, an empty load, no "ready"), which left a lead's new version blank when it opened by itself
+function freshFrame(){const old=PLAN_EL.fr;const fr=document.createElement("iframe");fr.title=old.title;old.replaceWith(fr);PLAN_EL.fr=fr;return fr}
 async function loadPlanVersion(v){PV.version=v;PV.confirm=null;PV.error=null;PV.comments=[];PV.pick=null;PV.edited=false;PV.answered=false;PV.diagram=null;PV.diffCount=null;PV.ready=false;
-  PV.el.fr.src=q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/"+v+"/view");renderPlanSide()}
+  freshFrame().src=q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/"+v+"/view");renderPlanSide()}
 function planSay(m){if(PV&&PV.el.fr.contentWindow)PV.el.fr.contentWindow.postMessage(m,"*")}
 const planWaits=new Map();let planSeq=0;
 function planCollect(){return new Promise((ok,fail)=>{const id=++planSeq;planWaits.set(id,ok);planSay({type:"collect",id});setTimeout(()=>{if(planWaits.delete(id))fail(new Error("страница плана не ответила"))},4000)})}
@@ -807,7 +810,8 @@ async function planAsk(approve){PV.error=null;let c;try{c=await planCollect()}ca
 async function planSend(approve){const v=PV.version;PV.confirm=null;PV.error=null;PV.pending=true;renderPlanSide();
   try{const c=await planCollect();const what=planWhat(c);
     const r=await post("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/"+(approve?"approve":"feedback"),{version:v,comments:PV.comments,edits:c.edits,answers:c.answers,...(c.html?{html:c.html}:{})});
-    toast("ok",approve?"План утверждён":"Отзыв отправлен "+(r.to||"lead'у"),approve?"v"+r.plan.approved.version+": lead предложит соглашение":what,PV.taskId);
+    const st=(r.plan.versions.find(x=>x.n===v)||{}).stage;
+    toast("ok",approve?(st==="input"?"Спека аналитиков просмотрена":st==="change"?"Change принят":"План утверждён"):"Отзыв отправлен "+(r.to||"lead'у"),approve?(st==="input"?"lead проведёт допрос и напишет свой change":st==="change"?"дальше ревью и DONE":"v"+r.plan.approved.version+": lead предложит соглашение"):what,PV.taskId);
     PV.comments=[];PV.edited=false;PV.answered=false;PV.pick=null;PV.diagram=null;PV.plan=r.plan;PV.pending=false;
     const last=r.plan.versions.at(-1);if(last&&last.n!==v)await loadPlanVersion(last.n);else{PV.mode="view";planSay({type:"mode",mode:"view"});renderPlanSide()}await tick()}
   catch(e){PV.pending=false;PV.error="Не отправлено: "+e.message;renderPlanSide()}}
@@ -840,7 +844,8 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
     PV.comments.forEach(c=>{const r=el("div","pitem");r.append(el("div","muted",c.target),...(c.quote?[el("div","pquote","«"+c.quote+"»")]:[]),el("div","",c.text));
       const x=el("button","ghost small","×");x.type="button";x.title="убрать";x.onclick=()=>{PV.comments=PV.comments.filter(y=>y!==c);renderPlanSide()};r.append(x);l.append(r)});side.append(l)}
   if(PV.edited&&can)side.append(el("div","note","Есть правки: они уйдут lead'у и сохранятся новой версией плана."));
-  if(planDirty()&&can)side.append(el("div","muted small","«"+W.approve+"» станет доступно, когда lead посмотрит ваши замечания и правки и пришлёт новую версию."));
+  if(can&&(last&&last.stage==="input"?PV.edited:planDirty()))side.append(el("div","muted small","«"+W.approve+"» станет доступно, когда lead посмотрит ваши "+(last&&last.stage==="input"?"правки":"замечания и правки")+" и пришлёт новую версию."));
+  else if(can&&last&&last.stage==="input"&&PV.comments.length)side.append(el("div","muted small","Замечания уйдут lead'у вместе с «"+W.approve+"»: он задаст по ним вопросы на допросе."));
   const fb=p?p.feedback:[];if(fb.length){const d=el("details","phist");d.append(el("summary","muted","История отзывов ("+fb.length+")"));
     fb.slice().reverse().forEach(f=>{const r=el("div","pitem");r.append(el("div","muted",time(f.at).slice(0,5)+" · v"+f.onVersion+(f.withApproval?" · с утверждением":" · раунд "+f.round)+(f.savedAs?" → правки в v"+f.savedAs:"")));
       f.comments.forEach(c=>r.append(el("div","","• "+c.target+": "+c.text)));f.edits.forEach(x=>r.append(el("div","mono",x.kind==="diagram"?"схема изменена":!x.before?"+ "+x.after:!x.after?"− "+x.before:x.before+" → "+x.after)));f.answers.forEach(a=>r.append(el("div","","? "+a.question+": "+a.value.join(", "))));d.append(r)});side.append(d)}
@@ -887,8 +892,10 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
     const no=el("button","ghost small","Отмена");no.type="button";no.onclick=()=>{PV.confirm=null;renderPlanSide()};q.append(yes," ",no);side.append(q)}
   if(can){const bar=el("div","checks pactions");const send=el("button","",PV.pending?"…":W.send);send.type="button";send.disabled=PV.pending||!PV.ready||!planHasNotes();
     if(!planHasNotes())send.title="Нечего отправлять: добавьте замечание, правку или ответ на вопрос";send.onclick=()=>planAsk(false);
-    const revising=t&&t.plan&&t.plan.status==="revising";
-    const ap=el("button",planDirty()||revising?"ghost":"",PV.pending?"…":W.approve+" v"+PV.version);ap.type="button";ap.disabled=PV.pending||!PV.ready||planDirty()||revising;
+    // the analysts' input page: notes are grilling questions, they go along with «Посмотрел» (only in-place edits wait for the lead)
+    const viewOnly=last&&last.stage==="input";const blocked=viewOnly?PV.edited:planDirty();
+    const revising=!viewOnly&&t&&t.plan&&t.plan.status==="revising";
+    const ap=el("button",blocked||revising?"ghost":"",PV.pending?"…":W.approve+" v"+PV.version);ap.type="button";ap.disabled=PV.pending||!PV.ready||blocked||revising;
     if(revising)ap.title="Lead смотрит ваш отзыв: утвердите версию, которую он пришлёт (если менять нечего, он пришлёт ту же страницу с пояснением)";
     else if(planDirty())ap.title="Сначала отправьте замечания и правки lead'у: он посмотрит, доработает план и пришлёт новую версию — её и утвердите";ap.onclick=()=>planAsk(true);bar.append(send,ap);side.append(bar)}}
 
