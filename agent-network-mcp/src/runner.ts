@@ -166,7 +166,7 @@ export interface RunnerOptions {
   /** Read before every session and put where the command has {systemPrompt} (e.g. --system-prompt "{systemPrompt}"). */
   systemPromptFile?: string;
   /** Put where the command has {model}. A function is asked before every session, so a change applies to the next one. */
-  model?: string | (() => string | undefined);
+  model?: string | ((task?: Task) => string | undefined);
   /** Skills switched off for this agent, asked before every session: the hook "pre-skill" refuses them, the prompt names them. */
   disabledSkills?: () => readonly string[];
   /** Extra sessions for one task after the first before the runner gives up until the task changes. Default 3. */
@@ -374,7 +374,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       continue;
     }
 
-    const model = usesModel(opts.command) ? (typeof opts.model === "function" ? opts.model() : opts.model) : undefined;
+    const model = usesModel(opts.command) ? (typeof opts.model === "function" ? opts.model(task) : opts.model) : undefined;
     if (usesModel(opts.command) && !model) {
       say("the command has {model} but no model is set; waiting");
       await sleep(pollMs, signal);

@@ -70,4 +70,30 @@ describe("skills switched off for an agent", () => {
     expect(saved.agents).toEqual([{ id: "backend", disabledSkills: ["grilling", "java-spec-intake"] }, { id: "reviewer" }]);
     expect((await loadRunnersConfig(configPath)).agents[0]!.disabledSkills).toEqual(["grilling", "java-spec-intake"]); // survives a restart
   });
+
+describe("a model for change-writing tasks", () => {
+  it("proposeModel is used for sessions of a task that writes a change, model for the others", async () => {
+    const dir = await tmpDir();
+    const configPath = join(dir, "runners.json");
+    await writeFile(configPath, JSON.stringify({ defaults: { command: ["x", "--model", "{model}", "{prompt}"], model: "haiku" }, agents: [{ id: "reviewer", proposeModel: "sonnet" }, { id: "backend" }] }));
+    const config = await loadRunnersConfig(configPath);
+    const given: Record<string, (task?: object) => string | undefined> = {};
+    const pool = new RunnerPool(join(dir, ".agent-network"), config.agents, {
+      run: (o) => {
+        given[o.agent] = o.model as (task?: object) => string | undefined;
+        return new Promise((r) => o.signal!.addEventListener("abort", () => r(0)));
+      },
+    });
+    pool.start("reviewer");
+    pool.start("backend");
+    expect(given.reviewer!({ proposes: { change: "x" } })).toBe("sonnet");
+    expect(given.reviewer!({})).toBe("haiku");
+    expect(given.backend!({ proposes: { change: "x" } })).toBe("haiku");
+    expect(pool.list().find((v) => v.id === "reviewer")!.proposeModel).toBe("sonnet");
+    await pool.stop("reviewer");
+    await pool.stop("backend");
+    await writeFile(configPath, JSON.stringify({ agents: [{ id: "a", command: ["x"], proposeModel: "two words" }] }));
+    await expect(loadRunnersConfig(configPath)).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.stringContaining("proposeModel") });
+  });
+});
 });

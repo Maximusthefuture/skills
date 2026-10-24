@@ -43,6 +43,11 @@ export interface RunnerAgentConfig {
   systemPromptFile?: string;
   /** Put where the command has {model}; the UI can change it (applies from the next session). */
   model?: string;
+  /**
+   * The model for sessions of a task that writes an OpenSpec change (task create --propose): a stronger reviewer of the
+   * change while the code is written on a cheaper one. Default: model.
+   */
+  proposeModel?: string;
   /** The choice offered on the page. */
   models?: string[];
   maxRestarts?: number;
@@ -264,6 +269,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     if (!Array.isArray(merged.command) || merged.command.length === 0 || !merged.command.every((c) => typeof c === "string")) {
       throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" needs "command": the agent CLI as an array, e.g. ["qwen", "{prompt}", "-m", "qwen/qwen3.5-9b"]`);
     }
+    if (merged.proposeModel !== undefined && !isValidModel(merged.proposeModel)) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" proposeModel ${JSON.stringify(merged.proposeModel)}: a model name without spaces, not starting with "-"`);
     if (merged.model !== undefined && !isValidModel(merged.model)) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" model ${JSON.stringify(merged.model)}: a model name without spaces, not starting with "-"`);
     if (merged.models !== undefined && (!Array.isArray(merged.models) || !merged.models.every(isValidModel))) {
       throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" "models" must be a list of model names`);
@@ -297,6 +303,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
       ...(instructionsFile ? { instructionsFile } : {}),
       ...(systemPromptFile ? { systemPromptFile } : {}),
       ...(merged.model ? { model: merged.model } : {}),
+      ...(merged.proposeModel ? { proposeModel: merged.proposeModel } : {}),
       ...(merged.models?.length ? { models: [...new Set(merged.models)] } : {}),
       ...(merged.maxRestarts !== undefined ? { maxRestarts: Number(merged.maxRestarts) } : {}),
       ...(freshPhases.length ? { freshPhases } : {}),
@@ -627,6 +634,8 @@ export interface RunnerView {
   spawned: { taskId: string; template: string } | null;
   /** Skills this agent may not load (from its next session). */
   disabledSkills: string[];
+  /** Its model in tasks that write an OpenSpec change, when it differs. */
+  proposeModel: string | null;
 }
 
 export interface RunnerDetails extends RunnerView {
@@ -707,6 +716,7 @@ export class RunnerPool {
       session: m.session,
       spawned: m.spawnedFor ?? null,
       disabledSkills: m.config.disabledSkills ?? [],
+      proposeModel: m.config.proposeModel ?? null,
     }));
   }
 
@@ -844,7 +854,7 @@ export class RunnerPool {
       ...(m.config.promptFile ? { promptFile: m.config.promptFile } : {}),
       ...(m.config.instructionsFile ? { instructionsFile: m.config.instructionsFile } : {}),
       ...(m.config.systemPromptFile ? { systemPromptFile: m.config.systemPromptFile } : {}),
-      model: () => m.config.model,
+      model: (task) => (task?.proposes && m.config.proposeModel) || m.config.model,
       disabledSkills: () => m.config.disabledSkills ?? [],
       onSession: (session) => {
         m.session = session;

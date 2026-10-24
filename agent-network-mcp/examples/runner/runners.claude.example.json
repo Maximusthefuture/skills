@@ -26,6 +26,7 @@
     "PreToolUse hook pre-bash: refuses git flags that write files or run programs (git diff --output=..., --ext-diff, --textconv), which an allow rule like Bash(git diff:*) would let through.",
     "PreToolUse hook pre-write (and pre-bash for shell commands): in a task that writes an OpenSpec change, nothing outside openspec/changes/<name>/ may be written, edited or deleted (a haiku lead once wrote the code and rm'ed failing tests there).",
     "PreToolUse hook pre-skill: refuses a skill switched off for the agent (\"disabledSkills\": [\"java-tdd\", \"backend-design-java:*\"] in an agent or in defaults, or the Скиллы агентов table on the page). The runner also names them in the prompt. Applies from the next session.",
+    "proposeModel: the agent's model in tasks that write an OpenSpec change (here the reviewer of the change runs on sonnet even when \"model\" is haiku: on haiku it passed changes without a finding).",
     "withoutTools: built-in tools a role never uses, taken out of its command (reviewer and tester: no subagents, no skills). Every tool description is read again on every turn, so this saves tokens in every turn of that agent.",
     "maxContextTokens: a session whose context grew past this many tokens ends after its current tool call and a fresh one goes on from the subtasks and git, as after the turn limit (every turn reads the whole context again). Claude Code reports the size in stream-json."
   ],
@@ -93,6 +94,7 @@
     {
       "id": "reviewer",
       "instructionsFile": "instructions/reviewer.md",
+      "proposeModel": "sonnet",
       "withoutTools": [
         "Agent"
       ]

@@ -1237,7 +1237,7 @@ function renderControl(s){
     c.cmd.textContent=r.command;c.cmd.title=r.command;
     miniFeed(r.id,c.feed);
     c.modelHint.textContent=r.model&&r.models.length<2?"Список моделей для выбора — поле \"models\" в runners.json (в defaults или у агента).":"";c.modelHint.hidden=!c.modelHint.textContent;
-    c.modelState.textContent=r.model?"модель: "+r.model:"модель: задана в command (поставьте {model} в command и \"model\" в runners.json, чтобы выбирать здесь)";c.modelForm.hidden=!r.model;
+    c.modelState.textContent=r.model?"модель: "+r.model+(r.proposeModel&&r.proposeModel!==r.model?" · в задачах «написать change»: "+r.proposeModel:""):"модель: задана в command (поставьте {model} в command и \"model\" в runners.json, чтобы выбирать здесь)";c.modelForm.hidden=!r.model;
     const msig=r.models.join("|")+"#"+(r.model||"");
     if(r.model&&document.activeElement!==c.modelSel&&c.modelSel.dataset.server!==msig){c.modelSel.replaceChildren(...r.models.map(m=>new Option(m,m)),new Option("другая…","__other__"));c.modelSel.value=r.model;c.modelSel.dataset.server=msig}
     c.instState.className="note line"+(r.instructions&&r.instructions.error?" err":"");
