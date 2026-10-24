@@ -25,6 +25,8 @@ export interface SessionResult {
   stopReason?: "max_turns";
   /** The session's final text (the result event), shortened. */
   text?: string;
+  /** No result event (the session was stopped, e.g. at the context limit): usage is the sum of its messages so far. */
+  partial?: true;
 }
 
 /**
@@ -132,6 +134,7 @@ export class SessionOutput {
   private partial = "";
   private raw = "";
   private found: SessionResult | undefined;
+  private readonly usageByMessage = new Map<string, TokenUsage>();
   private model: string | undefined;
   private session: string | undefined;
   /** tool_use id -> its tool and when it was called, to name and time the result. */
@@ -181,7 +184,18 @@ export class SessionOutput {
   }
 
   result(): SessionResult | undefined {
-    return this.found ? { ...this.found, ...(this.model && !this.found.model ? { model: this.model } : {}) } : undefined;
+    if (this.found) return { ...this.found, ...(this.model && !this.found.model ? { model: this.model } : {}) };
+    // stopped before its result event (the runner ends a session at the context limit): what its messages used so far
+    const usage = this.partialUsage();
+    return usage ? { usage, partial: true, ...(this.model ? { model: this.model } : {}) } : undefined;
+  }
+
+  /** Tokens of every model call so far (the session's and its subagents'), each message once. */
+  partialUsage(): TokenUsage | undefined {
+    if (!this.usageByMessage.size) return undefined;
+    const sum: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
+    for (const u of this.usageByMessage.values()) for (const k of Object.keys(sum) as (keyof TokenUsage)[]) sum[k] += u[k];
+    return sum;
   }
 
   private line(line: string): string | null {
@@ -251,8 +265,12 @@ export class SessionOutput {
           return `[session] model ${ev.model}\n`;
         }
         return null;
-      case "assistant":
+      case "assistant": {
         this.assistantActivity(ev.message, typeof ev.parent_tool_use_id === "string");
+        // every content block comes as its own event with the message's usage: count each message once
+        const m = ev.message as { id?: string; usage?: unknown } | undefined;
+        const mu = normalizeUsage(m?.usage);
+        if (mu) this.usageByMessage.set(m?.id ?? `n${this.usageByMessage.size}`, mu);
         // the session's own turns (not a subagent's): how big its context has grown
         const u = (ev.message as { usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } } | undefined)?.usage;
         if (u && typeof ev.parent_tool_use_id !== "string") {
@@ -263,6 +281,7 @@ export class SessionOutput {
           }
         }
         return typeof ev.parent_tool_use_id === "string" ? null : assistantText(ev.message); // the log shows the session itself; the feed shows both
+      }
       case "user":
         this.toolResults(ev.message, typeof ev.parent_tool_use_id === "string");
         return null;

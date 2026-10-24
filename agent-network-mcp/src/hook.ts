@@ -6,6 +6,8 @@ import { isHandedOver } from "./handoff.js";
 import { isParked } from "./park.js";
 import { skillOf } from "./sessionOutput.js";
 import { disabledFromEnv, isDisabled } from "./skills.js";
+import { changeOnlyReason, outsideChange, shellWrites, type ChangeScope } from "./changeGuard.js";
+import { changePath } from "./openspec.js";
 import { openFileRequests } from "./mcp/swarm.js";
 import { pickNetworkDir } from "./networkDir.js";
 import { FileStore } from "./storage/fileStore.js";
@@ -257,6 +259,45 @@ export function preSkillDecision(toolName: string, toolInput: unknown, disabled:
   return denyHook(`The operator switched the skill "${skill}" off for you (skills off: ${disabled.join(", ")}). Do not load it and do not read its files; do that part of the work without it, or ask the operator with send_message if you cannot.`);
 }
 
+/**
+ * The change folder this session may write when its task writes an OpenSpec change (null: any other task, or no network).
+ * A runner's session names its task (AGENT_NETWORK_TASK_ID); an interactive one is found by its agent's active tasks.
+ */
+export async function changeScopeOf(env: NodeJS.ProcessEnv, cwd: string, deps: HookDeps = defaultHookDeps): Promise<ChangeScope | null> {
+  const networkDir = pickNetworkDir(undefined, env, cwd).dir;
+  if (!networkDir || !existsSync(networkDir)) return null;
+  const fs = await FileStore.open(resolve(networkDir));
+  const store = new TaskStore(fs);
+  let tasks: Task[];
+  if (env.AGENT_NETWORK_RUNNER === "1" && env.AGENT_NETWORK_TASK_ID) {
+    const t = await store.find(env.AGENT_NETWORK_TASK_ID).catch(() => null);
+    tasks = t ? [t] : [];
+  } else {
+    const agent = env.AGENT_ID && !env.AGENT_ID.includes(",") ? env.AGENT_ID : resolveAgentByProcess(deps.processTable(), deps.selfPid, await new AgentStore(fs).list(), deps.isProcessAlive);
+    tasks = agent ? await store.listForAgent(agent) : [];
+  }
+  const t = tasks.find((x) => x.status === "ACTIVE" && x.phase !== "DONE" && x.proposes);
+  return t?.proposes ? { change: t.proposes.change, dir: changePath(t.proposes.change) } : null;
+}
+
+/** pre-write: a file tool (Write, Edit, MultiEdit, NotebookEdit, write_file, replace…) on a file outside the change folder. */
+export function preWriteDecision(toolInput: unknown, cwd: string, scope: ChangeScope | null): ReturnType<typeof denyHook> | null {
+  if (!scope) return null;
+  const i = (toolInput && typeof toolInput === "object" ? toolInput : {}) as Record<string, unknown>;
+  const path = [i.file_path, i.absolute_path, i.path, i.notebook_path].find((v) => typeof v === "string") as string | undefined;
+  const out = path ? outsideChange([path], cwd, scope) : [];
+  return out.length ? denyHook(changeOnlyReason(scope, `${out[0]} is outside it`)) : null;
+}
+
+/** A shell command that writes outside the change folder in a change-writing task (rm, mv, sed -i, git checkout, > …). */
+export function shellChangeDecision(command: string, cwd: string, scope: ChangeScope | null): ReturnType<typeof denyHook> | null {
+  if (!scope) return null;
+  const w = shellWrites(command);
+  if (w.whole) return denyHook(changeOnlyReason(scope, `"${w.whole}" changes files outside it`));
+  const out = outsideChange(w.paths, cwd, scope);
+  return out.length ? denyHook(changeOnlyReason(scope, `the command writes ${out.slice(0, 3).join(", ")}${out.length > 3 ? ` and ${out.length - 3} more` : ""}`)) : null;
+}
+
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";
   const chunks: Buffer[] = [];
@@ -266,9 +307,20 @@ async function readStdin(): Promise<string> {
 
 /** `agent-network-mcp hook <post-tool|stop> [--network-dir <abs>] [--agent <id>]`; always exits 0. */
 export async function runHookCli(mode: string | undefined, args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, stdin: () => Promise<string> = readStdin, cwd: string = process.cwd()): Promise<number> {
-  if (mode !== "post-tool" && mode !== "stop" && mode !== "pre-shell" && mode !== "pre-bash" && mode !== "pre-skill") {
-    out("Usage: agent-network-mcp hook <post-tool|stop|pre-shell|pre-bash|pre-skill> [--network-dir <abs path>] [--agent <id>]");
+  if (mode !== "post-tool" && mode !== "stop" && mode !== "pre-shell" && mode !== "pre-bash" && mode !== "pre-skill" && mode !== "pre-write") {
+    out("Usage: agent-network-mcp hook <post-tool|stop|pre-shell|pre-bash|pre-skill|pre-write> [--network-dir <abs path>] [--agent <id>]");
     return 2;
+  }
+  if (mode === "pre-write") {
+    try {
+      const input = JSON.parse((await stdin()) || "{}") as { tool_input?: unknown; cwd?: unknown };
+      const dir = typeof input.cwd === "string" ? input.cwd : cwd;
+      const decision = preWriteDecision(input.tool_input, dir, await changeScopeOf(env, dir));
+      if (decision) out(JSON.stringify(decision));
+    } catch {
+      // never break the agent's session
+    }
+    return 0;
   }
   if (mode === "pre-skill") {
     try {
@@ -282,9 +334,12 @@ export async function runHookCli(mode: string | undefined, args: string[], env: 
   }
   if (mode === "pre-shell" || mode === "pre-bash") {
     try {
-      const input = JSON.parse((await stdin()) || "{}") as { tool_input?: { command?: unknown } };
+      const input = JSON.parse((await stdin()) || "{}") as { tool_input?: { command?: unknown }; cwd?: unknown };
       const decide = mode === "pre-bash" ? preBashDecision : preShellDecision;
-      const decision = typeof input.tool_input?.command === "string" ? decide(input.tool_input.command) : null;
+      const command = input.tool_input?.command;
+      const dir = typeof input.cwd === "string" ? input.cwd : cwd;
+      // the command's own rules first; in a change-writing task, nothing written outside the change folder
+      const decision = typeof command === "string" ? (decide(command) ?? shellChangeDecision(command, dir, await changeScopeOf(env, dir))) : null;
       if (decision) out(JSON.stringify(decision));
     } catch {
       // never break the agent's session

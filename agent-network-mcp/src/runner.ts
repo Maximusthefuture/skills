@@ -5,7 +5,7 @@ import { isHandedOver } from "./handoff.js";
 import { isParked, lastPark } from "./park.js";
 import { progressMark, uncommittedCount, workBrief } from "./progress.js";
 import { NetworkService } from "./service.js";
-import { SessionOutput, type ActivityItem, type SessionResult } from "./sessionOutput.js";
+import { SessionOutput, type ActivityItem, type SessionResult, type TokenUsage } from "./sessionOutput.js";
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore, defaultIsProcessAlive } from "./stores/agentStore.js";
 import { MessageStore } from "./stores/messageStore.js";
@@ -284,6 +284,24 @@ async function readText(path: string, what: string, log: (l: string) => void): P
 }
 
 /** Returns 0 when stopped by the signal or after --once finished the task, 1 when --once gave up. */
+/** Relative price of each kind of token (input 1): the same proportions across the Claude models. */
+const TOKEN_WEIGHTS = { output: 5, cacheRead: 0.1, cacheCreation: 1.25 };
+const weighted = (u: TokenUsage): number =>
+  Math.max(0, u.input - u.cacheRead - u.cacheCreation) + TOKEN_WEIGHTS.output * u.output + TOKEN_WEIGHTS.cacheRead * u.cacheRead + TOKEN_WEIGHTS.cacheCreation * u.cacheCreation;
+
+/**
+ * The cost of a session stopped before its CLI reported it (the context limit): its tokens at the rate the same model
+ * cost in sessions that did report it. Undefined without such a session to learn from.
+ */
+export function estimateCost(usage: TokenUsage, known: { usage: TokenUsage; costUsd: number }[]): number | undefined {
+  const w = known.reduce((a, k) => a + weighted(k.usage), 0);
+  const usd = known.reduce((a, k) => a + k.costUsd, 0);
+  if (!w || !usd) return undefined;
+  return Math.round((weighted(usage) * usd) / w * 10_000) / 10_000;
+}
+
+const sameModel = (a: string | undefined, b: string | undefined): boolean => !!a && !!b && (a.includes(b) || b.includes(a));
+
 export async function runRunner(opts: RunnerOptions): Promise<number> {
   const { agent, signal } = opts;
   const log = opts.log ?? ((l: string) => process.stderr.write(`[runner ${agent}] ${l}\n`));
@@ -297,6 +315,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
   const agents = new AgentStore(fs);
   const messages = new MessageStore(fs);
   const sessions = new SessionStore(fs);
+  /** What this runner's sessions cost per model, to price a session stopped before its CLI reported the cost. */
+  const learnedCost: { model: string | undefined; usage: TokenUsage; costUsd: number }[] = [];
   const turnLimit = turnLimitOf(opts.command);
 
   const attempts = new Map<string, number>();
@@ -481,12 +501,21 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
                 : code === 0
                   ? ("ended" as const)
                   : ("failed" as const);
+    // a session ended before its CLI reported the cost (the context limit): its tokens at the rate of this model's other sessions
+    const sessionModel = result?.model ?? model;
+    let estimated: number | undefined;
+    if (result?.partial && result.usage && result.costUsd === undefined) {
+      const known = [...(await sessions.list(task.id).catch(() => [] as Awaited<ReturnType<typeof sessions.list>>))
+        .filter((s) => s.costUsd !== undefined && !s.costEstimated && s.usage && sameModel(s.model, sessionModel))
+        .map((s) => ({ usage: s.usage!, costUsd: s.costUsd! })), ...learnedCost.filter((k) => sameModel(k.model, sessionModel))];
+      estimated = estimateCost(result.usage, known);
+    } else if (result?.usage && result.costUsd !== undefined) learnedCost.push({ model: sessionModel, usage: result.usage, costUsd: result.costUsd });
     await sessions
       .create({
         taskId: task.id, agentId: agent, attempt, startedAt: startedAt.toISOString(), endedAt: endedAt.toISOString(),
         durationMs: endedAt.getTime() - startedAt.getTime(), exitCode: code,
         ...(result?.usage ? { usage: result.usage } : {}),
-        ...(result?.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
+        ...(result?.costUsd !== undefined ? { costUsd: result.costUsd } : estimated !== undefined ? { costUsd: estimated, costEstimated: true as const } : {}),
         ...(result?.numTurns !== undefined ? { numTurns: result.numTurns } : {}),
         ...(result?.model || model ? { model: result?.model ?? model } : {}), // what the CLI reported, else what it was asked for
         ...(skills.length ? { skills } : {}),

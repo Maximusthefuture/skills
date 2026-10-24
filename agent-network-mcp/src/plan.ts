@@ -109,7 +109,7 @@ export function applyEdits(html: string, edits: { find: string; replace: string 
     if (typeof e.find !== "string" || !e.find) throw new AppError("INVALID_INPUT", `edits[${i}].find must be the exact text to replace`);
     if (typeof e.replace !== "string") throw new AppError("INVALID_INPUT", `edits[${i}].replace must be a string ("" removes the text)`);
     const at = out.indexOf(e.find);
-    if (at < 0) throw new AppError("INVALID_INPUT", `edits[${i}].find is not in the current plan (${JSON.stringify(e.find.slice(0, 80))}): read it with plan({read: true}) (or plan({read: true, around: "<a few words>"}) for a big page) and copy the text exactly, or send the whole page as html`);
+    if (at < 0) throw new AppError("INVALID_INPUT", `edits[${i}].find is not in the current page (${JSON.stringify(e.find.slice(0, 80))}) — copy it from the page's HTML, not from a markdown file: read it with plan({read: true}) (or plan({read: true, around: "<a few words>"}) for a big page) and copy the text exactly, or send the whole page as html`);
     if (out.indexOf(e.find, at + 1) >= 0) throw new AppError("INVALID_INPUT", `edits[${i}].find occurs more than once (${JSON.stringify(e.find.slice(0, 80))}): include more of the surrounding text`);
     out = out.slice(0, at) + e.replace + out.slice(at + e.find.length);
   });

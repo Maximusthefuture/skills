@@ -30,7 +30,7 @@ export function costOf(usage: TokenUsage, p: ModelPrice): number {
 
 /** A session's cost: what the CLI reported, else its tokens at the operator's price; undefined when neither is known. */
 export function sessionCost(s: SessionRecord, prices: Prices | undefined): { usd?: number; estimated: boolean } {
-  if (s.costUsd !== undefined) return { usd: s.costUsd, estimated: false };
+  if (s.costUsd !== undefined) return { usd: s.costUsd, estimated: !!s.costEstimated };
   const price = s.usage ? priceFor(s.model, prices) : undefined;
   return price && s.usage ? { usd: costOf(s.usage, price), estimated: true } : { estimated: false };
 }
