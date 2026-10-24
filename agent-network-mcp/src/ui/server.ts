@@ -395,10 +395,10 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       if (path === "/api/skills") {
         // the skills installed for the agents and which agent has which switched off (runners.json "disabledSkills")
         if (!p.pool) return json(200, { skills: [], agents: [] });
-        const agents = p.pool.list().map((r) => ({ id: r.id, disabled: r.disabledSkills, spawned: !!r.spawned }));
+        const agents = p.pool.list().map((r) => ({ id: r.id, disabled: r.disabledSkills, byTask: r.disabledSkillsByTask, spawned: !!r.spawned }));
         const known = await p.pool.skills(p.projectDir);
         // a skill switched off but not installed (anymore) still shows, so it can be switched on again
-        for (const name of new Set(agents.flatMap((a) => a.disabled))) if (!known.some((k) => k.name === name)) known.push({ name, description: "", sources: [] });
+        for (const name of new Set(agents.flatMap((a) => [...a.disabled, ...Object.values(a.byTask).flat()]))) if (!known.some((k) => k.name === name)) known.push({ name, description: "", sources: [] });
         return json(200, { skills: known, agents });
       }
       if (path === "/api/roles") {

@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { preSkillDecision, runHookCli } from "../../src/hook.js";
-import { disabledFromEnv, isDisabled, listSkills } from "../../src/skills.js";
+import { disabledFromEnv, isDisabled, listSkills, sessionDisabledSkills, withSkillOverrides } from "../../src/skills.js";
 import { loadRunnersConfig, RunnerPool } from "../../src/ui/runners.js";
 import { tmpDir } from "../helpers/tmp.js";
 
@@ -96,4 +96,61 @@ describe("a model for change-writing tasks", () => {
     await expect(loadRunnersConfig(configPath)).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.stringContaining("proposeModel") });
   });
 });
+});
+
+describe("skills off by kind of task, hidden from Claude Code's list", () => {
+  it("a task that writes a change and a code task each get their own list on top of the agent's", () => {
+    const byTask = { propose: ["java-tdd", "java-code-review"], code: ["java-spec-intake"] };
+    expect(sessionDisabledSkills(["grilling"], byTask, { proposes: { change: "x" } })).toEqual(["grilling", "java-tdd", "java-code-review"]);
+    expect(sessionDisabledSkills(["grilling"], byTask, {})).toEqual(["grilling", "java-spec-intake"]);
+    expect(sessionDisabledSkills(["java-tdd"], { propose: ["java-tdd"] }, { proposes: {} })).toEqual(["java-tdd"]);
+    expect(sessionDisabledSkills([], undefined, undefined)).toEqual([]);
+  });
+
+  it("skillOverrides go into the inline --settings JSON, keeping its hooks; a bare claude gets its own --settings", () => {
+    const hooks = { hooks: { Stop: [{ hooks: [{ type: "command", command: "node x hook stop" }] }] } };
+    const cmd = ["claude", "-p", "{prompt}", "--settings", JSON.stringify(hooks), "--model", "{model}"];
+    const { command, hidden } = withSkillOverrides(cmd, ["java-tdd", "backend-design-java:migration-safety"]);
+    expect(hidden).toBe(true);
+    expect(JSON.parse(command[4]!)).toEqual({ ...hooks, skillOverrides: { "java-tdd": "off", "backend-design-java:migration-safety": "off" } });
+    expect(command.filter((a) => a === "--settings")).toHaveLength(1);
+    expect(cmd[4]).toBe(JSON.stringify(hooks)); // the agent's command itself is not changed
+    const own = withSkillOverrides(["claude", "--settings", JSON.stringify({ skillOverrides: { grilling: "off" } })], ["java-tdd"]);
+    expect(JSON.parse(own.command[2]!).skillOverrides).toEqual({ grilling: "off", "java-tdd": "off" });
+    const bare = withSkillOverrides(["/usr/local/bin/claude", "-p", "{prompt}"], ["java-tdd"]);
+    expect(bare.command.slice(0, 3)).toEqual(["/usr/local/bin/claude", "--settings", JSON.stringify({ skillOverrides: { "java-tdd": "off" } })]);
+    expect(bare.hidden).toBe(true);
+    expect(withSkillOverrides(cmd, [])).toEqual({ command: cmd, hidden: true });
+  });
+
+  it("not hidden (the prompt names them, the hook refuses them): a plugin:* mask, a settings file, another CLI", () => {
+    const mask = withSkillOverrides(["claude", "--settings", "{}"], ["java-tdd", "backend-design-java:*"]);
+    expect(mask.hidden).toBe(false);
+    expect(JSON.parse(mask.command[2]!).skillOverrides).toEqual({ "java-tdd": "off" });
+    expect(withSkillOverrides(["claude", "--settings", "/etc/agent.json"], ["java-tdd"])).toEqual({ command: ["claude", "--settings", "/etc/agent.json"], hidden: false });
+    expect(withSkillOverrides(["qwen", "{prompt}"], ["java-tdd"])).toEqual({ command: ["qwen", "{prompt}"], hidden: false });
+    expect(withSkillOverrides(["claude", "--settings", "{not json"], ["java-tdd"]).hidden).toBe(false);
+  });
+
+  it("runners.json: disabledSkillsByTask in defaults reaches the runner per task; a wrong kind is refused", async () => {
+    const dir = await tmpDir();
+    const configPath = join(dir, "runners.json");
+    await writeFile(configPath, JSON.stringify({ defaults: { command: ["claude", "{prompt}"], disabledSkillsByTask: { propose: ["java-tdd"], code: ["java-spec-intake"] } }, agents: [{ id: "backend", disabledSkills: ["grilling"] }] }));
+    const config = await loadRunnersConfig(configPath);
+    expect(config.agents[0]!.disabledSkillsByTask).toEqual({ propose: ["java-tdd"], code: ["java-spec-intake"] });
+    let given: ((task?: object) => readonly string[]) | undefined;
+    const pool = new RunnerPool(join(dir, ".agent-network"), config.agents, {
+      run: (o) => {
+        given = o.disabledSkills as (task?: object) => readonly string[];
+        return new Promise((r) => o.signal!.addEventListener("abort", () => r(0)));
+      },
+    });
+    pool.start("backend");
+    expect(given!({ proposes: { change: "x" } })).toEqual(["grilling", "java-tdd"]);
+    expect(given!({})).toEqual(["grilling", "java-spec-intake"]);
+    expect(pool.list()[0]!.disabledSkillsByTask).toEqual({ propose: ["java-tdd"], code: ["java-spec-intake"] });
+    await pool.stop("backend");
+    await writeFile(configPath, JSON.stringify({ agents: [{ id: "a", command: ["x"], disabledSkillsByTask: { review: ["java-tdd"] } }] }));
+    await expect(loadRunnersConfig(configPath)).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.stringContaining("disabledSkillsByTask") });
+  });
 });

@@ -841,7 +841,8 @@ node dist/index.js run --agent backend --network-dir <dir> [--cwd <dir>] [--once
   уже входит их выход), — с пометкой «оценка»; так цену получает и первая остановленная сессия задачи.
 - `plan({read: true})` отдаёт страницу плана целиком, только если она до 24k символов. Большую страницу lead получает
   как список заголовков и читает по частям (`around`), чтобы она не оставалась в контексте до конца сессии.
-- `disabledSkills` (у агента или в `defaults`): скиллы, которые агенту нельзя загружать, — подробнее в
+- `disabledSkills` (у агента или в `defaults`): скиллы, которые агенту нельзя загружать; `disabledSkillsByTask` — то
+  же только в задачах одного типа (`propose` / `code`). Подробнее — в
   [Скиллы агентов](#скиллы-агентов-включить-и-выключить).
 - `withoutTools` (в примере у reviewer — `["Agent"]`, у tester — `["Agent", "Skill"]`): встроенные инструменты, которыми
   роль не пользуется, убираются из команды; описание каждого инструмента перечитывается на каждом ходе. `Skill` у reviewer
@@ -1510,10 +1511,27 @@ runner'а скиллы не нужны: всё это приходит в `swarm
 Выключенные скиллы пишутся в `runners.json` (`"disabledSkills": ["java-tdd", "backend-design-java:*"]` у агента; в
 `defaults` — всем) и действуют со следующей сессии:
 
-- runner называет их в промпте («Skills the operator switched off for you: …»), чтобы агент не тратил ход на отказ;
-- runner передаёт список сессии (`AGENT_NETWORK_DISABLED_SKILLS`), и хук `PreToolUse` `hook pre-skill` отклоняет
-  вызов `Skill` и чтение `SKILL.md` такого скилла. В примере для Claude хук стоит в `--settings` (matcher `Skill`), для
-  Qwen — в [`examples/qwen-hooks/settings.json`](examples/qwen-hooks/settings.json) (`skill` и `read_file`).
+- **Claude Code их не видит вовсе.** Runner дописывает в JSON команды после `--settings` (в примере там хуки)
+  `"skillOverrides": {"java-tdd": "off"}`, и скилл пропадает из списка сессии. Его описание больше не читается на
+  каждом ходе. Отказ хука такого не даёт: отклонённый скилл в списке остаётся. Если у claude нет `--settings`, runner
+  добавляет его сам;
+- иначе runner называет их в промпте («Skills the operator switched off for you: …»), чтобы агент не тратил ход на
+  отказ. Так бывает для Qwen, для `--settings` с путём к файлу и для маски `плагин:*`: её через `skillOverrides` не
+  выключить;
+- в любом случае runner передаёт список сессии (`AGENT_NETWORK_DISABLED_SKILLS`), и хук `PreToolUse` `hook pre-skill`
+  отклоняет вызов `Skill` и чтение `SKILL.md` такого скилла. В примере для Claude хук стоит в `--settings` (matcher
+  `Skill`), для Qwen — в [`examples/qwen-hooks/settings.json`](examples/qwen-hooks/settings.json) (`skill` и `read_file`).
+
+**По типу задачи.** Часть скиллов нужна только в одном типе задач. `disabledSkillsByTask` (у агента или в `defaults`)
+выключает их в остальных, поверх `disabledSkills`:
+
+```json
+"disabledSkillsByTask": { "propose": ["java-tdd", "java-code-review"], "code": ["java-spec-intake"] }
+```
+
+`propose` — задача, которая пишет OpenSpec change (`--propose`): кода там нет, TDD и ревью кода не нужны. `code` — любая
+другая задача: в ней не нужен разбор артефактов аналитиков. Так настроен пример. В таблице на странице у такого скилла
+стоит «без: change» или «без: код», а переключаются эти списки в `runners.json`.
 
 Какие скиллы агент на самом деле загружал, видно в карточке задачи (строка «скиллы: …»). Совсем убрать инструмент
 `Skill` у роли — `withoutTools`.

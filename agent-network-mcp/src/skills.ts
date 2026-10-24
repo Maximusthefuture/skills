@@ -3,9 +3,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Skills the operator switches off for an agent ("disabledSkills" in runners.json, or on the page): the runner tells the
- * session which ones (AGENT_NETWORK_DISABLED_SKILLS and a line in its prompt), and the PreToolUse hook "pre-skill"
- * refuses loading them — Claude Code's Skill tool, or a read of the skill's SKILL.md (CLIs without a Skill tool).
+ * Skills the operator switches off for an agent ("disabledSkills" in runners.json, or on the page), and per kind of task
+ * ("disabledSkillsByTask": {"propose": [...], "code": [...]}): Claude Code does not list them in the session at all
+ * (skillOverrides, see withSkillOverrides); otherwise the runner names them in the prompt. Either way the session gets
+ * them in AGENT_NETWORK_DISABLED_SKILLS, and the PreToolUse hook "pre-skill" refuses loading them — Claude Code's Skill
+ * tool, or a read of the skill's SKILL.md (CLIs without a Skill tool).
  */
 
 export const DISABLED_SKILLS_ENV = "AGENT_NETWORK_DISABLED_SKILLS";
@@ -28,6 +30,49 @@ export function disabledFromEnv(env: NodeJS.ProcessEnv): string[] {
   } catch {
     return [];
   }
+}
+
+/** What a task asks of an agent: "propose" writes an OpenSpec change (task create --propose), "code" is every other task. */
+export type TaskKind = "propose" | "code";
+export const TASK_KINDS: readonly TaskKind[] = ["propose", "code"];
+export type SkillsByTask = Partial<Record<TaskKind, string[]>>;
+
+export const taskKind = (task?: { proposes?: unknown }): TaskKind => (task?.proposes ? "propose" : "code");
+
+/** The skills off in one session: the agent's own list plus the ones off for this kind of task ("disabledSkillsByTask"). */
+export function sessionDisabledSkills(always: readonly string[], byTask: SkillsByTask | undefined, task?: { proposes?: unknown }): string[] {
+  return [...new Set([...always, ...(byTask?.[taskKind(task)] ?? [])])];
+}
+
+/**
+ * Claude Code lists every installed skill with its description in each turn's context; a refused call does not take it
+ * off the list. `"skillOverrides": {"<name>": "off"}` in the session's settings does: the skill is not listed at all. So
+ * the switched-off skills go into the command's inline `--settings` JSON (the examples have one, for the hooks), or into
+ * a new `--settings` when the CLI is claude and has none. `hidden` says whether every skill is off the list this way; a
+ * "plugin:*" mask, a settings file or another CLI cannot do it, and then the prompt names them and the hook refuses them.
+ */
+export function withSkillOverrides(command: string[], off: readonly string[]): { command: string[]; hidden: boolean } {
+  if (!off.length) return { command, hidden: true };
+  const overrides = Object.fromEntries(off.filter((s) => !s.endsWith(":*")).map((s) => [s, "off"]));
+  const allNamed = Object.keys(overrides).length === off.length;
+  if (!Object.keys(overrides).length) return { command, hidden: false };
+  const at = command.indexOf("--settings");
+  if (at >= 0) {
+    const value = command[at + 1]?.trim() ?? "";
+    if (!value.startsWith("{")) return { command, hidden: false };
+    let settings: Record<string, unknown>;
+    try {
+      settings = JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      return { command, hidden: false };
+    }
+    const own = (settings.skillOverrides ?? {}) as Record<string, unknown>;
+    const next = [...command];
+    next[at + 1] = JSON.stringify({ ...settings, skillOverrides: { ...own, ...overrides } });
+    return { command: next, hidden: allNamed };
+  }
+  if (!/(^|[/\\])claude(\.exe|\.cmd)?$/.test(command[0] ?? "")) return { command, hidden: false };
+  return { command: [command[0]!, "--settings", JSON.stringify({ skillOverrides: overrides }), ...command.slice(1)], hidden: allNamed };
 }
 
 /** The line the runner adds to the prompt, so the agent does not try a skill only to be refused. */

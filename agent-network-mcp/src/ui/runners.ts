@@ -13,7 +13,7 @@ import { parseCron } from "../schedule/cron.js";
 import { DEFAULT_RULES, type DetectRules } from "../supervisor/detect.js";
 import { BUILTIN_TOOLS, parseCustomTool, type CustomTool } from "../supervisor/tools.js";
 import { assertAgentId } from "../validation.js";
-import { listSkills, SKILL_NAME, type SkillInfo } from "../skills.js";
+import { listSkills, sessionDisabledSkills, SKILL_NAME, TASK_KINDS, type SkillInfo, type SkillsByTask } from "../skills.js";
 
 /**
  * runners.json — the agents the UI keeps working:
@@ -34,6 +34,11 @@ export interface RunnerAgentConfig {
   withoutTools?: string[];
   /** Skills the agent may not load (see src/skills.ts); the page switches them on and off, from the next session. */
   disabledSkills?: string[];
+  /**
+   * Skills off only in one kind of task, on top of disabledSkills: "propose" (writes an OpenSpec change), "code" (every
+   * other task), e.g. {"propose": ["java-tdd", "java-code-review"], "code": ["java-spec-intake"]}.
+   */
+  disabledSkillsByTask?: SkillsByTask;
   cwd?: string;
   /** File with the whole prompt template ({agent} {taskId} {title} {attempt} {resume}); read before every session. */
   promptFile?: string;
@@ -292,11 +297,19 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
       throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" "disabledSkills" must be a list of skill names, e.g. ["java-tdd", "backend-design-java:migration-safety", "backend-design-java:*"]`);
     }
     const disabledSkills = [...new Set(merged.disabledSkills ?? [])];
+    const byTaskRaw = merged.disabledSkillsByTask as unknown;
+    const isSkillList = (v: unknown) => Array.isArray(v) && v.every((s) => typeof s === "string" && SKILL_NAME.test(s.replace(/:\*$/, ":x")));
+    if (byTaskRaw !== undefined && (typeof byTaskRaw !== "object" || byTaskRaw === null || Array.isArray(byTaskRaw)
+      || !Object.entries(byTaskRaw).every(([k, v]) => (TASK_KINDS as readonly string[]).includes(k) && isSkillList(v)))) {
+      throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" "disabledSkillsByTask" must map ${TASK_KINDS.join(" / ")} to skill names, e.g. {"propose": ["java-tdd"], "code": ["java-spec-intake"]}`);
+    }
+    const disabledSkillsByTask = Object.fromEntries(Object.entries((byTaskRaw ?? {}) as SkillsByTask).filter(([, v]) => v.length).map(([k, v]) => [k, [...new Set(v)]])) as SkillsByTask;
     return {
       id,
       command: withoutTools(merged.command, without),
       ...(without.length ? { withoutTools: without } : {}),
       ...(disabledSkills.length ? { disabledSkills } : {}),
+      ...(Object.keys(disabledSkillsByTask).length ? { disabledSkillsByTask } : {}),
       ...(cwd ? { cwd } : {}),
       ...(worktree ? { worktree } : {}),
       ...(promptFile ? { promptFile } : {}),
@@ -634,6 +647,8 @@ export interface RunnerView {
   spawned: { taskId: string; template: string } | null;
   /** Skills this agent may not load (from its next session). */
   disabledSkills: string[];
+  /** Skills off only in one kind of task (runners.json), shown next to the switches. */
+  disabledSkillsByTask: SkillsByTask;
   /** Its model in tasks that write an OpenSpec change, when it differs. */
   proposeModel: string | null;
 }
@@ -716,6 +731,7 @@ export class RunnerPool {
       session: m.session,
       spawned: m.spawnedFor ?? null,
       disabledSkills: m.config.disabledSkills ?? [],
+      disabledSkillsByTask: m.config.disabledSkillsByTask ?? {},
       proposeModel: m.config.proposeModel ?? null,
     }));
   }
@@ -855,7 +871,7 @@ export class RunnerPool {
       ...(m.config.instructionsFile ? { instructionsFile: m.config.instructionsFile } : {}),
       ...(m.config.systemPromptFile ? { systemPromptFile: m.config.systemPromptFile } : {}),
       model: (task) => (task?.proposes && m.config.proposeModel) || m.config.model,
-      disabledSkills: () => m.config.disabledSkills ?? [],
+      disabledSkills: (task) => sessionDisabledSkills(m.config.disabledSkills ?? [], m.config.disabledSkillsByTask, task),
       onSession: (session) => {
         m.session = session;
       },
