@@ -37,7 +37,7 @@ If the new thing wins all four, adopt it. Usually it does not.
 | Architecture | Modular monolith (packages per module; Spring Modulith to enforce boundaries) | Split a service when a module has its own scaling or team need |
 | Resilience | Timeouts + Resilience4j where needed | Not a service mesh for three services |
 | Observability | Actuator + Micrometer + OpenTelemetry | Built in, standard |
-| Tests | JUnit 5 + Testcontainers Postgres | Same database as prod. Not H2. |
+| Tests | JUnit 5 + Testcontainers Postgres for a new project | Same database as prod. An existing project keeps what its tests already use |
 | Public IDs | UUIDv7 | See [[data-modeling-discipline]] |
 | Deployment | Container on the org's managed platform | Until you measurably outgrow it |
 

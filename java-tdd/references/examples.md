@@ -128,7 +128,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
 ### RED — reproduce the bug on real Postgres
 
-A repository mock is useless here: the bug is in the JPQL. H2 is not allowed either: production runs on Postgres.
+A repository mock is useless here: the bug is in the JPQL. The test runs on the project's test database — in this project, Testcontainers Postgres.
 
 ```java
 @DataJpaTest
@@ -175,7 +175,7 @@ but some elements were not expected:
 
 The extra element is the cancelled order. The message describes exactly this bug, so the reproduction is right.
 
-Had we seen `Could not find a valid Docker environment` — that is not RED. Tell the user Docker is unavailable and do not replace Postgres with H2.
+Had we seen `Could not find a valid Docker environment` — that is not RED. Tell the user Docker is unavailable and do not move the test to another database.
 
 ### GREEN
 
@@ -418,7 +418,7 @@ Only the class header changes, the test body is the same:
 @EmbeddedKafka(partitions = 1, topics = "payments.captured",
                bootstrapServersProperty = "spring.kafka.bootstrap-servers")
 class PaymentEventsListenerTest {
-    // The DB is started the way the project already does it for tests. Not H2.
+    // The DB is started the way the project already does it for tests.
     // ... the same capturedPaymentMarksOrderPaid test
 }
 ```

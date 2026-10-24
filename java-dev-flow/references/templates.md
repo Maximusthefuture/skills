@@ -63,7 +63,7 @@ The plan pins the decisions the implementer cannot make alone: files, names and 
 **Goal:** <one sentence>
 **Design:** <the full design summary or a link>
 **Constraints:** <Java/Boot versions, API backward compatibility, prohibitions from CLAUDE.md, dependency limits>
-**Integration test infrastructure:** <from the build: Testcontainers (Postgres, Kafka) | no Testcontainers: Kafka — `@EmbeddedKafka`, DB — <how the project starts it in tests>>; added test dependencies: <none | `org.testcontainers:kafka` | `spring-kafka-test`>
+**Integration test infrastructure:** <what the project's tests use: DB — <Testcontainers | a server from the test config | H2 | …>, Kafka — <Testcontainers | `@EmbeddedKafka`>>; added test dependencies: <none | `org.testcontainers:kafka` | `spring-kafka-test`>
 
 ## Rejected alternatives
 - <option> — <why not: the user's decision, a constraint, a measurement>
@@ -84,7 +84,7 @@ The plan pins the decisions the implementer cannot make alone: files, names and 
 **Test boundaries:** `PaymentRepository` (queries and constraints). Existing boundaries only; a new one — with the reason the behavior is otherwise unobservable
 
 **Behaviors:**
-- [ ] a repeated payment with the same `provider_payment_id` is rejected — `@DataJpaTest` + Testcontainers — catches: no unique constraint
+- [ ] a repeated payment with the same `provider_payment_id` is rejected — `@DataJpaTest` — catches: no unique constraint
 - [ ] `findPendingOlderThan` returns only PENDING older than the threshold — `@DataJpaTest` — catches: wrong filter or boundary
 
 **Slice skills:** data-modeling-discipline, migration-safety, jpa-and-transactions

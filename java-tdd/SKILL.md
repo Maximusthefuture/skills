@@ -1,7 +1,7 @@
 ---
 name: java-tdd
 description: "Test-driven development for Java / Spring Boot: red → green → refactor with proof that every test can fail; modes for a feature, a bugfix, a refactoring and code without tests (JUnit 5, AssertJ, Mockito, Spring test slices, Testcontainers or @EmbeddedKafka, Maven/Gradle). Use BEFORE writing production code whenever you implement or change behavior in Java — new feature, bug fix, endpoint, query, listener, business rule — and on TDD, test first, red green refactor, «сначала тест», «почини баг», «реализуй», /java-tdd. Not for renames, formatting, yaml and generated code. The test level is chosen by testing-with-discernment, the test's value by test-audit."
-compatibility: Claude Code. Maven or Gradle (preferably the ./mvnw / ./gradlew wrapper). Docker — for Testcontainers if the project has them; without them Kafka is tested on @EmbeddedKafka (spring-kafka-test). git — optional (proving a failure via stash).
+compatibility: Claude Code. Maven or Gradle (preferably the ./mvnw / ./gradlew wrapper). Docker — only if the project's tests use Testcontainers; the tests run on whatever infrastructure the project already uses. git — optional (proving a failure via stash).
 ---
 
 # Java TDD
@@ -26,7 +26,7 @@ Skipped step 2 — go back and prove the failure (section "If the code was writt
 |---|---|
 | What the task is, phases, design, slice plan, final verification and report | `java-dev-flow` (calls this skill in the implementation phase) |
 | Order of test and code, proof that the test catches the bug, when work is "done" | **this skill** |
-| Test level (unit, `@DataJpaTest`, `@WebMvcTest`, `@SpringBootTest`, WireMock) and infrastructure (Testcontainers or `@EmbeddedKafka`) | `testing-with-discernment` |
+| Test level (unit, `@DataJpaTest`, `@WebMvcTest`, `@SpringBootTest`, WireMock) and the infrastructure the project's tests use | `testing-with-discernment` |
 | Is the test worth its cost, is there a test-only seam in `src/main` | `test-audit` (authoring gate) |
 | Honest assertions and mocks | [references/writing-good-tests.md](references/writing-good-tests.md) |
 
@@ -76,7 +76,7 @@ One cycle — one behavior. Do not write five tests and then the whole implement
 
 **A. New feature.** Split it into observable behaviors: rules, branches, errors, edge cases; start with the simple success scenario. Error paths are behaviors too, each its own cycle: invalid input → 400 ProblemDetail with a code, someone else's resource → 404, a conflict → 409, no permission → 403.
 
-**B. Bugfix.** Reproduce the bug with a test at the level where it is observable (often `@DataJpaTest` or `@SpringBootTest` + Testcontainers, not a unit test with mocks). VERIFY RED: **the error message describes exactly this bug**, otherwise you reproduced a different one. Minimal fix → VERIFY GREEN → the full suite. One regression test per bug, at the level that owns the behavior. A bug is not fixed without a failing test.
+**B. Bugfix.** Reproduce the bug with a test at the level where it is observable (often `@DataJpaTest` or `@SpringBootTest` on the project's test infrastructure, not a unit test with mocks). VERIFY RED: **the error message describes exactly this bug**, otherwise you reproduced a different one. Minimal fix → VERIFY GREEN → the full suite. One regression test per bug, at the level that owns the behavior. A bug is not fixed without a failing test.
 
 **C. Refactoring.** Find the tests for the code you change, run them — green. Check that they catch a breakage: break the code (remove a branch, return `null`) — a test must fail; none does — there is no coverage, mode D. Refactor in small steps with a green run. A test that failed from a refactoring without behavior change checks the implementation — rewrite it against observable behavior.
 
@@ -96,7 +96,7 @@ Only for code you wrote yourself in this session. Do not stash someone else's un
 ## Infrastructure and commands — briefly
 
 - Use the wrapper (`./mvnw`, `./gradlew`) and the commands from the project's `CLAUDE.md`. Other commands (a class, an IT, a module) — [references/commands.md](references/commands.md).
-- The build chooses the infrastructure, not the environment: Testcontainers present — tests run on them; absent — Kafka on `@EmbeddedKafka`, the DB the way the project already starts it, and if it does not — ask. Not H2. No Docker — tell the user and name the tests that did not run; do not rewrite a test to `@EmbeddedKafka` or H2 for a green run. Details — [references/infrastructure.md](references/infrastructure.md).
+- The project chooses the infrastructure, not the skill and not the machine: a new test runs on what the existing tests use (Testcontainers, a database started another way, H2, `@EmbeddedKafka`); nothing yet — ask. It is not available here (no Docker, no server) — tell the user and name the tests that did not run; do not move a test to another database or broker for a green run. Details — [references/infrastructure.md](references/infrastructure.md).
 - Do not change sources while a build is running in the same working copy.
 
 ## When the work is done
@@ -120,6 +120,6 @@ Stop and go back to the cycle if you notice that:
 - you add a method, setter or `@VisibleForTesting` to `src/main` only for a test;
 - you write `verify(mock)` where the result is visible through an observable effect.
 
-Tempted to skip a test ("too simple", "I'll check later", "H2 is faster") — [references/rationalizations.md](references/rationalizations.md). Full cycle samples (plain JUnit, `@DataJpaTest` + Testcontainers, `@WebMvcTest`, `@KafkaListener`) — [references/examples.md](references/examples.md).
+Tempted to skip a test ("too simple", "I'll check later", "Docker won't start") — [references/rationalizations.md](references/rationalizations.md). Full cycle samples (plain JUnit, `@DataJpaTest`, `@WebMvcTest`, `@KafkaListener`) — [references/examples.md](references/examples.md).
 
 The skill is adapted from `test-driven-development` in [obra/superpowers](https://github.com/obra/superpowers) (MIT): contradictions removed, modes for refactoring and legacy added, examples rewritten for Java/Spring.

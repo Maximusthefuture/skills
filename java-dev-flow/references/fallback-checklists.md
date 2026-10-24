@@ -62,23 +62,22 @@ Decisions — as questions to the user with a recommended answer. Edit the artif
 
 **testing-with-discernment.**
 - Pure logic — JUnit without Spring.
-- Queries and constraints — `@DataJpaTest` + Testcontainers Postgres.
+- Queries and constraints — `@DataJpaTest` on the project's test database.
 - HTTP contract — `@WebMvcTest`.
-- The whole scenario — `@SpringBootTest` + Testcontainers.
-- Infrastructure — from the project build (`grep -rnE 'org\.testcontainers|spring-kafka-test'` over `pom.xml` / `*.gradle*`):
-  - Testcontainers present — DB and Kafka on them; no `org.testcontainers:kafka` module — add it with the same version;
-  - absent — Kafka on `@EmbeddedKafka` (`spring-kafka-test`, version from the BOM), the DB the way the project already starts it in tests, otherwise ask;
-  - no Docker — report it, do not switch the option.
+- The whole scenario — `@SpringBootTest` on the project's test infrastructure.
+- Infrastructure — what the project's tests already use (build and test config: Testcontainers, a database started another way, H2, `@EmbeddedKafka`); none is required:
+  - Testcontainers — no `org.testcontainers:kafka` module for a Kafka test — add it with the same version;
+  - nothing yet for this kind of test — ask;
+  - unavailable here (no Docker, no server) — report it, do not switch the option.
 - Kafka test: `auto-offset-reset=earliest`, Awaitility on the result (DB, outgoing topic, DLT); a repeated event — one effect.
 - External HTTP — WireMock; async — Awaitility; time — `Clock`.
-- No H2 and no `Thread.sleep`.
+- No `Thread.sleep`; a test on H2 names what it does not check against Postgres.
 
 **test-audit.** Before adding a test answer four questions: which behavior it protects; which realistic regression breaks it; why existing tests do not catch it; does it require a seam in `src/main` that only tests need. Junk:
 - a test without assertions;
 - the only assertion is a `verify` on a mock;
 - a mock returns what is then asserted;
 - the expected value is computed by the code under test;
-- H2 instead of Postgres;
 - `Thread.sleep`.
 
 **data-modeling-discipline.**

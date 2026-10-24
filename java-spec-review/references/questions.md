@@ -87,10 +87,10 @@ The frame is the six steps of `think-before-coding`. In the `java-flow` schema t
 - **D2. Scenarios ↔ tasks.** Every new or changed scenario → a task. A task without a scenario is one of three: a behavior missing from specs (add a scenario); scope creep (remove the task); preparatory or infrastructure work (keep it). The script matches by name — recheck by eye.
 - **D3. Order.** Groups are slices in the build order from design. A task depends only on tasks above it, not below.
 - **D4. The test level** fits the scenario (`testing-with-discernment`):
-  - DB and constraints — `@DataJpaTest` + Testcontainers, not H2;
+  - DB and constraints — `@DataJpaTest`;
   - HTTP contract — `@WebMvcTest`;
-  - the whole scenario — `@SpringBootTest` + Testcontainers;
-  - Kafka — Testcontainers or `@EmbeddedKafka`, whichever the project has **[code]**: `pom.xml`;
+  - the whole scenario — `@SpringBootTest`;
+  - the DB and Kafka of these tests — what the project's tests already use **[code]**: `pom.xml`, test config; a Postgres-specific behavior tested on H2 — the gap is named;
   - external HTTP — WireMock; time — `Clock`.
 
   Does the project have the needed test infrastructure **[code]**?

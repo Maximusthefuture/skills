@@ -77,8 +77,8 @@ OpenSpec parses only lines like `- [ ] X.Y ...` and requires every task to say h
 
 ## 1. Schema and repository
 
-- [ ] 1.1 Changeset: column `orders.archived_at` (nullable) and mapping in `Order` — verify: `OrderRepositoryTest` starts on Testcontainers, Liquibase applies the changeset
-- [ ] 1.2 Scenario "Filter archived=false hides archived orders" — `@DataJpaTest` + Testcontainers, the test is red first — verify: `OrderRepositoryTest#excludesArchivedOrders`
+- [ ] 1.1 Changeset: column `orders.archived_at` (nullable) and mapping in `Order` — verify: `OrderRepositoryTest` starts, Liquibase applies the changeset
+- [ ] 1.2 Scenario "Filter archived=false hides archived orders" — `@DataJpaTest`, the test is red first — verify: `OrderRepositoryTest#excludesArchivedOrders`
 
 ## 2. API
 

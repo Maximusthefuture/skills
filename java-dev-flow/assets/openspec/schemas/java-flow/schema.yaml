@@ -277,9 +277,9 @@ artifacts:
       - Groups are slices in the build order from design.md. Inside a group — one task
         per behavior, usually per Scenario from specs.
       - Task format: "- [ ] X.Y <Scenario or behavior> — <test level> —
-        verify: <test or command>". Level: unit | @DataJpaTest + Testcontainers |
-        @WebMvcTest | @SpringBootTest + Testcontainers | @SpringBootTest + @EmbeddedKafka |
-        WireMock. @EmbeddedKafka only if the project has no Testcontainers. The test is
+        verify: <test or command>". Level: unit | @DataJpaTest | @WebMvcTest |
+        @SpringBootTest | WireMock, on the infrastructure the project's tests already use
+        (Testcontainers, another test database, @EmbeddedKafka). The test is
         written first and must fail before the implementation.
       - Every task names the files it touches, taken from the Classes table of design.md.
       - If design.md decided to refactor first, the first group is "Preparatory

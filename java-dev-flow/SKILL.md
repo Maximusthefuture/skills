@@ -148,8 +148,8 @@ Only in these cases:
 - L: approval of design and plan before code;
 - a characterization test pins behavior that looks like a bug;
 - the third failed bug fix or 2–3 refuted hypotheses;
-- no Docker, integration tests do not run (H2 or `@EmbeddedKafka` instead of containers is not allowed);
-- a test needs a DB and the project does not start one in tests — ask about Testcontainers;
+- the project's test infrastructure is unavailable here (no Docker, no database server), integration tests do not run (moving them to another database or broker is not allowed);
+- a test needs a DB and the project does not start one in tests — ask what to use;
 - an irreversible or external action: commit, push, PR, Jira, deleting data, shared configuration.
 
 Decide everything else yourself and record the decision with its reason in the report.

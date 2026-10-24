@@ -9,8 +9,8 @@ schema: spec-driven
 # Adjust the stack to the project.
 context: |
   Stack: Java 21, Spring Boot 3.x, Hibernate (JPA), PostgreSQL, Liquibase; build via the wrapper (./mvnw or ./gradlew).
-  Tests: JUnit 5 + AssertJ; everything that touches the DB runs on Testcontainers PostgreSQL, not H2; Kafka runs on Testcontainers,
-  or on @EmbeddedKafka (spring-kafka-test) if the project has no Testcontainers; external HTTP — WireMock.
+  Tests: JUnit 5 + AssertJ; DB and Kafka tests run on the infrastructure the project's tests already use (write it here:
+  Testcontainers, a test database server, H2, @EmbeddedKafka); external HTTP — WireMock.
   The engineering process is set by the java-dev-flow skill: S/M/L classification, design per think-before-coding,
   every task implemented per java-tdd, verification by size and signals. backend-design-java domain skills
   are loaded only by signals in the task and the code.
@@ -40,7 +40,7 @@ rules:
     - "If the change adds a variant to a set the code already branches on (payment method, provider, channel, document type, status), call the java-extensibility-review skill on the affected classes and record its verdict in Decisions: extend as is, or a preparatory refactoring first."
   tasks:
     - "Groups are slices in the build order from design.md. Inside a group — one task per behavior, usually per Scenario from specs."
-    - "Task format: \"X.Y <Scenario or behavior> — <test level: unit | @DataJpaTest + Testcontainers | @WebMvcTest | @SpringBootTest + Testcontainers | @SpringBootTest + @EmbeddedKafka | WireMock> — verify: <test or command>\". The test is written first and must fail before the implementation."
+    - "Task format: \"X.Y <Scenario or behavior> — <test level: unit | @DataJpaTest | @WebMvcTest | @SpringBootTest | WireMock> — verify: <test or command>\". The test is written first and must fail before the implementation."
     - "Do not move tests into a separate group at the end: every group carries its own tests."
     - "Every task names the files it touches, taken from the Classes table of design.md."
     - "If design.md decided to refactor first, the first group is \"Preparatory refactoring\": behavior does not change, tests green before and after; the new variant is added in the following groups."

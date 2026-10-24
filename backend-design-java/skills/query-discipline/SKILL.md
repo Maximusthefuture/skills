@@ -101,7 +101,7 @@ LIMIT 50;
 - **Derived method names with six conditions.** Write `@Query`; a name is not a query plan.
 - **`DISTINCT` to hide a duplicating join fetch.** Fix the fetch plan.
 - **Native queries scattered in services.** Keep them in the repository, parameterized, and covered by an integration test against real Postgres.
-- **Testing queries on H2.** The plan, the types and the SQL dialect all differ. Use Testcontainers Postgres.
+- **Trusting an H2 run for Postgres-specific SQL.** The plan, the types and the SQL dialect all differ. If the project's tests run on H2, name the native or Postgres-specific queries they do not really check.
 
 ## Quick Decision Guide
 

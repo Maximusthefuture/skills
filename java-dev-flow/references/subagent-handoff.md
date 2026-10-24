@@ -32,7 +32,7 @@ You implement slice <N> "<name>" in the project <repository path>.
 Already implemented and used by this slice:
 <classes and signatures from previous slices>
 
-Integration test infrastructure: <from the plan: Testcontainers | @EmbeddedKafka for Kafka>.
+Integration test infrastructure: <from the plan: what the project's tests use for the DB and Kafka>.
 Use the existing base class <path> if there is one; do not create a second setup.
 
 ## What to do
@@ -54,7 +54,7 @@ e.g. backend-design-java:migration-safety):
 - Do not commit or push<, unless the user allowed a commit per slice>.
 - Do not start your own subagents or reviewers — the coordinator reviews.
 - Fix hook warnings after file writes or describe them in the report.
-- No Docker for Testcontainers — report it; do not replace Postgres with H2 or the Kafka container with @EmbeddedKafka.
+- The project's test infrastructure is unavailable (no Docker, no server) — report it; do not move tests to another database or broker.
 - An architectural decision with several reasonable options that is not in the
   plan — do not make it yourself, return BLOCKED with the options.
 

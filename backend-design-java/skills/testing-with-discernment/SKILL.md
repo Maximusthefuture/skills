@@ -1,6 +1,6 @@
 ---
 name: testing-with-discernment
-description: Use when writing, reviewing, or planning tests for Spring Boot backend code (JUnit 5, Mockito, AssertJ, Testcontainers, @EmbeddedKafka, @SpringBootTest, @DataJpaTest, @WebMvcTest, WireMock). Forces a "what is worth testing" decision instead of a coverage target, and picks the integration-test infrastructure from the project's build (Testcontainers if the project has it, otherwise @EmbeddedKafka for Kafka). Catches tests that mock the code they claim to test, H2 instead of PostgreSQL, @Transactional tests that hide commit-time behavior, and Thread.sleep flakiness. Apply BEFORE marking a bug fix done. Triggers also on "напиши тест", "тесты", "покрытие", "интеграционный тест", "Testcontainers", "EmbeddedKafka", "тест на Kafka", "тест консьюмера", "флаки тест".
+description: Use when writing, reviewing, or planning tests for Spring Boot backend code (JUnit 5, Mockito, AssertJ, Testcontainers, @EmbeddedKafka, @SpringBootTest, @DataJpaTest, @WebMvcTest, WireMock). Forces a "what is worth testing" decision instead of a coverage target, and runs integration tests on the infrastructure the project's tests already use (Testcontainers, a database it starts another way, an in-memory database, @EmbeddedKafka — the skill requires none of them). Catches tests that mock the code they claim to test, @Transactional tests that hide commit-time behavior, and Thread.sleep flakiness. Apply BEFORE marking a bug fix done. Triggers also on "напиши тест", "тесты", "покрытие", "интеграционный тест", "Testcontainers", "EmbeddedKafka", "тест на Kafka", "тест консьюмера", "флаки тест".
 ---
 
 # Testing With Discernment
@@ -26,19 +26,28 @@ grep -rnE 'org\.testcontainers|spring-boot-testcontainers|spring-kafka-test' \
   --include=pom.xml --include='*.gradle' --include='*.gradle.kts' --include='*.toml' \
   --exclude-dir=target --exclude-dir=build .
 # test setup that already exists and should be reused
-grep -rlE '@Testcontainers|@ServiceConnection|@EmbeddedKafka' \
+grep -rlE '@Testcontainers|@ServiceConnection|@EmbeddedKafka|@AutoConfigureTestDatabase' \
   --include='*.java' --include='*.kt' --exclude-dir=target --exclude-dir=build .
+# a database the tests reach some other way: H2/HSQLDB, an embedded Postgres library, a server from the test config
+grep -rnE 'h2database|hsqldb|embedded-database|zonky|spring\.datasource\.url' \
+  --include=pom.xml --include='*.gradle*' --include='*.toml' --include='application*.yml' --include='application*.properties' \
+  --exclude-dir=target --exclude-dir=build .
 ```
 
-| The build has | Database tests | Kafka tests |
-|---|---|---|
-| Testcontainers (any `org.testcontainers` artifact or `spring-boot-testcontainers`) | Testcontainers Postgres + `@ServiceConnection` | Testcontainers Kafka + `@ServiceConnection`. If only other modules are declared (e.g. `postgresql`), add `org.testcontainers:kafka` at the version the project already uses |
-| No Testcontainers | The production engine, started the way the project already starts it for tests. If there is no such way, stop and ask the user before adding Testcontainers. Never H2 | `@EmbeddedKafka` from `spring-kafka-test` (test scope, version from the Spring Boot BOM; add it if missing) |
+The skill requires no particular infrastructure: the new test runs on what the project's tests already use.
 
-- **Decide per module**, together with its parent POM or convention plugin. Testcontainers in a sibling module counts: it is already the project's tool, so add it to this module at the same version.
-- **No Docker is not "no Testcontainers".** If the project uses Testcontainers and Docker is unavailable where the tests run, report it. Do not rewrite the test to `@EmbeddedKafka` or H2 to get a green run.
+| The project's tests use | Database tests | Kafka tests |
+|---|---|---|
+| Testcontainers (any `org.testcontainers` artifact or `spring-boot-testcontainers`) | Testcontainers + `@ServiceConnection` (or the project's own container setup) | Testcontainers Kafka + `@ServiceConnection`. If only other modules are declared (e.g. `postgresql`), add `org.testcontainers:kafka` at the version the project already uses |
+| A database started another way (a server from the test config, an embedded Postgres library) | That database, configured the way the existing tests do it | — |
+| An in-memory database (H2, HSQLDB) | The in-memory database, as the existing tests use it; see [The test database](#the-test-database) for what it does not check | — |
+| `@EmbeddedKafka` (`spring-kafka-test`) | — | `@EmbeddedKafka` |
+| Nothing yet for this kind of test | Ask the user what to use before adding any infrastructure | Ask the user; `@EmbeddedKafka` (`spring-kafka-test`, no Docker) is the light option to offer |
+
+- **Decide per module**, together with its parent POM or convention plugin. A setup in a sibling module counts: it is already the project's tool, so add it to this module at the same version.
+- **The machine does not pick the infrastructure.** If the project's tests need something that is not available where they run (Docker for Testcontainers, a database server), report it and name the tests that did not run. Do not move the test to another database or broker to get a green run.
 - **Reuse before you add.** An existing base class, a `@TestConfiguration` with `@ServiceConnection` beans, or a meta-annotation with `@EmbeddedKafka` is where the new test goes. A second setup is a second Spring context and a second broker.
-- **Do not migrate** existing tests from one option to the other inside an unrelated task. New tests follow the table; a migration is its own change, agreed with the user.
+- **Do not migrate** existing tests from one option to the other inside an unrelated task. New tests follow what the project uses; a migration is its own change, agreed with the user.
 - **Name what you added.** A new test dependency (`org.testcontainers:kafka`, `spring-kafka-test`) goes into the report.
 
 ## The Spring Test Toolbox, By Purpose
@@ -46,20 +55,19 @@ grep -rlE '@Testcontainers|@ServiceConnection|@EmbeddedKafka' \
 | Testing... | Use | Not |
 |------------|-----|-----|
 | Domain logic, calculations, state machines | Plain JUnit + AssertJ, no Spring | `@SpringBootTest` |
-| Repositories, queries, constraints, mappings | `@DataJpaTest` + `@AutoConfigureTestDatabase(replace = NONE)` + Testcontainers Postgres | H2, mocked repositories |
+| Repositories, queries, constraints, mappings | `@DataJpaTest` on the project's test database (`@AutoConfigureTestDatabase(replace = NONE)` when it is a container or a server) | Mocked repositories |
 | Controller contract (status, ProblemDetail, validation, security rules) | `@WebMvcTest` + `MockMvc`/`MockMvcTester` + `@WithMockUser`/`jwt()` | Calling the controller method directly |
-| Use case end to end (tx boundaries, outbox, listeners) | `@SpringBootTest` + Testcontainers (Postgres, Kafka); Kafka on `@EmbeddedKafka` if the project has no Testcontainers | Mocking your own services |
+| Use case end to end (tx boundaries, outbox, listeners) | `@SpringBootTest` on the project's test database and broker ([chosen from the project](#choose-the-infrastructure-from-the-project)) | Mocking your own services |
 | Kafka listeners and producers | `@SpringBootTest` + a real broker [chosen from the project](#choose-the-infrastructure-from-the-project), Awaitility on the outcome | A mocked `KafkaTemplate`; calling the `@KafkaListener` method by hand as the only test |
 | Outbound HTTP | WireMock (or `MockRestServiceServer`) at the HTTP boundary | Mocking the `RestClient` fluent chain |
 | Async / consumers | Awaitility `await().atMost(...)` on an observable outcome | `Thread.sleep` |
 | Time | Injected `Clock`, `Clock.fixed(...)` in tests | `Instant.now()` in code |
 
-## Real PostgreSQL, Always
+## The Test Database
 
-- **H2 lies.** Its SQL dialect, types (`jsonb`, `timestamptz`, arrays), constraint behavior, locking (`SKIP LOCKED`), and RLS all differ. A green H2 suite says nothing about prod.
-- **Testcontainers with `@ServiceConnection`** (Boot 3.1+) wires the DataSource automatically. Reuse one container per JVM (a static container in a base class, or `spring.testcontainers` with reuse locally) to keep the suite fast.
+- **Know what an in-memory database does not check.** H2 and HSQLDB differ from PostgreSQL in SQL dialect, types (`jsonb`, `timestamptz`, arrays), constraint behavior, locking (`SKIP LOCKED`) and RLS. If the project tests on one and the behavior under test depends on these, say in the report that this part is not covered. Moving the tests to the production engine is a separate change, agreed with the user.
+- **Testcontainers with `@ServiceConnection`** (Boot 3.1+), when the project uses them, wires the DataSource automatically. Reuse one container per JVM (a static container in a base class, or `spring.testcontainers` with reuse locally) to keep the suite fast.
 - **Liquibase runs in tests.** The changelog is exercised on every run, and `ddl-auto=validate` catches entity/schema drift. That is one of the most valuable checks in the suite, for free.
-- **No Testcontainers in the project** does not make H2 acceptable. See [Choose the infrastructure](#choose-the-infrastructure-from-the-project): use the project's existing way to run the real engine, or ask.
 
 ## Kafka Tests
 
@@ -112,7 +120,7 @@ Test thinly or skip: getters, mappers without logic, Spring wiring that `@Spring
 
 ## Bug-First Rule
 
-1. Reproduce as a failing test, usually an integration test with Testcontainers.
+1. Reproduce as a failing test, usually an integration test on the project's test infrastructure.
 2. Watch it fail for the expected reason.
 3. Fix the code.
 4. Watch it pass.
@@ -130,7 +138,7 @@ Test thinly or skip: getters, mappers without logic, Spring wiring that `@Spring
 ## The CI Contract
 
 - **Unit + slice tests:** every push, minutes.
-- **Integration (`*IT`, Testcontainers):** every PR, under ~10 minutes. Failsafe/Gradle test sets keep them separate.
+- **Integration (`*IT`):** every PR, under ~10 minutes. Failsafe/Gradle test sets keep them separate.
 - **Changelog check:** run Liquibase against a copy of the previous release's schema in CI, so forward compatibility is tested, not assumed.
 - **E2E / contract tests:** a selected set on main or before deploy.
 
@@ -139,13 +147,13 @@ Test thinly or skip: getters, mappers without logic, Spring wiring that `@Spring
 | Situation | Reflex |
 |-----------|--------|
 | New business rule | Plain unit test, one assertion per branch |
-| New repository query | `@DataJpaTest` + Testcontainers, assert results and statement count |
+| New repository query | `@DataJpaTest` on the project's test database, assert results and statement count |
 | New endpoint | `@WebMvcTest` for contract + security; integration test for the use case |
 | New changeset | Runs in every integration test; add a test for the constraint it adds |
-| First integration test in a module | [Check the build](#choose-the-infrastructure-from-the-project): Testcontainers if present, otherwise `@EmbeddedKafka` for Kafka |
-| New `@KafkaListener` | Integration test on Testcontainers Kafka, or `@EmbeddedKafka` if the project has no Testcontainers: process, redeliver, poison → DLT |
+| First integration test in a module | [Check what the tests use](#choose-the-infrastructure-from-the-project) and use the same; nothing yet — ask |
+| New `@KafkaListener` | Integration test on the project's broker (Testcontainers Kafka or `@EmbeddedKafka`): process, redeliver, poison → DLT |
 | New Kafka producer or outbox publisher | Read the record back with a test consumer on the same broker: topic, key, headers, payload |
-| Project uses Testcontainers, Docker unavailable | Report it; no H2, no switch to `@EmbeddedKafka` |
+| The project's test infrastructure is unavailable here (no Docker, no server) | Report it and name the tests that did not run; do not move them to another database or broker |
 | Outbound client | WireMock: 200, 4xx, 5xx, timeout, retry with the same idempotency key |
 | Bug fix | Failing test first |
 | Tempted to mock the repository | Write the DB test instead |
