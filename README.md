@@ -53,7 +53,25 @@ mkdir -p /tmp/ru-skills && tar -xzf audit/2026-10-04-ru-skills-snapshot.tar.gz -
 - Проектная копия важнее глобальной с тем же именем. Если в проекте лежит старая копия, работать будет она.
 - Новый скилл или агент виден в уже открытой сессии через пару секунд. Исключение: папку `~/.claude/agents/` или `.claude/agents/` создали впервые — тогда нужна новая сессия.
 
-## Установка для всех проектов
+## Установка одной командой
+
+`sync-skills.py` копирует свои скиллы, `grilling` / `grill-me` / `handoff`, скиллы и агентов `backend-design-java` и
+агентов `java-dev-flow` в проект или для всех проектов (`evals/` не копируются):
+
+```bash
+python3 sync-skills.py ~/projects/shop --dry-run
+```
+
+```bash
+python3 sync-skills.py ~/projects/shop
+```
+
+Копия, которая отличается от репозитория (проект мог править её сам), остаётся как есть и попадает в список
+«differs»; `--force` перезаписывает её. `--only java-spec-intake,grilling` — только эти. `~` вместо папки проекта —
+в `~/.claude`. `python3 sync-skills.py --archives` пересобирает архивы `*.skill` из каталогов. Хуки `backend-design-java`
+скрипт не ставит — см. раздел про него.
+
+## Установка для всех проектов вручную
 
 Команды запускай из этой папки (`~/Downloads/files`).
 
@@ -66,7 +84,7 @@ mkdir -p ~/.claude/skills ~/.claude/agents ~/.claude/hooks
 2. Свои скиллы:
 
 ```bash
-cp -R java-dev-flow java-conventions java-tdd java-diagnosing-bugs java-code-review java-extensibility-review java-spec-review jira-tasks ~/.claude/skills/
+cp -R java-dev-flow java-conventions java-tdd java-diagnosing-bugs java-code-review java-extensibility-review java-spec-review java-spec-intake jira-tasks ~/.claude/skills/
 ```
 
 3. Сторонние скиллы. `grilling` нужен `java-dev-flow`, `grill-me` — ручной вход в него:
