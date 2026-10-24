@@ -232,7 +232,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
         <label>Описание — конкретно: что сделать, где, ожидаемое поведение, кто что делает (с OpenSpec change — необязательно)<textarea name="description" placeholder="Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты."></textarea></label>
         <div class="row"><label>Lead (интегрирует)<select name="lead" id="lead"></select></label><label>Остальные агенты<div class="checks" id="others"></div></label></div>
         <div class="row">
-          <label>Сборка и тесты (--verify)<input name="verifyCommand" placeholder="./mvnw -q verify"></label>
+          <label title="Lead сдаёт задачу только после зелёного прогона этой команды на слитом результате. По умолчанию — verifyCommand из runners.json; пусто — без проверки.">Сборка и тесты (--verify)<input name="verifyCommand" placeholder="без проверки сборки"></label>
           <label>Follow-up задач на цепочку<input name="maxFollowUps" type="number" min="0" max="20" value="0"></label>
           <label>Раундов исправлений<input name="maxFixRounds" type="number" min="0" max="20" value="3"></label>
           <label title="Сумма всех сессий агентов задачи. Достигнута — задача встаёт в BLOCKED, решаете вы: добавить денег или отменить. Пусто — без лимита.">Лимит стоимости, $<input name="maxCostUsd" type="number" min="0" step="0.5" placeholder="без лимита"></label>
@@ -652,7 +652,7 @@ async function checkSpecFolders(){const box=$("specfolders");const f=$("newtask"
         if(bad.length){box.replaceChildren(...bad.map(x=>el("div","",x.id+": "+x.text)))}else await checkSpecFolders()}catch(e){box.replaceChildren(e.message)}};
     box.append(b)}catch(e){box.hidden=true}}
 $("others").addEventListener("change",checkSpecFolders);$("lead").addEventListener("change",()=>setTimeout(checkSpecFolders,0));
-async function implementChange(name){const f=$("newtask");f.hidden=false;const lim=S&&S.control&&S.control.maxTaskCostUsd;f.elements.namedItem("maxCostUsd").value=lim?String(lim):"";await loadChanges();const sel=$("openspec");sel.value=name;sel.dispatchEvent(new Event("change"));
+async function implementChange(name){const f=$("newtask");f.hidden=false;taskDefaults(f);await loadChanges();const sel=$("openspec");sel.value=name;sel.dispatchEvent(new Event("change"));
   f.elements.namedItem("title").value="";f.elements.namedItem("description").value="";f.scrollIntoView({behavior:"smooth",block:"start"});f.elements.namedItem("description").focus({preventScroll:true})}
 // after DONE: the lead's branch into the project, then the agents' worktrees away (they come back from HEAD for the next task)
 const branchState=new Map();
@@ -1073,7 +1073,7 @@ function openScheduleForm(x){
   const drawOthers=()=>{const keep=new Set([...others.querySelectorAll("input:checked")].map(i=>i.value));const first=!others.children.length;others.replaceChildren();
     ids.forEach(id=>{const l=el("label","");l.style.display="inline-flex";l.style.gap="4px";const i=document.createElement("input");i.type="checkbox";i.value=id;i.checked=id!==lead.value&&(first?(c.agents||[]).slice(1).includes(id):keep.has(id));i.disabled=id===lead.value;l.append(i,id);others.append(l)})};
   lead.onchange=drawOthers;drawOthers();ag.append(ll,ol);f.append(ag);
-  const r2=el("div","row");r2.append(field("Сборка и тесты (verifyCommand)","verifyCommand",c.verifyCommand,{placeholder:"./mvnw -q verify"}),field("Раундов исправлений","maxFixRounds",c.maxFixRounds,{type:"number",min:"0",max:"20",placeholder:"3"}),field("Лимит стоимости, $","maxCostUsd",c.maxCostUsd,{type:"number",min:"0",step:"0.5",placeholder:s.control&&s.control.maxTaskCostUsd?"по умолчанию $"+s.control.maxTaskCostUsd:"без лимита"}));f.append(r2);
+  const r2=el("div","row");r2.append(field("Сборка и тесты (verifyCommand)","verifyCommand",c.verifyCommand,{placeholder:s.control&&s.control.verifyCommand?"по умолчанию "+s.control.verifyCommand:"без проверки сборки"}),field("Раундов исправлений","maxFixRounds",c.maxFixRounds,{type:"number",min:"0",max:"20",placeholder:"3"}),field("Лимит стоимости, $","maxCostUsd",c.maxCostUsd,{type:"number",min:"0",step:"0.5",placeholder:s.control&&s.control.maxTaskCostUsd?"по умолчанию $"+s.control.maxTaskCostUsd:"без лимита"}));f.append(r2);
   const en=el("label","");en.style.display="inline-flex";en.style.gap="6px";const ei=document.createElement("input");ei.type="checkbox";ei.name="enabled";ei.checked=c.enabled!==false;en.append(ei,"включено");
   const note=el("span","note","");const save=el("button","",x?"Сохранить":"Добавить");save.type="submit";const cancel=el("button","ghost","Отмена");cancel.type="button";
   cancel.onclick=()=>{schedForm=null;$("schedules").dataset.sig="";render()};
@@ -1135,7 +1135,9 @@ function renderTasks(){
   cards.forEach(c=>c.querySelectorAll("[data-scroll]").forEach(b=>{if(b.closest("details"))return;const sv=scrolls.get(c.dataset.id+"|"+b.dataset.scroll);
     if(sv)b.scrollTop=sv.top;else{const cur=b.querySelector(".DOING");if(cur)b.scrollTop+=cur.getBoundingClientRect().top-b.getBoundingClientRect().top-b.clientHeight/3}}));
 }
-$("newbtn").onclick=()=>{const f=$("newtask");f.hidden=!f.hidden;if(!f.hidden){loadChanges();const lim=S&&S.control&&S.control.maxTaskCostUsd;f.elements.namedItem("maxCostUsd").value=lim?String(lim):"";f.elements.namedItem("title").focus()}};
+// the config's defaults for a new task: its cost limit and its build and test command
+function taskDefaults(f){const c=(S&&S.control)||{};f.elements.namedItem("maxCostUsd").value=c.maxTaskCostUsd?String(c.maxTaskCostUsd):"";f.elements.namedItem("verifyCommand").value=c.verifyCommand||""}
+$("newbtn").onclick=()=>{const f=$("newtask");f.hidden=!f.hidden;if(!f.hidden){loadChanges();taskDefaults(f);f.elements.namedItem("title").focus()}};
 let knownIds="";
 function updateForm(s){
   const ids=[...new Set([...(s.control?s.control.runners.map(r=>r.id):[]),...s.agents.map(a=>a.id).filter(id=>id!=="operator")])];

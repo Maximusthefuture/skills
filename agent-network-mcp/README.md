@@ -55,12 +55,23 @@ npm link
 
 ```bash
 cd ~/myprojects/test
-agent-network-mcp ui                      # Qwen Code; для Claude Code: agent-network-mcp ui --template claude
+agent-network-mcp ui                      # шаблон по установленному CLI; явно: --template claude или --template qwen
 ```
 
 (без `npm link` — `node /abs/path/agent-network-mcp/dist/index.js ui`). В первый раз в проекте появляется **свой
-конфиг** `<проект>/.agent-network/runners.json`, скопированный из шаблона (`--template qwen` по умолчанию или
-`claude`). Папка `.agent-network` исключена из git. Дальше `ui` берёт этот файл, а `--template` уже не действует: чтобы
+конфиг** `<проект>/.agent-network/runners.json`, скопированный из шаблона:
+
+- **шаблон** — по CLI в `PATH`: есть только `claude` — Claude Code, только `qwen` — Qwen Code; есть оба — `ui`
+  спрашивает в терминале (без терминала и без ответа — Qwen). `--template claude|qwen` выбирает сам;
+- **под стек проекта** (по файлам в корне): `pom.xml` — Maven, `build.gradle(.kts)`/`settings.gradle(.kts)` — Gradle,
+  `package.json` — npm (yarn и pnpm — по lockfile). Под него ставятся сборка в разрешениях shell (`./mvnw` или `mvn`,
+  `./gradlew` или `gradle`, `npm test` и `npm run`), `verifyCommand` задач (`./mvnw -q -B verify …`,
+  `./gradlew check --console=plain`, скрипт `verify`/`check`/`test`/`build` из `package.json`) и инструкции ролей
+  ([instructions/](examples/runner/instructions), `gradle/`, `npm/`). Что найдено, `ui` пишет в терминал и вторым
+  комментарием в конфиг. Стек не найден — остаются разрешение и инструкции Maven из шаблона, а `verifyCommand` нет:
+  задайте их сами.
+
+Папка `.agent-network` исключена из git. Дальше `ui` берёт этот файл, а `--template` уже не действует: чтобы
 начать заново с шаблона, удалите файл. Worktree агентов (`../test-backend` и т.д.) создаются сами, сеть —
 `<проект>/.agent-network`. Подробности — [Запуск в своём проекте одной командой](#запуск-в-своём-проекте-одной-командой).
 
@@ -70,7 +81,8 @@ agent-network-mcp ui                      # Qwen Code; для Claude Code: agent
 - `model` и `models` — какая модель у агентов и из каких выбирать на странице: [Модели](#модели-где-взять-имена-и-куда-их-писать);
 - для Qwen с LM Studio — адрес сервера в `--openai-base-url` (в двух командах: агентов и надзора), например
   `http://192.168.1.10:1234/v1`;
-- сборка в разрешениях shell (`Bash(./mvnw:*)` / `run_shell_command(./mvnw)`) — под ваш проект;
+- сборка в разрешениях shell (`Bash(./mvnw:*)` / `run_shell_command(./mvnw)`) и `verifyCommand` — уже под стек проекта,
+  поправьте, если нужна другая команда (например, с линтером: `npm run check`);
 - `prices` (необязательно) — цена токенов для моделей, которые не сообщают стоимость сами, например Qwen:
   [Цена токенов](#цена-токенов-если-cli-не-сообщает-стоимость);
 - `maxTaskCostUsd` — лимит стоимости задачи по умолчанию.
@@ -1116,7 +1128,7 @@ node dist/index.js ui --runners runners.json [--port 4777]
 
 Одна команда поднимает страницу и runner'ы агентов из конфига (с `"autostart": false` — по кнопке). На странице появляются:
 
-- в разделе «Задачи» форма **«Новая задача»** (кнопка «+ Новая задача»): название, описание, lead и остальные агенты, `--verify`, бюджет follow-up задач, лимит раундов
+- в разделе «Задачи» форма **«Новая задача»** (кнопка «+ Новая задача»): название, описание, lead и остальные агенты, `--verify` (заполнен `"verifyCommand"` из `runners.json`; пусто — без проверки сборки), бюджет follow-up задач, лимит раундов
   исправлений; runner'ы подхватывают задачу за пару секунд;
 - в разделе «Runner'ы» — **runner'ы**: статус `RUNNING`/`STOPPED`, что делает сейчас, кнопки «Старт»/«Стоп», папка, команда, **модель агента** (список и
   «Применить»), **файл инструкций агента** (поле ввода, «Сохранить», начало текста) и хвост лога (строки runner'а и вывод сессий CLI, последние 400 строк);
@@ -1154,8 +1166,8 @@ agent-network-mcp ui --runners ~/Downloads/files/agent-network-mcp/examples/runn
 - **`{agentNetworkMcp}`** в конфиге — папка этого репозитория, загрузчик подставляет её сам; MCP-серверы (и у Claude —
   хуки, `--settings`) заданы JSON прямо в команде, `${AGENT_ID}` и `${NETWORK_DIR}` Claude берёт из окружения сессии.
   Поэтому пример работает и с места, и копией в любой папке.
-- **Своё — в копии:** модели (`model`, `models`), сборка в разрешениях shell, `maxTaskCostUsd`, у Qwen — адрес сервера
-  моделей. Пути в копии не нужны.
+- **Своё — в копии:** модели (`model`, `models`), сборка в разрешениях shell и `verifyCommand` (копия уже подогнана под
+  стек проекта, см. [Быстрый старт](#быстрый-старт)), `maxTaskCostUsd`, у Qwen — адрес сервера моделей. Пути в копии не нужны.
 - **Сабагент `helper`** для Qwen — файл, один раз: `mkdir -p ~/.qwen/agents && cp …/examples/runner/qwen-agents/helper.md ~/.qwen/agents/`.
 - **Сервер моделей** в примере — `http://127.0.0.1:1234/v1`; другой адрес — скопируйте пример и поменяйте
   `--openai-base-url` в двух командах (агентов и надзора). Так же меняются модель, сборка (`run_shell_command(./mvnw)` →
@@ -1215,9 +1227,14 @@ agent-network-mcp ui --runners ~/Downloads/files/agent-network-mcp/examples/runn
     { "id": "backend", "cwd": "/abs/project-backend" },
     { "id": "reviewer", "cwd": "/abs/project-reviewer", "model": "qwen/qwen3-coder-30b", "autostart": false }
   ],
-  "prices": { "qwen/qwen3.5-9b": { "input": 0.05, "output": 0.25 } }
+  "prices": { "qwen/qwen3.5-9b": { "input": 0.05, "output": 0.25 } },
+  "verifyCommand": "./mvnw -q -B verify -Dsurefire.timeout=900"
 }
 ```
+
+`verifyCommand` — команда сборки и тестов для задач со страницы и из расписаний, у которых своей нет: lead сдаёт задачу
+с PASS только после её зелёного прогона на слитом результате. Это одна команда сборщика без shell (как у `build`):
+`npm test && npm run lint` конфиг не примет — заведите скрипт `check` в `package.json`.
 
 **Вопросы агентов к вам.** Сессия runner'а без собеседника: её чат никто не читает. Поэтому то, что может решить только
 человек (неясная задача, требования), агент спрашивает через сеть: `send_message({to: "operator", message})` и `wait()`.
@@ -1289,7 +1306,9 @@ Qwen, `"--model", "{model}"` у Claude Code), `"model"` — модель по у
 `{agent}`, `{taskId}`, `{title}` работают. Файл читается заново перед каждой сессией: правка применяется со следующей,
 без перезапуска. На странице путь задаётся в карточке runner'а: файл должен читаться, относительный путь — от папки
 конфига, значение записывается обратно в `runners.json` (остальное, включая `_comment`, сохраняется); пустое поле —
-без инструкций. Готовые роли — в [examples/runner/instructions/](examples/runner/instructions/):
+без инструкций. Готовые роли — в [examples/runner/instructions/](examples/runner/instructions/) (Maven; для Gradle —
+[gradle/](examples/runner/instructions/gradle), для npm, yarn и pnpm — [npm/](examples/runner/instructions/npm), их
+свой конфиг проекта берёт сам по стеку):
 [backend.md](examples/runner/instructions/backend.md) (код через TDD; как lead — сборка, галочки в `tasks.md`, доки),
 [reviewer.md](examples/runner/instructions/reviewer.md) (только ревью, чеклист SYNC),
 [tester.md](examples/runner/instructions/tester.md) (сквозные тесты в своём пакете; тест задачи остаётся у её
@@ -1561,8 +1580,8 @@ runner'а скиллы не нужны: всё это приходит в `swarm
   `1,15`, диапазоны `1-5`, шаги `*/15` и `9-18/3`, имена `mon..sun` и `jan..dec`. Есть сокращения `@hourly`, `@daily`,
   `@weekly`, `@monthly`, `@weekdays` (пн–пт в 9:00). Если заданы и день месяца, и день недели, достаточно совпадения
   одного, как в cron.
-- **`title`, `description`, `agents`** (первый — lead), `openspec`, `verifyCommand`, `maxFixRounds`, `maxFollowUps`,
-  `maxCostUsd` (иначе — `maxTaskCostUsd` конфига) —
+- **`title`, `description`, `agents`** (первый — lead), `openspec`, `verifyCommand` (иначе — `verifyCommand` конфига),
+  `maxFixRounds`, `maxFollowUps`, `maxCostUsd` (иначе — `maxTaskCostUsd` конфига) —
   как в форме «Новая задача». `{date}` и `{time}` в тексте заменяются датой и временем запуска. Агенты должны быть из
   этого `runners.json`: иначе задачу некому взять, и конфиг не загрузится.
 - **Без накопления.** Пока задача прошлого запуска того же расписания открыта (`ACTIVE` или `BLOCKED`), новый запуск
@@ -1788,6 +1807,7 @@ src/
 ├── ui/                 веб-страница оператора (state.ts, server.ts, page.ts, runners.ts)
 ├── ownership.ts        владение файлами: маски, точное пересечение масок, владельцы (чистые функции)
 ├── git.ts              repository / branch / commit задачи через git CLI
+├── stack.ts            стек проекта (Maven, Gradle, npm/yarn/pnpm) для его первого runners.json: сборка, verifyCommand, роли
 ├── validation.ts       id, пути, коммиты
 └── errors.ts, types.ts
 ```
@@ -1869,7 +1889,7 @@ npm run test:integration
 npm run typecheck
 ```
 
-337 тестов, vitest 3 (vitest 4 требует Node ≥ 20.19):
+542 теста, vitest 3 (vitest 4 требует Node ≥ 20.19):
 
 - **unit**: `FileStore` (атомарная запись, конкурентные создания, path traversal, lock), сторы, `PhaseManager` (все пары
   переходов, сбор раунда, ревью исправленного, лимит раундов), точное пересечение масок (с fuzz-проверкой), `EventHub`,

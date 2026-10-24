@@ -14,6 +14,8 @@ import { DEFAULT_RULES, type DetectRules } from "../supervisor/detect.js";
 import { BUILTIN_TOOLS, parseCustomTool, type CustomTool } from "../supervisor/tools.js";
 import { assertAgentId } from "../validation.js";
 import { listSkills, sessionDisabledSkills, SKILL_NAME, TASK_KINDS, type SkillInfo, type SkillsByTask } from "../skills.js";
+import { detectStack, onPath, withBuildPermissions, type ProjectStack } from "../stack.js";
+import { buildTools, parseBuildCommand } from "../build.js";
 
 /**
  * runners.json — the agents the UI keeps working:
@@ -130,6 +132,8 @@ export interface RunnersConfig {
   project?: string;
   /** Cost limit (USD) of tasks created on the page or by a schedule when they set none; absent = no limit. */
   maxTaskCostUsd?: number;
+  /** The build and test command of tasks created on the page or by a schedule when they set none (the lead's green build). */
+  verifyCommand?: string;
   /** Agents a task's lead may add to its team from templates (spawn_agent); their runners start by themselves. */
   spawn?: SpawnConfig;
   /** The agent that looks back over finished tasks for the system's problems and proposes improvements (src/observer). */
@@ -191,14 +195,53 @@ export function spawnedAgent(t: SpawnTemplate, id: string): RunnerAgentConfig {
 export const TEMPLATES = { qwen: "runners.qwen.example.json", claude: "runners.claude.example.json" } as const;
 export type TemplateName = keyof typeof TEMPLATES;
 
+/** The CLI of each template, looked up on PATH when `ui` is started without --template. */
+const TEMPLATE_CLI: Record<TemplateName, string> = { qwen: "qwen", claude: "claude" };
+
+/** The templates whose agent CLI is installed (on PATH). */
+export async function installedTemplates(env: NodeJS.ProcessEnv = process.env): Promise<TemplateName[]> {
+  const names = Object.keys(TEMPLATES) as TemplateName[];
+  const found = await Promise.all(names.map((t) => onPath(TEMPLATE_CLI[t], env)));
+  return names.filter((_, i) => found[i]);
+}
+
+/** <project>/.agent-network/runners.json: a project's own runners config. */
+export const projectConfigFile = (project: string): string => join(project, ".agent-network", "runners.json");
+
+/** The role instructions the templates name, at the top of examples/runner/instructions/ (they are the Maven ones). */
+const ROLE_INSTRUCTIONS = /^(\{agentNetworkMcp\}\/examples\/runner\/instructions\/)([a-z-]+\.md)$/;
+
+/**
+ * A template copy fitted to the project's stack: its build permission instead of ./mvnw, its verifyCommand, and the
+ * role instructions for it. Without a stack the Maven permission stays, but not the Maven verifyCommand: a task that
+ * cannot run it could never pass.
+ */
+function fitToStack(copy: Record<string, unknown>, stack: ProjectStack | null): Record<string, unknown> {
+  const fit = (v: unknown): unknown => {
+    if (Array.isArray(v)) return stack && v.every((x) => typeof x === "string") ? withBuildPermissions(v as string[], stack) : v.map(fit);
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === "instructionsFile" ? instructionsFor(x, stack) : fit(x)]));
+    return v;
+  };
+  const out = fit(copy) as Record<string, unknown>;
+  if (stack?.verifyCommand) out.verifyCommand = stack.verifyCommand;
+  else delete out.verifyCommand;
+  return out;
+}
+
+function instructionsFor(file: unknown, stack: ProjectStack | null): unknown {
+  const m = typeof file === "string" && stack?.instructions ? ROLE_INSTRUCTIONS.exec(file) : null;
+  return m ? `${m[1]}${stack!.instructions}/${m[2]}` : file;
+}
+
 /**
  * A project's own runners config: <project>/.agent-network/runners.json (out of git with the network). Missing, it is
  * copied from a shipped template; file references relative to the template ("instructions/backend.md") are pointed at
- * the package ({agentNetworkMcp}/examples/runner/...), so the copy works where it lies. The page writes its changes
- * (models, instructions, schedules on/off, supervisor settings) into this copy, never into the shipped example.
+ * the package ({agentNetworkMcp}/examples/runner/...), so the copy works where it lies, and it is fitted to the
+ * project's stack (see detectStack). The page writes its changes (models, instructions, schedules on/off, supervisor
+ * settings) into this copy, never into the shipped example.
  */
-export async function projectRunnersConfig(project: string, template: TemplateName = "qwen"): Promise<{ path: string; created: boolean }> {
-  const path = join(project, ".agent-network", "runners.json");
+export async function projectRunnersConfig(project: string, template: TemplateName = "qwen"): Promise<{ path: string; created: boolean; stack?: ProjectStack | null }> {
+  const path = projectConfigFile(project);
   if (await stat(path).then(() => true, () => false)) return { path, created: false };
   const examples = join(PACKAGE_DIR, "examples", "runner");
   const raw = JSON.parse(await readFile(join(examples, TEMPLATES[template]), "utf8")) as Record<string, unknown>;
@@ -208,12 +251,16 @@ export async function projectRunnersConfig(project: string, template: TemplateNa
     if (typeof v === "string" && /File$/.test(key) && !isAbsolute(v) && !v.startsWith("{agentNetworkMcp}")) return `{agentNetworkMcp}/examples/runner/${v}`;
     return v;
   };
-  const copy = point(raw, "") as Record<string, unknown>;
+  const stack = await detectStack(project);
+  const copy = fitToStack(point(raw, "") as Record<string, unknown>, stack);
   const note = `This project's own config, copied from examples/runner/${TEMPLATES[template]} on ${new Date().toISOString().slice(0, 10)}: edit models, build commands, limits and schedules here (the page writes its changes here too). Delete it to start over from the template.`;
-  copy._comment = [note, ...(Array.isArray(copy._comment) ? copy._comment : [])];
+  const fitted = stack
+    ? `Fitted to the project's stack, ${stack.name} (${stack.marker}): the agents may run ${stack.shell.join(", ")} in the shell, ${stack.verifyCommand ? `tasks check the merged result with "${stack.verifyCommand}" (verifyCommand)` : "no verifyCommand (package.json has no verify, check, test or build script): set one"}, role instructions from examples/runner/instructions/${stack.instructions && `${stack.instructions}/`}.`
+    : "No pom.xml, build.gradle or package.json in the project's root: the build permissions and role instructions are the template's Maven ones, and there is no verifyCommand. Set them for your build.";
+  copy._comment = [note, fitted, ...(Array.isArray(copy._comment) ? copy._comment : [])];
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(copy, null, 2) + "\n", { flag: "wx" });
-  return { path, created: true };
+  return { path, created: true, stack };
 }
 
 type RawAgent = Partial<RunnerAgentConfig>;
@@ -248,6 +295,17 @@ export function withoutTools(command: string[], tools: string[]): string[] {
   return out;
 }
 
+/** A verifyCommand the build tool can run: one build-tool command without a shell (see parseBuildCommand). */
+function parseVerifyCommand(value: unknown, what: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new AppError("INVALID_CONFIG", `${what} must be the build and test command, e.g. "./mvnw -q -B verify" or "npm test"`);
+  try {
+    parseBuildCommand(value, buildTools());
+  } catch (e) {
+    throw new AppError("INVALID_CONFIG", `${what}: ${(e as Error).message}`);
+  }
+  return value.trim();
+}
+
 function costLimit(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new AppError("INVALID_CONFIG", `${what} must be a positive amount in USD, e.g. 10`);
   return value;
@@ -255,7 +313,7 @@ function costLimit(value: unknown, what: string): number {
 
 export async function loadRunnersConfig(path: string, opts: { projectDir?: string } = {}): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown };
+  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; verifyCommand?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown };
   try {
     // {agentNetworkMcp} anywhere in the file is this package's folder
     raw = JSON.parse((await readFile(file, "utf8")).replaceAll("{agentNetworkMcp}", PACKAGE_DIR.replaceAll("\\", "/")));
@@ -407,6 +465,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
   if (raw.mergeStrategy !== undefined && raw.mergeStrategy !== "squash" && raw.mergeStrategy !== "merge") throw new AppError("INVALID_CONFIG", `${file}: "mergeStrategy" is "squash" (one commit per task) or "merge"`);
   const prices = parsePrices(raw.prices, file);
   const maxTaskCostUsd = raw.maxTaskCostUsd === undefined || raw.maxTaskCostUsd === null ? undefined : costLimit(raw.maxTaskCostUsd, `${file}: "maxTaskCostUsd"`);
+  const verifyCommand = raw.verifyCommand === undefined || raw.verifyCommand === null ? undefined : parseVerifyCommand(raw.verifyCommand, `${file}: "verifyCommand"`);
   const supervisor = raw.supervisor === undefined ? undefined : await parseSupervisor(raw.supervisor, file, abs);
   const schedules = raw.schedules === undefined ? undefined : parseSchedules(raw.schedules, file, agents.map((a) => a.id));
   return {
@@ -414,6 +473,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     ...(project ? { project } : {}), agents, path: file,
     ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(schedules?.length ? { schedules } : {}),
     ...(maxTaskCostUsd !== undefined ? { maxTaskCostUsd } : {}),
+    ...(verifyCommand ? { verifyCommand } : {}),
     ...(spawn?.templates.length ? { spawn } : {}),
     ...(observer ? { observer } : {}),
     ...(planCritic ? { planCritic } : {}),

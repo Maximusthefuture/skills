@@ -54,7 +54,7 @@ describe("a project's own runners config", () => {
   it("is copied from the template once (Qwen by default), with file references pointed at the package, and loads in place", async () => {
     const { project } = await repo();
     const qwen = await projectRunnersConfig(project);
-    expect(qwen).toEqual({ path: join(project, ".agent-network", "runners.json"), created: true });
+    expect(qwen).toEqual({ path: join(project, ".agent-network", "runners.json"), created: true, stack: null }); // a.txt only: no build to fit
     const raw = JSON.parse(readFileSync(qwen.path, "utf8"));
     expect(raw._comment[0]).toContain("copied from examples/runner/runners.qwen.example.json");
     expect(raw.defaults.command[0]).toBe("qwen");

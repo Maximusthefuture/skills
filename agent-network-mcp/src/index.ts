@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { createObserverServer } from "./observer/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { runCli } from "./cli.js";
+import { createInterface } from "node:readline/promises";
+import { runCli, type Ask } from "./cli.js";
 import { loadConfig } from "./config.js";
 import { isAppError } from "./errors.js";
 import { createServer } from "./server.js";
@@ -14,6 +15,19 @@ import { createSupervisorServer, supervisorOptionsFromEnv } from "./supervisor/m
 const log = (msg: string): void => {
   process.stderr.write(`[agent-network-mcp] ${msg}\n`);
 };
+
+/** A question to the operator on the terminal (ui's first start in a project); none without a terminal to answer on. */
+const ask: Ask | undefined =
+  process.stdin.isTTY && process.stdout.isTTY
+    ? async (question) => {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          return await rl.question(question);
+        } finally {
+          rl.close();
+        }
+      }
+    : undefined;
 
 async function main(): Promise<void> {
   if (process.argv[2] === "supervisor-mcp") {
@@ -34,7 +48,7 @@ async function main(): Promise<void> {
     return;
   }
   if (process.argv[2] && process.argv[2] !== "serve") {
-    const code = await runCli(process.argv.slice(2), process.env, (s) => process.stdout.write(s + "\n"));
+    const code = await runCli(process.argv.slice(2), process.env, (s) => process.stdout.write(s + "\n"), process.cwd(), ask);
     if (code >= 0) process.exit(code);
     return; // long-running operator command (ui) keeps the event loop alive
   }

@@ -11,7 +11,8 @@ import { isValidModel, runRunner, usesModel } from "./runner.js";
 import { collectStats } from "./stats.js";
 import { FileStore } from "./storage/fileStore.js";
 import { NetworkService, depthFlags } from "./service.js";
-import { loadRunnersConfig, projectRunnersConfig, RunnerPool, TEMPLATES, watchPrices, type RunnersConfig, type TemplateName } from "./ui/runners.js";
+import { installedTemplates, loadRunnersConfig, projectConfigFile, projectRunnersConfig, RunnerPool, TEMPLATES, watchPrices, type RunnersConfig, type TemplateName } from "./ui/runners.js";
+import type { ProjectStack } from "./stack.js";
 import { startUiServer } from "./ui/server.js";
 import { Journal, type JournalEntry } from "./supervisor/journal.js";
 import { formatSessionLog, listSessionLogs, readSessionLog } from "./supervisor/sessionLog.js";
@@ -68,9 +69,12 @@ integrate with PASS (work that is left); the agents pick them up after the task 
 network): the agents split its tasks.md by task number, the lead ticks them; --title and --description become optional.`;
 
 /** Operator commands run outside any LLM. Returns the process exit code, or -1 when a long-running server was started. */
-export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string = process.cwd()): Promise<number> {
+/** Asks the operator on the terminal and returns the answer; absent when nobody can answer (no terminal, tests). */
+export type Ask = (question: string) => Promise<string>;
+
+export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string = process.cwd(), ask?: Ask): Promise<number> {
   const [group, command, ...rest] = argv;
-  if (group === "ui") return runUi(command ? [command, ...rest] : rest, env, out, cwd);
+  if (group === "ui") return runUi(command ? [command, ...rest] : rest, env, out, cwd, ask);
   if (group === "hook") return runHookCli(command, rest, env, out, undefined, cwd);
   if (group === "run") return runAgentRunner(command === undefined ? rest : [command, ...rest], env, out, cwd);
   if (group === "supervisor" && (command === "journal" || command === "sessions" || command === "session")) return runSupervisorCli(command, rest, env, out, cwd);
@@ -207,14 +211,40 @@ const operatorOf = (networkDir: string): Promise<NetworkService> => {
   return operators.get(networkDir)!;
 };
 
-async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string): Promise<number> {
+/**
+ * The template of a project's first config when --template is not given: the agent CLI that is installed. With both,
+ * the operator picks on the terminal; Qwen when nobody can answer or neither is found (the default before).
+ */
+async function chooseTemplate(env: NodeJS.ProcessEnv, out: (s: string) => void, ask?: Ask): Promise<TemplateName> {
+  const installed = await installedTemplates(env);
+  if (installed.length === 1) {
+    out(`template: ${installed[0]} (the only agent CLI on PATH; --template picks another)`);
+    return installed[0]!;
+  }
+  if (!installed.length) {
+    out("template: qwen (neither claude nor qwen is on PATH: install one, or start with --template claude)");
+    return "qwen";
+  }
+  const answer = ask ? (await ask("Claude Code and Qwen Code are both installed. Which one runs this project's agents, claude or qwen? [qwen] ")).trim().toLowerCase() : "";
+  const template: TemplateName = Object.hasOwn(TEMPLATES, answer) ? (answer as TemplateName) : "qwen";
+  out(`template: ${template}${ask ? "" : " (claude and qwen are both on PATH; --template claude for Claude Code)"}`);
+  return template;
+}
+
+/** What the first config of a project was fitted to, for the terminal. */
+function stackLine(stack: ProjectStack | null | undefined): string {
+  if (!stack) return "stack: not found (no pom.xml, build.gradle or package.json in the project's root): the config keeps the Maven build permission and role instructions and has no verifyCommand; set them for your build";
+  const verify = stack.verifyCommand ? `"${stack.verifyCommand}"` : "none (package.json has no verify, check, test or build script): set verifyCommand in the config";
+  return `stack: ${stack.name} (${stack.marker}): the agents may run ${stack.shell.join(", ")}; verifyCommand ${verify}`;
+}
+
+async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, cwd: string, ask?: Ask): Promise<number> {
   const { values } = parseArgs({
     args,
     options: { port: { type: "string" }, "network-dir": { type: "string" }, runners: { type: "string", multiple: true }, template: { type: "string" }, "read-only": { type: "boolean" } },
   });
   const configs: RunnersConfig[] = [];
-  const template = values.template ?? "qwen";
-  if (!Object.hasOwn(TEMPLATES, template)) {
+  if (values.template !== undefined && !Object.hasOwn(TEMPLATES, values.template)) {
     out(`error: --template is ${Object.keys(TEMPLATES).join(" or ")}`);
     return 2;
   }
@@ -224,8 +254,10 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
     if (!files.length && !values["read-only"] && !values["network-dir"] && !env.NETWORK_DIR) {
       const root = await gitRoot(cwd);
       if (root) {
-        const own = await projectRunnersConfig(root, template as TemplateName);
+        const template = (values.template as TemplateName | undefined) ?? (existsSync(projectConfigFile(root)) ? "qwen" : await chooseTemplate(env, out, ask));
+        const own = await projectRunnersConfig(root, template);
         out(own.created ? `config: ${own.path} (new, from the ${template} template: edit models and build commands there)` : `config: ${own.path}${values.template ? ` (exists; --template ${template} not applied)` : ""}`);
+        if (own.created) out(stackLine(own.stack));
         files = [own.path];
       }
     }
@@ -288,7 +320,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
       // always with runners: schedules can be added on the page, and they apply without a restart
       const scheduler =
         runners && config
-          ? new Scheduler({ networkDir: dir, schedules: config.schedules ?? [], ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(config.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}), log: (line) => out(line) })
+          ? new Scheduler({ networkDir: dir, schedules: config.schedules ?? [], ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(config.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}), ...(config.verifyCommand ? { verifyCommand: config.verifyCommand } : {}), log: (line) => out(line) })
           : undefined;
       // looks back over closed tasks; its calls show in the activity feed like the supervisor's
       const observer =
@@ -303,6 +335,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
       return {
         networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}), ...(observer ? { observer } : {}), ...(planCritic ? { planCritic } : {}),
         ...(config?.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}),
+        ...(config?.verifyCommand ? { verifyCommand: config.verifyCommand } : {}),
         ...(config?.mergeStrategy ? { mergeStrategy: config.mergeStrategy } : {}),
       };
     });

@@ -53,6 +53,8 @@ export interface UiProject {
   scheduler?: Scheduler;
   /** Cost limit (USD) of a task created on the page without one (runners.json "maxTaskCostUsd"). */
   maxTaskCostUsd?: number;
+  /** Build and test command of a task created on the page without one (runners.json "verifyCommand"). */
+  verifyCommand?: string;
   /** "Влить в проект": squash (default) or merge. */
   mergeStrategy?: "squash" | "merge";
 }
@@ -88,6 +90,7 @@ interface Project {
   operator?: NetworkService;
   prices?: UiProject["prices"];
   maxTaskCostUsd?: number;
+  verifyCommand?: string;
   mergeStrategy?: "squash" | "merge";
   git?: { at: number; value: Promise<GitContext | null> };
 }
@@ -158,6 +161,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       ...(spec.runners && spec.planCritic ? { planCritic: spec.planCritic } : {}),
       ...(spec.runners && spec.scheduler ? { scheduler: spec.scheduler } : {}),
       ...(spec.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: spec.maxTaskCostUsd } : {}),
+      ...(spec.verifyCommand ? { verifyCommand: spec.verifyCommand } : {}),
       ...(spec.mergeStrategy ? { mergeStrategy: spec.mergeStrategy } : {}),
     });
   }
@@ -325,7 +329,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
           project: { id: p.id, name: p.name, projectDir: tilde(p.projectDir), networkDir: tilde(p.networkDir), count: projects.length },
           control: p.pool
             ? {
-                runners: await p.pool.details(), maxTaskCostUsd: p.maxTaskCostUsd ?? null,
+                runners: await p.pool.details(), maxTaskCostUsd: p.maxTaskCostUsd ?? null, verifyCommand: p.verifyCommand ?? null,
                 /** Agents in auto worktrees: the DONE task card offers to merge the lead's branch and remove the worktrees. */
                 worktrees: p.pool.ids().filter((id) => p.pool!.agentFolder(id)?.worktree),
               }
@@ -452,6 +456,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const prep = typeof b.depth === "string" && b.depth !== "custom" ? depthFlags(b.depth) : { clarify: b.clarify === true, grill: b.grill === true, planReview: b.planReview === true };
       // the page sends "" for "no limit"; a field it leaves out gets the config's maxTaskCostUsd
       const maxCostUsd = b.maxCostUsd === undefined ? p.maxTaskCostUsd : b.maxCostUsd === "" || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd);
+      // the same for the build: "" is "no verify command", a field left out gets the config's verifyCommand
+      const verifyCommand = b.verifyCommand === undefined ? p.verifyCommand : typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? b.verifyCommand : undefined;
       const agents = Array.isArray(b.agents) ? b.agents.map(String) : [];
       const openspec = typeof b.openspec === "string" && b.openspec.trim() ? assertChangeName(b.openspec.trim()) : undefined;
       if (openspec) await checkAgentFolders(p, openspec, agents);
@@ -466,7 +472,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         ...(prep.planReview ? { planReview: true } : {}),
         ...(prep.grill ? { grill: true } : {}),
         ...(b.allowSpawn === true ? { allowSpawn: true } : {}),
-        ...(typeof b.verifyCommand === "string" && b.verifyCommand.trim() ? { verifyCommand: b.verifyCommand } : {}),
+        ...(verifyCommand ? { verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
         ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
@@ -610,6 +616,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
           (proposal.target === "agent-network" ? "\n\nThis is the agent-network-mcp repository itself: keep the tests green (npm test) and the README in step." : ""),
         agents,
         clarify: true,
+        ...(target === p.networkDir && p.verifyCommand ? { verifyCommand: p.verifyCommand } : {}),
         ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
       });
       return json(201, { proposal: await store.decide(id, { status: "accepted", taskId: task.id, network: target }), task: { id: task.id, network: tilde(target), here: target === p.networkDir } });

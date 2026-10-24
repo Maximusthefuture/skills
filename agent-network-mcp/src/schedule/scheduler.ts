@@ -43,6 +43,8 @@ export interface SchedulerOptions {
   pollMs?: number;
   /** Cost limit of a schedule's task that sets none ("maxTaskCostUsd" of runners.json, read again with the file). */
   maxTaskCostUsd?: number;
+  /** Build and test command of a schedule's task that sets none ("verifyCommand" of runners.json, read again with the file). */
+  verifyCommand?: string;
   now?: () => number;
   log?: (line: string) => void;
 }
@@ -68,10 +70,12 @@ export class Scheduler {
   private running = false;
   private configError: string | null = null;
   private maxTaskCostUsd?: number;
+  private verifyCommand?: string;
 
   constructor(private readonly opts: SchedulerOptions) {
     this.fs = FileStore.open(opts.networkDir);
     this.maxTaskCostUsd = opts.maxTaskCostUsd;
+    this.verifyCommand = opts.verifyCommand;
     this.operator = NetworkService.create(opts.networkDir, { id: "operator", type: "scheduler" });
   }
 
@@ -190,7 +194,7 @@ export class Scheduler {
           description: fill(s.description, at),
           agents: s.agents,
           ...(s.openspec ? { openspec: s.openspec } : {}),
-          ...(s.verifyCommand ? { verifyCommand: s.verifyCommand } : {}),
+          ...((s.verifyCommand ?? this.verifyCommand) ? { verifyCommand: s.verifyCommand ?? this.verifyCommand } : {}),
           ...(s.maxFixRounds !== undefined ? { maxFixRounds: s.maxFixRounds } : {}),
           ...(s.maxFollowUps !== undefined ? { maxFollowUps: s.maxFollowUps } : {}),
           ...((s.maxCostUsd ?? this.maxTaskCostUsd) !== undefined ? { maxCostUsd: s.maxCostUsd ?? this.maxTaskCostUsd } : {}),
@@ -214,6 +218,7 @@ export class Scheduler {
       const config = await loadRunnersConfig(this.opts.configPath, this.opts.projectDir ? { projectDir: this.opts.projectDir } : {});
       this.opts.schedules = config.schedules ?? [];
       this.maxTaskCostUsd = config.maxTaskCostUsd;
+      this.verifyCommand = config.verifyCommand;
       this.configError = null;
     } catch (e) {
       const message = (e as Error).message;
