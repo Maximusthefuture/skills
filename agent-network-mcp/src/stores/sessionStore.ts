@@ -14,8 +14,11 @@ export interface SessionRecord {
   exitCode: number;
   usage?: TokenUsage;
   costUsd?: number;
-  /** costUsd is an estimate: the session ended before the CLI reported its cost (see runner: estimateCost). */
-  costEstimated?: true;
+  /**
+   * The session was stopped before its CLI reported usage and cost (the context limit): usage is the sum of its messages,
+   * without output (that count is not reliable there); the statistics price it at the model's learned rate (stats.ts).
+   */
+  usagePartial?: true;
   numTurns?: number;
   model?: string;
   /** The skills the session loaded (its subagents' too), in the order of their first use. */

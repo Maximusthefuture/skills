@@ -190,11 +190,19 @@ export class SessionOutput {
     return usage ? { usage, partial: true, ...(this.model ? { model: this.model } : {}) } : undefined;
   }
 
-  /** Tokens of every model call so far (the session's and its subagents'), each message once. */
+  /**
+   * The tokens every model call so far read (the session's and its subagents'), each message once. Output is 0: a message
+   * event carries the count at the start of its stream, not what the model wrote in the end.
+   */
   partialUsage(): TokenUsage | undefined {
     if (!this.usageByMessage.size) return undefined;
     const sum: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
-    for (const u of this.usageByMessage.values()) for (const k of Object.keys(sum) as (keyof TokenUsage)[]) sum[k] += u[k];
+    for (const u of this.usageByMessage.values()) {
+      sum.input += u.input;
+      sum.cacheRead += u.cacheRead;
+      sum.cacheCreation += u.cacheCreation;
+    }
+    sum.total = sum.input;
     return sum;
   }
 

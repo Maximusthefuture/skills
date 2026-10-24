@@ -1,6 +1,6 @@
 import { pickTask } from "../runner.js";
 import type { TokenUsage } from "../sessionOutput.js";
-import { sessionCost, type Prices } from "../stats.js";
+import { learnRates, sessionCost, type Prices } from "../stats.js";
 import type { FileStore } from "../storage/fileStore.js";
 import { SessionStore } from "../stores/sessionStore.js";
 import type { Task } from "../types.js";
@@ -50,10 +50,11 @@ export async function listRuns(fs: FileStore, tasks: Task[], prices?: Prices): P
   const runs = (await Promise.all(tasks.map(async (t) => (await store.list(t.id)).map((s) => ({ s, t }))))).flat();
   const byEnd = [...runs].sort((a, b) => a.s.endedAt.localeCompare(b.s.endedAt) || a.t.id.localeCompare(b.t.id) || a.s.id.localeCompare(b.s.id));
   const seq = new Map(byEnd.map((r, i) => [r, i + 1]));
+  const rates = learnRates(runs.map((r) => r.s));
   return runs
     .map((r) => {
       const { s, t } = r;
-      const cost = sessionCost(s, prices);
+      const cost = sessionCost(s, prices, rates);
       return {
         id: s.id,
         seq: seq.get(r)!,

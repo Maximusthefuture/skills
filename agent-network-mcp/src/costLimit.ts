@@ -1,5 +1,5 @@
 import { NetworkService } from "./service.js";
-import { attachedCost, sessionCost, type Prices } from "./stats.js";
+import { attachedCost, learnRates, sessionCost, type Prices } from "./stats.js";
 import { FileStore } from "./storage/fileStore.js";
 import { SessionStore } from "./stores/sessionStore.js";
 import { TaskStore } from "./stores/taskStore.js";
@@ -11,15 +11,17 @@ import { TaskStore } from "./stores/taskStore.js";
 export async function taskSpent(fs: FileStore, taskId: string, prices: Prices | undefined): Promise<{ usd: number; unknown: number }> {
   let usd = 0;
   let unknown = 0;
-  for (const s of await new SessionStore(fs).list(taskId)) {
-    const c = sessionCost(s, prices);
+  const sessions = await new SessionStore(fs).list(taskId);
+  const rates = learnRates(sessions);
+  for (const s of sessions) {
+    const c = sessionCost(s, prices, rates);
     if (c.usd === undefined) unknown++;
     else usd += c.usd;
   }
   const tasks = new TaskStore(fs);
   const task = await tasks.find(taskId);
   if (task) {
-    const extra = await attachedCost(fs, task, await tasks.list(), prices);
+    const extra = await attachedCost(fs, task, await tasks.list(), prices, rates);
     usd += extra.jobsUsd + extra.criticUsd;
     unknown += extra.unknown;
   }
