@@ -110,8 +110,10 @@ export function clarifies(m: Pick<Message, "from" | "to" | "type" | "content">, 
 }
 
 /** The yes of a summary question: "Yes, that's it" / "Да, всё так" (a plain "Yes" is an ordinary choice). */
-const CONFIRM_YES = /^\s*(yes|да)[\s,!.—-]+(that'?s (it|right)|correct|exactly|всё так|все так|верно|именно)/i;
-const UNDERSTOOD = /^[\s*_#>]*(how i understand( it| the task)?|(updated |my )?understanding|как я понял|моё понимание|мое понимание)/i;
+const CONFIRM_YES = /^\s*(yes|да)[\s,!.—-]+(that'?s (it|right)|correct|exactly|right|всё так|все так|всё верно|все верно|верно|правильно|именно|так)/i;
+const UNDERSTOOD = /^[\s*_#>]*(how i understand( it| the task)?|(updated |my )?understanding|как я понял|как я понимаю|моё понимание|мое понимание)/i;
+/** A summary of the grilling may open with a heading ("**Summary of the decisions**", "Сводка решений") before the words. */
+const SUMMARY = /(how i understand|my understanding|summary|как я понял|как я понимаю|моё понимание|мое понимание|сводка|итог)/i;
 
 /**
  * A grilled task is clear once the operator said yes to the lead's summary: a question of the lead that starts with how it
@@ -120,7 +122,7 @@ const UNDERSTOOD = /^[\s*_#>]*(how i understand( it| the task)?|(updated |my )?u
 export function grillConfirmed(messages: Pick<Message, "id" | "from" | "to" | "type" | "content" | "replyTo" | "choices">[], lead: string): boolean {
   // the summary: it starts with how the lead understood the task (markdown around it is fine), or it offers yes / no
   const summary = (q: (typeof messages)[number]) =>
-    UNDERSTOOD.test(q.content) || (CONFIRM_YES.test(q.choices?.options[0]?.label ?? "") && /^\s*(no|нет)(?![a-zа-яё])/i.test(q.choices?.options[1]?.label ?? ""));
+    UNDERSTOOD.test(q.content) || (SUMMARY.test(q.content.slice(0, 200)) && (q.choices?.options.length ?? 2) === 2) || (CONFIRM_YES.test(q.choices?.options[0]?.label ?? "") && /^\s*(no|нет)(?![a-zа-яё])/i.test(q.choices?.options[1]?.label ?? ""));
   return messages.some((q) => q.from === lead && q.to === OPERATOR && q.type === "QUESTION" && summary(q) &&
     messages.some((a) => a.from === OPERATOR && a.replyTo === q.id && (
       (q.choices?.options[0] && a.content.startsWith(`Chosen: "${q.choices.options[0].label}"`)) ||

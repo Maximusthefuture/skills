@@ -334,4 +334,17 @@ describe("the agreement against the task's split", () => {
     const res = await backend.propose({ summary: "s", assignments: [{ agentId: "backend", responsibility: "all", files: ["src/**"] }, { agentId: "reviewer", responsibility: "review", files: [] }] });
     expect(res.warnings).toEqual([expect.stringContaining('task.description gives reviewer work ("модульные тесты и ревью")')]);
   });
+
+describe("the summary of a grilling in other words", () => {
+  it("a heading such as «Сводка решений» and «Да, правильно» count as the summary and its yes; a plain yes/no question does not", async () => {
+    const { grillConfirmed } = await import("../../src/service.js");
+    const q = (id: string, content: string, labels: string[]) => ({ id, from: "lead", to: "operator", type: "QUESTION" as const, content, choices: { options: labels.map((label) => ({ label })) } });
+    const yes = (replyTo: string, label: string) => ({ id: `a-${replyTo}`, from: "operator", to: "lead", type: "INFORMATION" as const, content: `Chosen: "${label}"`, replyTo });
+    const summary = q("m1", "**Сводка решений для OpenSpec change:**\n\nКак я понимаю scope: …\n\nЭто правильное понимание?", ["Да, правильно", "Нет, нужна правка"]);
+    expect(grillConfirmed([summary, yes("m1", "Да, правильно")], "lead")).toBe(true);
+    expect(grillConfirmed([summary, yes("m1", "Нет, нужна правка")], "lead")).toBe(false);
+    const plain = q("m2", "Q1: Нужно ли событие в Kafka?", ["Да", "Нет"]);
+    expect(grillConfirmed([plain, yes("m2", "Да")], "lead")).toBe(false);
+  });
+});
 });
