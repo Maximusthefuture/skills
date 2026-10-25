@@ -272,7 +272,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 
     <section data-panel="deploy" hidden>
       <h1>Раскатка</h1><div class="lead">Влитая задача → её ветка в Bitbucket (push по SSH вашим ключом) → job в Jenkins (через MCP) → проверка раскатки в Kubernetes. Перед push — «Для раскатки»: какие свойства нужны сервису и заданы ли они в окружении. Агенты ничего отсюда не запускают: только вы.</div>
-      <h2>Готово к раскатке</h2><div class="lead">Задачи, влитые в проект кнопкой «Влить в проект» и не откаченные.</div><div id="dready"></div>
+      <h2>Влитые задачи</h2><div class="lead">Задачи, влитые в проект кнопкой «Влить в проект» и не откаченные: какая уже на стенде в Kubernetes, а какая лежит в ветке и ждёт своего часа.</div><div id="dready"></div>
       <h2>Раскатки</h2><div id="druns"></div>
       <h2>Настройки</h2><div class="lead">Хранятся в .agent-network/deploy/settings.json проекта. Секреты сюда не пишите: в переменных MCP пишите <span class="mono">&#36;{ИМЯ}</span> — значение возьмётся из окружения сервера страницы.</div><div id="dsettings"></div>
     </section>
@@ -610,11 +610,13 @@ function renderReview(t){
 }
 // the project's role library on the Runners tab: what leads can give spawned agents by name
 // «Раскатка»: merged tasks → Bitbucket → Jenkins → Kubernetes
-let DEP=null,depForm=null,depSetDirty=false;const depOpen=new Set();
+let DEP=null,depForm=null,depSetDirty=false,depFilter="all";
+const STAGE_RU={merged:"не отправлена",branch:"в ветке, ждёт",running:"идёт раскатка",deployed:"на стенде",failed:"ошибка раскатки"};
+const STAGE_FILTERS=[["all","Все"],["merged","Не отправлены"],["branch","В ветке"],["deployed","На стенде"],["running","Идёт"],["failed","Ошибка"]];const depOpen=new Set();
 const STEP_RU={notes:"Для раскатки",push:"Push в Bitbucket",jenkins:"Job в Jenkins",kubernetes:"Kubernetes"};
 const RUN_RU={running:"идёт",ok:"готово",failed:"ошибка",cancelled:"отменена"};
 function depIcon(s){return s==="ok"?"✓":s==="failed"?"✗":s==="running"?"…":s==="skipped"?"–":"·"}
-function renderDeploy(){if(!DEP)return;renderDeployReady();renderDeployRuns();renderDeploySettings()}
+function renderDeploy(){if(!DEP)return;if(!renderDeploy.f){renderDeploy.f=1;try{depFilter=localStorage.getItem("depFilter")||"all"}catch(e){}}renderDeployReady();renderDeployRuns();renderDeploySettings()}
 function linesToMap(t){const o={};for(const l of String(t||"").split("\n")){const i=l.indexOf("=");if(i>0)o[l.slice(0,i).trim()]=l.slice(i+1).trim()}return o}
 function mapToLines(m){return Object.entries(m||{}).map(([k,v])=>k+"="+v).join("\n")}
 function notesView(n){const box=el("div","");const envs=(DEP.settings.environments||[]).map(e=>e.name);
@@ -627,12 +629,18 @@ function notesView(n){const box=el("div","");const envs=(DEP.settings.environmen
   const extra=[["Миграции",n.migrations],["Топики Kafka",n.topics.map(x=>x.key+" = "+x.value)],["Внешние адреса",n.endpoints.map(x=>x.key+" = "+x.value)]];
   for(const[h,list]of extra)if(list.length){box.append(el("div","",""));const d=el("div","muted small",h+": ");d.append(el("span","mono",list.join(", ")));box.append(d)}
   return box}
-function renderDeployReady(){const box=$("dready");if(!box)return;const sig=JSON.stringify([DEP.ready,DEP.control,DEP.settings.environments,depForm&&[depForm.taskId,depForm.env,!!depForm.notes,depForm.err,depForm.busy]]);if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.replaceChildren();
+function stageCell(st){const td=el("td","");const b=el("span","badge "+(st.stage==="deployed"?"PASS":st.stage==="running"?"IN_PROGRESS":st.stage==="failed"?"ERROR":st.stage==="branch"?"WAITING":"STOPPED"),STAGE_RU[st.stage]+(st.stage==="deployed"?": "+st.envs.join(", "):""));td.append(b);
+  if(st.branch){const d=el("div","muted small","");if(st.branchUrl){const a=document.createElement("a");a.href=st.branchUrl;a.target="_blank";a.rel="noopener";a.textContent=st.branch;d.append(a)}else d.append(el("span","mono",st.branch));td.append(d)}
+  if(st.lastRun)td.append(el("div","muted small","последняя: "+st.lastRun.id+" → "+st.lastRun.env+" · "+(RUN_RU[st.lastRun.status]||st.lastRun.status)));return td}
+function renderDeployReady(){const box=$("dready");if(!box)return;const sig=JSON.stringify([DEP.ready,DEP.control,DEP.settings.environments,depFilter,depForm&&[depForm.taskId,depForm.env,!!depForm.notes,depForm.err,depForm.busy]]);if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.replaceChildren();
   if(!DEP.ready.length){box.append(el("div","muted","Нет влитых задач: после DONE нажмите в карточке задачи «Посмотреть изменения» → «Влить в проект»."));return}
-  const pn=el("div","panel");const t=document.createElement("table");const hd=document.createElement("tr");for(const h of ["Задача","","Коммит","Влита в",""])hd.append(el("th","",h));t.append(hd);
-  for(const r of DEP.ready){const tr=document.createElement("tr");tr.append(el("td","mono",r.id),el("td","",r.title),el("td","mono",r.commit.slice(0,7)),el("td","",r.into+" · "+new Date(r.at).toLocaleString()));
+  const fl=el("div","akinds");for(const[k,label]of STAGE_FILTERS){const n=k==="all"?DEP.ready.length:DEP.ready.filter(r=>r.state.stage===k).length;if(k!=="all"&&!n&&depFilter!==k)continue;const b=el("button",depFilter===k?"on":"",label+" ");b.type="button";b.append(el("span","k",String(n)));b.onclick=()=>{depFilter=k;try{localStorage.setItem("depFilter",k)}catch(e){}renderDeployReady()};fl.append(b)}box.append(fl);
+  const rows=DEP.ready.filter(r=>depFilter==="all"||r.state.stage===depFilter);
+  if(!rows.length){box.append(el("div","muted","Нет задач в этом состоянии."));return}
+  const pn=el("div","panel");const t=document.createElement("table");const hd=document.createElement("tr");for(const h of ["Задача","","Состояние","Коммит","Влита в",""])hd.append(el("th","",h));t.append(hd);
+  for(const r of rows){const tr=document.createElement("tr");tr.append(el("td","mono",r.id),el("td","",r.title),stageCell(r.state),el("td","mono",r.commit.slice(0,7)),el("td","",r.into+" · "+new Date(r.at).toLocaleString()));
     const td=document.createElement("td");if(DEP.control){const b=el("button","small",depForm&&depForm.taskId===r.id?"Скрыть":"Раскатить…");b.type="button";b.onclick=()=>{depForm=depForm&&depForm.taskId===r.id?null:{taskId:r.id,env:(DEP.settings.environments[0]||{}).name};renderDeployReady();if(depForm)loadDeployNotes()};td.append(b)}tr.append(td);t.append(tr);
-    if(depForm&&depForm.taskId===r.id){const fr=document.createElement("tr");const fc=document.createElement("td");fc.colSpan=5;fc.append(deployForm(r));fr.append(fc);t.append(fr)}}
+    if(depForm&&depForm.taskId===r.id){const fr=document.createElement("tr");const fc=document.createElement("td");fc.colSpan=6;fc.append(deployForm(r));fr.append(fc);t.append(fr)}}
   pn.append(t);box.append(pn)}
 async function loadDeployNotes(){const f=depForm;if(!f)return;f.notes=null;f.err=null;try{f.notes=(await getJSON(q("/api/tasks/"+encodeURIComponent(f.taskId)+"/deploy-notes"))).notes}catch(e){f.err="не удалось прочитать diff задачи"}if(depForm===f)renderDeployReady()}
 function deployForm(r){const f=depForm;const box=el("div","card");const row=el("div","checks");
@@ -650,7 +658,7 @@ function renderDeployRuns(){const box=$("druns");if(!box)return;const sig=JSON.s
   const running=DEP.runs.filter(r=>r.status==="running").length;const c=$("c-deploy");if(c)c.textContent=running?String(running):"";
   if(!DEP.runs.length){box.append(el("div","muted","Раскаток ещё не было."));return}
   for(const r of DEP.runs){const card=el("div","card");const head=el("div","hrow");const t=el("div","");t.append(el("b","mono",r.id+" "),el("span","",r.taskId+" · "+r.taskTitle),el("div","muted small",r.env+" · "+r.branch+" · "+new Date(r.createdAt).toLocaleString()+(r.endedAt?" — "+time(r.endedAt):"")));
-    const st=el("span","badge "+(r.status==="ok"?"DONE":r.status==="running"?"IN_PROGRESS":"STOPPED"),RUN_RU[r.status]||r.status);const end=el("div","end");end.append(st);
+    const st=el("span","badge "+(r.status==="ok"?"PASS":r.status==="running"?"IN_PROGRESS":r.status==="failed"?"ERROR":"STOPPED"),RUN_RU[r.status]||r.status);const end=el("div","end");end.append(st);
     if(r.status==="running"&&DEP.control){const x=el("button","ghost small","Отменить");x.type="button";x.onclick=async()=>{if(!await ask("Отменить "+r.id+"? Уже сделанный push не откатится."))return;try{await post("/api/deploys/"+r.id+"/cancel",{});DEP=await getJSON(q("/api/deploys"));renderDeploy()}catch(e){alert(e.message)}};end.append(" ",x)}
     head.append(t,end);card.append(head);
     for(const s of r.steps){const line=el("div","step"+(s.status==="running"?" now":s.status==="ok"?" past":""));line.append(el("span","mono",depIcon(s.status)+" "),el("b","",STEP_RU[s.name]||s.name),el("span","muted"," "+(s.summary||"")));

@@ -54,6 +54,40 @@ export function mergedCommits(task: Task): { commit: string; base: string } {
   return { commit: m.commit, base: m.already && task.baseCommit ? task.baseCommit : `${m.commit}^1` };
 }
 
+/**
+ * Where a merged task stands on its way out: "merged" (not pushed), "branch" (in Bitbucket, on no stand yet),
+ * "deployed" (the rollout check passed in `envs`), "running", or "failed" (the latest deploy failed and it is on no stand).
+ */
+export interface TaskDeployState {
+  stage: "merged" | "branch" | "running" | "deployed" | "failed";
+  /** Environments whose latest deploy of this task passed the Kubernetes check. */
+  envs: string[];
+  branch?: string;
+  branchUrl?: string;
+  lastRun?: { id: string; env: string; status: DeployRun["status"]; at: string };
+}
+
+export function taskDeployState(taskId: string, runs: DeployRun[]): TaskDeployState {
+  const mine = runs.filter((r) => r.taskId === taskId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const step = (r: DeployRun, n: StepName) => r.steps.find((s) => s.name === n)?.status;
+  const envs: string[] = [];
+  const seen = new Set<string>();
+  for (const r of mine) {
+    if (seen.has(r.env) || r.status === "running" || r.status === "cancelled") continue;
+    seen.add(r.env); // only the latest finished deploy of each environment counts
+    if (step(r, "kubernetes") === "ok") envs.push(r.env);
+  }
+  const pushed = mine.find((r) => step(r, "push") === "ok");
+  const last = mine[0];
+  const stage: TaskDeployState["stage"] = mine.some((r) => r.status === "running") ? "running" : envs.length ? "deployed" : last?.status === "failed" ? "failed" : pushed ? "branch" : "merged";
+  return {
+    stage,
+    envs: envs.sort(),
+    ...(pushed ? { branch: pushed.branch, ...(pushed.push?.webUrl ? { branchUrl: pushed.push.webUrl } : {}) } : {}),
+    ...(last ? { lastRun: { id: last.id, env: last.env, status: last.status, at: last.createdAt } } : {}),
+  };
+}
+
 export class Deployer {
   private readonly active = new Map<string, AbortController>();
   private recovered = false;

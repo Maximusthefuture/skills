@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { Deployer, type DeployRun } from "../../src/deploy/deployer.js";
+import { Deployer, taskDeployState, type DeployRun } from "../../src/deploy/deployer.js";
 import { deployNotes, envVarOf, flattenYaml, javaProperties } from "../../src/deploy/notes.js";
 import { branchName, branchWebUrl, pushTask } from "../../src/deploy/push.js";
 import { checkSettings, saveSettings } from "../../src/deploy/settings.js";
@@ -149,5 +149,20 @@ describe("settings and the agents' push", () => {
     expect(preBashDecision("git -c x=y push")).not.toBeNull();
     expect(preBashDecision("git commit -m push")).toBeNull();
     expect(preBashDecision("git log --oneline")).toBeNull();
+  });
+});
+
+describe("where a merged task stands", () => {
+  const run = (id: string, env: string, status: DeployRun["status"], push: string, kube: string, at: string): DeployRun =>
+    ({ id, taskId: "task-001", env, status, createdAt: at, branch: "feature/a", push: { webUrl: "https://bb/a" }, steps: [{ name: "push", status: push }, { name: "kubernetes", status: kube }] }) as unknown as DeployRun;
+  it("not pushed, in a branch, on a stand (per environment, latest deploy wins), running, failed", () => {
+    expect(taskDeployState("task-001", [])).toEqual({ stage: "merged", envs: [] });
+    expect(taskDeployState("task-001", [run("dep-001", "dev", "ok", "ok", "skipped", "1")])).toMatchObject({ stage: "branch", branch: "feature/a", branchUrl: "https://bb/a", envs: [] });
+    const onDev = [run("dep-002", "dev", "ok", "ok", "ok", "2"), run("dep-001", "dev", "ok", "ok", "skipped", "1")];
+    expect(taskDeployState("task-001", onDev)).toMatchObject({ stage: "deployed", envs: ["dev"] });
+    expect(taskDeployState("task-001", [run("dep-003", "dev", "failed", "ok", "failed", "3"), ...onDev])).toMatchObject({ stage: "failed", envs: [] });
+    expect(taskDeployState("task-001", [run("dep-003", "stage", "failed", "ok", "failed", "3"), ...onDev])).toMatchObject({ stage: "deployed", envs: ["dev"], lastRun: { id: "dep-003", status: "failed" } });
+    expect(taskDeployState("task-001", [run("dep-003", "stage", "running", "ok", "pending", "3"), ...onDev]).stage).toBe("running");
+    expect(taskDeployState("task-002", onDev).stage).toBe("merged");
   });
 });

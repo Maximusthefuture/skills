@@ -27,7 +27,7 @@ import { ObserverStore } from "../observer/store.js";
 import type { Observer } from "../observer/observer.js";
 import { readCritiques, type PlanCritic } from "../planCritic.js";
 import { PACKAGE_DIR } from "./runners.js";
-import { Deployer } from "../deploy/deployer.js";
+import { Deployer, taskDeployState } from "../deploy/deployer.js";
 import { saveSettings } from "../deploy/settings.js";
 import type { Git } from "../deploy/push.js";
 
@@ -446,11 +446,12 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       if (path === "/api/deploys") {
         // the «Раскатка» tab: merged tasks ready to deploy, the deploys so far, the settings
         const tasks = await new TaskStore(p.fs).list();
+        const runs = await p.deployer.list();
         const ready = tasks
           .filter((t) => t.merged && !t.merged.reverted)
-          .map((t) => ({ id: t.id, title: t.title, commit: t.merged!.commit, into: t.merged!.into, at: t.merged!.at }))
+          .map((t) => ({ id: t.id, title: t.title, commit: t.merged!.commit, into: t.merged!.into, at: t.merged!.at, state: taskDeployState(t.id, runs) }))
           .sort((a, b) => b.at.localeCompare(a.at));
-        return json(200, { control: !!p.pool, settings: await p.deployer.settings(), ready, runs: await p.deployer.list() });
+        return json(200, { control: !!p.pool, settings: await p.deployer.settings(), ready, runs });
       }
       const dep = /^\/api\/deploys\/(dep-\d+)$/.exec(path);
       if (dep) return json(200, { run: await p.deployer.get(dep[1]!) });
