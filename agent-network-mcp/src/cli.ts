@@ -338,6 +338,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         ...(config?.verifyCommand ? { verifyCommand: config.verifyCommand } : {}),
         ...(config?.mergeStrategy ? { mergeStrategy: config.mergeStrategy } : {}),
         ...(config?.mergeCheck?.setup ? { mergeSetup: config.mergeCheck.setup } : {}),
+        ...(config?.notify ? { notify: config.notify } : {}),
       };
     });
     const ui = await startUiServer(specs, { port });

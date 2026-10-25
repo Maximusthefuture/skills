@@ -58,7 +58,7 @@ button{font:inherit;border:1px solid var(--accent);background:var(--accent);colo
 button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:.5;cursor:default}
 .note{font-size:13px}.note.err{color:var(--bad)}.note.ok{color:var(--ok)}
 .banner{padding:10px 14px;margin-bottom:14px;border:1px solid var(--line);border-left:3px solid var(--bad);background:var(--card)}
-.openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}.mcheck{margin:6px 0;overflow-wrap:anywhere}button.danger{color:var(--bad);border-color:var(--bad)}
+.openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}.mcheck{margin:6px 0;overflow-wrap:anywhere}.inboxrow{margin:8px 0;padding:10px 12px}.inboxrow.blocking{border-left:3px solid var(--bad)}.inboxrow button{margin-top:6px}button.danger{color:var(--bad);border-color:var(--bad)}
 .toasts{position:fixed;top:12px;right:12px;z-index:50;display:flex;flex-direction:column;gap:8px;width:min(340px,calc(100vw - 24px));pointer-events:none}
 .toast{pointer-events:auto;cursor:pointer;position:relative;background:var(--card);color:var(--text);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:9px 30px 9px 12px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:13px;animation:tin .18s ease-out}
 .planov{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;flex-direction:column}.planov[hidden]{display:none}body.noscroll{overflow:hidden}
@@ -193,6 +193,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
   <div class="proj" id="projcard" title="Проекты"><b><span class="dot" id="projdot"></span><span id="projname">…</span></b><span class="s" id="projsub"></span></div>
   <nav id="nav">
     <div class="grp">Работа</div>
+    <a href="#/inbox" data-tab="inbox"><span class="n">00</span>Входящие<span class="c" id="c-inbox"></span></a>
     <a href="#/overview" data-tab="overview"><span class="n">01</span>Обзор</a>
     <a href="#/tasks" data-tab="tasks"><span class="n">02</span>Задачи<span class="c" id="c-tasks"></span></a>
     <a href="#/runs" data-tab="runs"><span class="n">03</span>Запуски<span class="c" id="c-runs"></span></a>
@@ -214,6 +215,11 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     <section id="questions" hidden><div class="grid" id="qlist"></div><div style="height:14px"></div></section>
     <section id="notes" hidden><div class="grid" id="nlist"></div><div style="height:14px"></div></section>
 
+    <section data-panel="inbox" hidden>
+      <h1>Входящие</h1><div class="lead">Всё, что ждёт вашего решения, во всех проектах страницы: вопросы агентов, планы и change'и, задачи на приёмку, вливания, которые не прошли проверку, BLOCKED-задачи, решения надзора, предложения наблюдателя. Сверху — то, без чего рой стоит. Пункт уходит сам, когда вы решили.</div>
+      <div class="checks"><button type="button" class="ghost" id="notif-on">Включить уведомления браузера</button><span class="muted" id="notif-state"></span></div>
+      <div id="inbox"></div>
+    </section>
     <section data-panel="overview">
       <div class="hrow"><div><h1>Обзор</h1><div class="lead">Что делают агенты сейчас и сколько это стоит.</div></div><div class="end win" id="win"><button data-w="24h">24ч</button><button data-w="7d">7д</button><button data-w="30d">30д</button></div></div>
       <div class="kpis" id="kpis"></div>
@@ -329,7 +335,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 </div>
 <script>
 const PHASES=["DISCUSS","IMPLEMENT","SYNC","INTEGRATE","DONE"];
-const TABS=["overview","tasks","runs","activity","deploy","supervisor","observer","runners","projects","events"];
+const TABS=["inbox","overview","tasks","runs","activity","deploy","supervisor","observer","runners","projects","events"];
 const WIN={"24h":864e5,"7d":7*864e5,"30d":30*864e5};
 const $=id=>document.getElementById(id);
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
@@ -382,12 +388,13 @@ async function tick(){
     if(route.tab==="supervisor")SUP=await getJSON(q("/api/supervisor"+(supAll?"?all=1":"")));
     if(route.tab==="observer")OBS=await getJSON(q("/api/observer"));
     if(route.tab==="deploy")DEP=await getJSON(q("/api/deploys"));
+    ATT=await getJSON("/api/attention").catch(()=>ATT);watchAttention(ATT);
     n++;render();planSync();
   }catch(e){$("topbar").textContent="нет связи с сервером"}
 }
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
-  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderSkills();renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();if(route.tab==="deploy")renderDeploy();
+  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderSkills();renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();if(route.tab==="deploy")renderDeploy();if(route.tab==="inbox")renderInbox();
   if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y)} // a refresh never moves the page
 
 function current(){return PROJ.find(p=>p.id===route.project)}
@@ -412,7 +419,8 @@ function renderChrome(){
   const day=RUNS.filter(r=>r.costUsd!==null&&inWin(r.endedAt,"24h"));item("расход 24ч",day.length?fmtUsd(day.reduce((a,r)=>a+r.costUsd,0),day.some(r=>r.costEstimated)):"—");
   const right=el("span","r");right.append("проект",el("b","",s.project.name),el("span","muted"," · обновлено "+time(s.generatedAt)));bar.append(right);
   const pe=$("priceerr");pe.hidden=!(s.prices&&s.prices.error);pe.textContent=s.prices&&s.prices.error?"prices в runners.json не читаются (действуют прежние): "+s.prices.error:"";
-  document.title=(oq?"("+oq+") ":"")+s.project.name+" · Agent Network";
+  const waiting=attCount();$("c-inbox").textContent=waiting?String(waiting):"";
+  document.title=(waiting?"("+waiting+") ":"")+s.project.name+" · Agent Network";
 }
 
 /* ---------- overview ---------- */
@@ -456,6 +464,35 @@ function renderOverview(){
   const ep=$("ov-events");ep.replaceChildren();const ph3=el("div","ph","Последние события");const all=el("a","end","все события →");all.href="#/events";all.onclick=ev=>{ev.preventDefault();go("events",route.project)};ph3.append(all);ep.append(ph3);
   const evs=events(s).slice(0,8);evs.forEach(e=>ep.append(evRow(e)));if(!evs.length)ep.append(el("div","empty","Событий пока нет."));
 }
+
+/* ---------- inbox: what waits for the operator, every project of the page ---------- */
+let ATT=null;const attSeen=new Set();let attFirst=true;
+const ATT_KIND={question:"вопрос",plan:"страница",acceptance:"приёмка",merge:"вливание",blocked:"BLOCKED",supervisor:"надзор",observer:"наблюдатель"};
+function attCount(){return ATT?ATT.projects.reduce((n,p)=>n+p.items.length,0):0}
+// a browser notification for what is new while the page is open (in any tab): the first look only remembers
+function watchAttention(a){if(!a)return;const fresh=[];
+  for(const p of a.projects)for(const i of p.items){const k=p.id+"/"+i.key;if(attSeen.has(k))continue;attSeen.add(k);if(!attFirst)fresh.push({p,i})}
+  attFirst=false;if(!fresh.length||typeof Notification==="undefined"||Notification.permission!=="granted")return;
+  const one=fresh.length===1?fresh[0]:null;
+  const n=new Notification(one?one.p.name+": "+one.i.title:"Ждут вашего решения: "+fresh.length,{body:one?one.i.text:fresh.slice(0,5).map(x=>x.p.name+": "+x.i.title).join("\n"),tag:one?one.p.id+"/"+one.i.key:"agent-network-batch"});
+  n.onclick=()=>{window.focus();n.close();if(one)openAttention(one.p.id,one.i);else go("inbox",route.project)}}
+function openAttention(projectId,i){const o=i.open||{tab:"tasks"};const switching=projectId!==route.project;route.project=projectId;go(o.tab,projectId);
+  setTimeout(async()=>{if(switching)await tick();
+    if(o.plan&&i.taskId)openPlan(i.taskId);else if(o.acceptance&&i.taskId)openAcceptance(i.taskId);
+    else if(o.tab==="tasks"&&i.taskId&&!o.messageId){const c=document.querySelector('#tasks [data-id="'+i.taskId+'"]');if(c)c.scrollIntoView({block:"start",behavior:"smooth"})}
+    else if(o.messageId)window.scrollTo({top:0,behavior:"smooth"})},switching?50:300)}
+function renderInbox(){const box=$("inbox");box.replaceChildren();const st=$("notif-state");
+  const perm=typeof Notification==="undefined"?"unsupported":Notification.permission;$("notif-on").hidden=perm!=="default";
+  st.textContent=(perm==="granted"?"уведомления браузера включены":perm==="denied"?"уведомления браузера запрещены в настройках браузера":perm==="unsupported"?"браузер не умеет уведомления":"")+(ATT&&ATT.os?" · системные: "+(ATT.os.enabled?"notify-send":ATT.os.reason):"");
+  if(!ATT){box.append(el("div","empty","загружаю…"));return}
+  if(!attCount()){box.append(el("div","empty","Ничего не ждёт вашего решения."));return}
+  for(const p of ATT.projects){if(!p.items.length)continue;if(ATT.projects.length>1)box.append(el("h2","",p.name+" ("+p.items.length+")"));
+    for(const i of p.items){const r=el("div","card inboxrow"+(i.blocking?" blocking":""));
+      const head=el("div","");head.append(el("span","badge "+(i.blocking?"FAIL":"WARNING"),ATT_KIND[i.kind]||i.kind),el("b",""," "+i.title));r.append(head);
+      if(i.text)r.append(el("div","",i.text));
+      r.append(el("div","muted small","ждёт с "+time(i.since).slice(0,5)+(i.due?" · "+(i.kind==="question"?"агент пойдёт по своему варианту в ":"решение уйдёт само в ")+time(i.due).slice(0,5):"")));
+      const b=el("button","small","Открыть");b.type="button";b.onclick=()=>openAttention(p.id,i);r.append(b);box.append(r)}}}
+$("notif-on").onclick=async()=>{try{await Notification.requestPermission()}catch(e){}renderInbox()};
 
 /* ---------- pop-ups: a task changed its phase or status ---------- */
 const seenTasks=new Map();let seenProject=null;

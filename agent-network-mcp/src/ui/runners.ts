@@ -1,3 +1,4 @@
+import { ATTENTION_KINDS, type NotifyConfig } from "../attention.js";
 import { homedir } from "node:os";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -144,6 +145,8 @@ export interface RunnersConfig {
   mergeStrategy?: "squash" | "merge";
   /** The merge check (src/mergeCheck.ts): setup commands for its worktree before verifyCommand; [] = none; absent = by the lockfile. */
   mergeCheck?: { setup?: string[] };
+  /** What waits for the operator (src/attention.ts): desktop notifications (Linux: notify-send), reminders, which kinds. */
+  notify?: NotifyConfig;
 }
 
 export interface ObserverConfig {
@@ -315,7 +318,7 @@ function costLimit(value: unknown, what: string): number {
 
 export async function loadRunnersConfig(path: string, opts: { projectDir?: string } = {}): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; verifyCommand?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown; mergeCheck?: unknown };
+  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; verifyCommand?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown; mergeCheck?: unknown; notify?: unknown };
   try {
     // {agentNetworkMcp} anywhere in the file is this package's folder
     raw = JSON.parse((await readFile(file, "utf8")).replaceAll("{agentNetworkMcp}", PACKAGE_DIR.replaceAll("\\", "/")));
@@ -466,6 +469,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
   const planCritic = raw.planCritic === undefined ? undefined : { ...(await parseObserver({ ...(raw.planCritic as object), cron: undefined }, "planCritic")), ...parseSkillSets((raw.planCritic as { skillSets?: unknown }).skillSets) };
   if (raw.mergeStrategy !== undefined && raw.mergeStrategy !== "squash" && raw.mergeStrategy !== "merge") throw new AppError("INVALID_CONFIG", `${file}: "mergeStrategy" is "squash" (one commit per task) or "merge"`);
   const mergeCheck = raw.mergeCheck === undefined ? undefined : parseMergeCheck(raw.mergeCheck, file);
+  const notify = raw.notify === undefined ? undefined : parseNotify(raw.notify, file);
   const prices = parsePrices(raw.prices, file);
   const maxTaskCostUsd = raw.maxTaskCostUsd === undefined || raw.maxTaskCostUsd === null ? undefined : costLimit(raw.maxTaskCostUsd, `${file}: "maxTaskCostUsd"`);
   const verifyCommand = raw.verifyCommand === undefined || raw.verifyCommand === null ? undefined : parseVerifyCommand(raw.verifyCommand, `${file}: "verifyCommand"`);
@@ -482,7 +486,19 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     ...(planCritic ? { planCritic } : {}),
     ...(raw.mergeStrategy ? { mergeStrategy: raw.mergeStrategy as "squash" | "merge" } : {}),
     ...(mergeCheck ? { mergeCheck } : {}),
+    ...(notify ? { notify } : {}),
   };
+}
+
+/** "notify": {"os": true, "remindAfterMin": 30, "kinds": ["question", "plan", …]} */
+function parseNotify(raw: unknown, file: string): NotifyConfig {
+  const bad = (what: string) => new AppError("INVALID_CONFIG", `${file}: "notify"${what}`);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw bad(` is {"os": true, "remindAfterMin": 30, "kinds": [${ATTENTION_KINDS.map((k) => `"${k}"`).join(", ")}]}`);
+  const o = raw as { os?: unknown; remindAfterMin?: unknown; kinds?: unknown };
+  if (o.os !== undefined && typeof o.os !== "boolean") throw bad('.os is true or false');
+  if (o.remindAfterMin !== undefined && (typeof o.remindAfterMin !== "number" || o.remindAfterMin < 0 || o.remindAfterMin > 24 * 60)) throw bad(".remindAfterMin is minutes, 0..1440 (0: no reminders)");
+  if (o.kinds !== undefined && (!Array.isArray(o.kinds) || !o.kinds.every((k) => (ATTENTION_KINDS as readonly unknown[]).includes(k)))) throw bad(`.kinds: some of ${ATTENTION_KINDS.join(", ")}`);
+  return { ...(o.os !== undefined ? { os: o.os as boolean } : {}), ...(o.remindAfterMin !== undefined ? { remindAfterMin: o.remindAfterMin as number } : {}), ...(o.kinds ? { kinds: o.kinds as NotifyConfig["kinds"] } : {}) };
 }
 
 /** "mergeCheck": {"setup": ["npm ci"]} — each a plain build-tool command, as the build tool runs it. */

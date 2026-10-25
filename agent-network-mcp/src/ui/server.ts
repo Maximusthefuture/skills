@@ -9,13 +9,14 @@ import { AppError, isAppError } from "../errors.js";
 import { readGitContext } from "../git.js";
 import { assertChangeName, changePath, hasChange, listChanges, type Exec } from "../openspec.js";
 import { injectSdk, PLAN_CSP } from "../plan.js";
-import { NetworkService, depthFlags } from "../service.js";
+import { NetworkService, OPERATOR_TIMEOUT_MS, depthFlags } from "../service.js";
 import type { Prices } from "../stats.js";
 import { FileStore } from "../storage/fileStore.js";
 import { MessageStore } from "../stores/messageStore.js";
 import { TaskStore } from "../stores/taskStore.js";
 import type { GitContext, Task } from "../types.js";
 import { acceptanceAlerts, collectAcceptance, renderAcceptancePage, type AcceptanceRange } from "../acceptancePage.js";
+import { attentionItems, linuxSender, Notifier, type AttentionItem, type NotifyConfig, type Sender } from "../attention.js";
 import { inspectContract, m2Origin, pomCoords } from "../contract.js";
 import { detectStack } from "../stack.js";
 import { MergeChecker, mergeRef, type MergeCheck } from "../mergeCheck.js";
@@ -71,6 +72,8 @@ export interface UiProject {
   mergeStrategy?: "squash" | "merge";
   /** The merge check's setup commands (runners.json "mergeCheck.setup"); absent: by the lockfile. */
   mergeSetup?: string[];
+  /** What waits for the operator: desktop notifications, reminders (runners.json "notify"). */
+  notify?: NotifyConfig;
 }
 
 export interface UiOptions {
@@ -86,6 +89,9 @@ export interface UiOptions {
   agentNetworkDir?: string;
   /** Tests: the git merge of "Влить в проект". */
   merge?: (project: string, branch: string, message: string) => Promise<MergeResult>;
+  /** Tests: how desktop notifications are sent (default: notify-send on Linux, none elsewhere), and how often the list is built. */
+  notifySend?: Sender | null;
+  attentionMs?: number;
   /** Tests: the git of the «Раскатка» tab (push to Bitbucket). */
   deployGit?: Git;
   /** Tests: kubectl of the rollout check, and its poll interval. */
@@ -115,6 +121,9 @@ interface Project {
   deployer: Deployer;
   /** «Влить в проект» of a task with verifyCommand: the merge built and checked before it reaches the project. */
   mergeChecker?: MergeChecker;
+  /** What waits for the operator, as last built (src/attention.ts), and who tells about it. */
+  attention?: AttentionItem[];
+  notifier?: Notifier;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -135,6 +144,29 @@ async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { 
     throw new AppError("INVALID_INPUT", `${lead} (the lead) has no branch of its own: it works in the project folder${folder?.cwd ? ` or on no branch in ${folder.cwd}` : ""}, so its commits are there already`);
   }
   return { project, branch };
+}
+
+/** The page's state of a project's tasks with their merge checks (the checker knows a running one). */
+async function tasksWithChecks(p: Project, pricing: { prices?: Prices; error?: string } = {}) {
+  const state = await buildUiState(p.fs, undefined, pricing);
+  for (const t of state.tasks as { id: string; status: string; mergeCheck?: MergeCheck | null; contractMergeCheck?: MergeCheck | null }[]) {
+    if (t.status !== "COMPLETED") continue;
+    t.mergeCheck = p.mergeChecker ? await p.mergeChecker.get(t.id) : await p.fs.readJson<MergeCheck>(["tasks", t.id, "merge-check.json"]);
+    t.contractMergeCheck = p.mergeChecker ? await p.mergeChecker.get(t.id, "contract") : await p.fs.readJson<MergeCheck>(["tasks", t.id, "merge-check-contract.json"]);
+  }
+  return state;
+}
+
+/** What waits for the operator in a project: its questions, pages, DONE tasks, merges, blocks, the supervisor's and observer's. */
+async function attentionOf(p: Project): Promise<AttentionItem[]> {
+  const state = await tasksWithChecks(p);
+  const needsYou = (await p.journal.list(200)).filter((e) => e.kind === "needs-you" && !e.resolvedAt);
+  const proposals = await ObserverStore.open(p.networkDir).then((st) => st.proposals(), () => []);
+  const minutes = Number(process.env.AGENT_NETWORK_OPERATOR_TIMEOUT_MIN);
+  return attentionItems({
+    tasks: state.tasks as never, questions: state.openQuestions as never, needsYou, proposals,
+    operatorTimeoutMs: Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : OPERATOR_TIMEOUT_MS,
+  });
 }
 
 /** Tasks deleted from the page: their folders moved to <network>/deleted/<id>/ (service.deleteTask). */
@@ -267,6 +299,26 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       deployer: new Deployer(await FileStore.open(networkDir), projectDir, opts.deployGit, opts.deployKube),
     });
   }
+  // what waits for the operator, every few seconds for every project: the page's inbox, and a notification of what is new
+  const sender = opts.notifySend !== undefined ? opts.notifySend : await linuxSender();
+  for (const [i, p] of projects.entries()) if (p.pool) p.notifier = new Notifier(sender, specs[i]!.notify ?? {});
+  let looking = false;
+  const lookAround = async (): Promise<void> => {
+    if (looking) return;
+    looking = true;
+    try {
+      for (const p of projects) {
+        p.attention = await attentionOf(p).catch(() => p.attention ?? []);
+        await p.notifier?.tick(p.name, p.fs, p.attention).catch(() => undefined);
+      }
+    } finally {
+      looking = false;
+    }
+  };
+  const attentionTimer = setInterval(() => void lookAround(), opts.attentionMs ?? 5000);
+  attentionTimer.unref();
+  void lookAround();
+
   // the contract's merge landed: the service's follows (its own check), with the acceptance when «Принять и влить» began it
   async function afterMerge(projectId: string, check: MergeCheck): Promise<void> {
     if (check.scope !== "contract") return;
@@ -431,6 +483,11 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         const agents = (url.searchParams.get("agents") ?? "").split(",").filter(Boolean);
         return json(200, { change, inProject: await hasChange(p.projectDir, change), missing: await foldersWithoutChange(p, change, agents) });
       }
+      if (path === "/api/attention") {
+        // every project's: the inbox counts across the page, not only the project on screen
+        const all = await Promise.all(projects.map(async (x) => ({ id: x.id, name: x.name, items: x.attention ?? (await attentionOf(x).catch(() => [])) })));
+        return json(200, { projects: all, os: { enabled: !!p.notifier?.enabled, reason: p.notifier?.enabled ? null : sender ? "выключено в runners.json (notify.os)" : process.platform === "linux" ? "нет notify-send: установите libnotify-bin" : "системные уведомления есть только на Linux (notify-send)" } });
+      }
       if (path === "/api/contract/inspect") {
         // the form checks a contract project as it is typed: its coordinates and specs
         return json(200, await inspectContract(url.searchParams.get("path") ?? ""));
@@ -440,13 +497,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         // the page is open: a BLOCKED task whose deadline passed goes to its lead even with no runner around
         if (p.operator) for (const t of await p.operator.tasks.list()) if (t.status === "BLOCKED" && t.handover) await p.operator.escalateIfDue(t.id).catch(() => null);
         const pricing = (await p.prices?.()) ?? {};
-        const state = await buildUiState(p.fs, undefined, pricing);
         // a DONE task's merge check: running, green, red (what failed), a conflict, handed to a follow-up
-        for (const t of state.tasks as { id: string; status: string; mergeCheck?: MergeCheck | null }[]) {
-          if (t.status !== "COMPLETED") continue;
-          t.mergeCheck = p.mergeChecker ? await p.mergeChecker.get(t.id) : await p.fs.readJson<MergeCheck>(["tasks", t.id, "merge-check.json"]);
-          (t as { contractMergeCheck?: MergeCheck | null }).contractMergeCheck = p.mergeChecker ? await p.mergeChecker.get(t.id, "contract") : await p.fs.readJson<MergeCheck>(["tasks", t.id, "merge-check-contract.json"]);
-        }
+        const state = await tasksWithChecks(p, pricing);
         return json(200, {
           ...state,
           project: { id: p.id, name: p.name, projectDir: tilde(p.projectDir), networkDir: tilde(p.networkDir), count: projects.length },
@@ -1080,6 +1132,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     close: () =>
       new Promise((resolve) => {
         for (const p of projects) p.operator?.close();
+        clearInterval(attentionTimer);
         server.closeAllConnections();
         server.close(() => resolve());
       }),
