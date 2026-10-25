@@ -30,7 +30,8 @@
     "disabledSkillsByTask: skills off only in one kind of task, on top of disabledSkills: \"propose\" writes an OpenSpec change (no TDD or code review there), \"code\" is every other task (no intake of analysts' artifacts). Claude Code gets them as skillOverrides in --settings, so they are not even listed: their descriptions cost no tokens.",
     "proposeModel: the agent's model in tasks that write an OpenSpec change (here the reviewer of the change runs on sonnet even when \"model\" is haiku: on haiku it passed changes without a finding).",
     "withoutTools: built-in tools a role never uses, taken out of its command (reviewer and tester: no subagents, no skills). Every tool description is read again on every turn, so this saves tokens in every turn of that agent.",
-    "maxContextTokens: a session whose context grew past this many tokens ends after its current tool call and a fresh one goes on from the subtasks and git, as after the turn limit (every turn reads the whole context again). Claude Code reports the size in stream-json."
+    "maxContextTokens: a session whose context grew past this many tokens ends after its current tool call and a fresh one goes on from the subtasks and git, as after the turn limit (every turn reads the whole context again). Claude Code reports the size in stream-json.",
+    "drafter: «Составить черновик» in the task form — the operator writes the idea in its own words, one read-only session (Read, Grep, Glob on {projectDir}) reads the project and fills the form: title, a concrete description, the team, the preparation, the build, the contract project, with why for each and the questions it could not settle. The operator edits it and creates the task. About $0.05-0.2 on sonnet. Remove the section to switch it off."
   ],
   "maxTaskCostUsd": 10,
   "verifyCommand": "./mvnw -q -B verify -Dsurefire.timeout=900",
@@ -88,7 +89,15 @@
     "systemPromptFile": "swarm-system-prompt.md",
     "worktree": true,
     "maxContextTokens": 80000,
-    "disabledSkillsByTask": { "propose": ["java-tdd", "java-code-review"], "code": ["java-spec-intake"] }
+    "disabledSkillsByTask": {
+      "propose": [
+        "java-tdd",
+        "java-code-review"
+      ],
+      "code": [
+        "java-spec-intake"
+      ]
+    }
   },
   "agents": [
     {
@@ -330,5 +339,38 @@
         ]
       }
     ]
+  },
+  "drafter": {
+    "command": [
+      "claude",
+      "-p",
+      "{prompt}",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--system-prompt",
+      "{systemPrompt}",
+      "--model",
+      "{model}",
+      "--max-turns",
+      "25",
+      "--tools",
+      "Read,Grep,Glob",
+      "--add-dir",
+      "{projectDir}",
+      "--strict-mcp-config",
+      "--allowedTools",
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "model": "sonnet",
+    "models": [
+      "haiku",
+      "sonnet",
+      "opus"
+    ],
+    "promptFile": "drafter-prompt.md",
+    "systemPromptFile": "drafter-system-prompt.md"
   }
 }

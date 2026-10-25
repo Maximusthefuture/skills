@@ -18,12 +18,13 @@ import type { GitContext, Task } from "../types.js";
 import { acceptanceAlerts, collectAcceptance, renderAcceptancePage, type AcceptanceRange } from "../acceptancePage.js";
 import { attentionItems, linuxSender, Notifier, type AttentionItem, type NotifyConfig, type Sender } from "../attention.js";
 import { inspectContract, m2Origin, pomCoords } from "../contract.js";
+import { Drafter, type DraftContext, type DrafterOptions } from "../drafter.js";
 import { detectStack } from "../stack.js";
 import { MergeChecker, mergeRef, type MergeCheck } from "../mergeCheck.js";
 import { collectDigests } from "../observer/digest.js";
 import { PAGE_HTML } from "./page.js";
 import { listRuns, queueStates, taskState, type RunView } from "./runs.js";
-import type { RunnerPool } from "./runners.js";
+import type { ObserverConfig, RunnerPool } from "./runners.js";
 import { Journal } from "../supervisor/journal.js";
 import { formatSessionLog, readSessionLog } from "../supervisor/sessionLog.js";
 import type { Supervisor } from "../supervisor/supervisor.js";
@@ -74,6 +75,8 @@ export interface UiProject {
   mergeSetup?: string[];
   /** What waits for the operator: desktop notifications, reminders (runners.json "notify"). */
   notify?: NotifyConfig;
+  /** «Составить черновик» in the task form (runners.json "drafter"). */
+  drafter?: ObserverConfig;
 }
 
 export interface UiOptions {
@@ -89,6 +92,9 @@ export interface UiOptions {
   agentNetworkDir?: string;
   /** Tests: the git merge of "Влить в проект". */
   merge?: (project: string, branch: string, message: string) => Promise<MergeResult>;
+  /** Tests: the drafter's CLI session and contract check. */
+  draftRun?: DrafterOptions["run"];
+  draftInspect?: DrafterOptions["inspect"];
   /** Tests: how desktop notifications are sent (default: notify-send on Linux, none elsewhere), and how often the list is built. */
   notifySend?: Sender | null;
   attentionMs?: number;
@@ -124,6 +130,8 @@ interface Project {
   /** What waits for the operator, as last built (src/attention.ts), and who tells about it. */
   attention?: AttentionItem[];
   notifier?: Notifier;
+  /** «Составить черновик»: a read-only session drafts a task from the operator's idea. */
+  drafter?: Drafter;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -167,6 +175,24 @@ async function attentionOf(p: Project): Promise<AttentionItem[]> {
     tasks: state.tasks as never, questions: state.openQuestions as never, needsYou, proposals,
     operatorTimeoutMs: Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : OPERATOR_TIMEOUT_MS,
   });
+}
+
+/** What the drafting session is told about a project: its stack and build, its agents and their roles, its changes, its contracts. */
+async function draftContext(p: Project): Promise<DraftContext> {
+  const stack = await detectStack(p.projectDir);
+  const runners = p.pool ? await p.pool.details() : [];
+  const roles = await Promise.all(runners.map(async (r) => (r.instructionsFile ? (await readFile(r.instructionsFile, "utf8").catch(() => "")).trim().slice(0, 600) : "")));
+  const tasks = [...(await new TaskStore(p.fs).list()), ...(await deletedTasks(p.networkDir))];
+  const contracts = new Map<string, string>();
+  for (const t of tasks) if (t.contract) contracts.set(t.contract.project, `${t.contract.groupId}:${t.contract.artifactId}`);
+  return {
+    projectDir: p.projectDir,
+    stack: stack?.name ?? null,
+    verifyCommand: p.verifyCommand ?? stack?.verifyCommand ?? null,
+    agents: runners.map((r, i) => ({ id: r.id, model: r.model, role: roles[i] || null })),
+    openspecChanges: (await listChanges(p.projectDir)).map((c) => c.name),
+    contracts: [...contracts].map(([project, artifact]) => ({ project, artifact })),
+  };
 }
 
 /** Tasks deleted from the page: their folders moved to <network>/deleted/<id>/ (service.deleteTask). */
@@ -299,6 +325,17 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       deployer: new Deployer(await FileStore.open(networkDir), projectDir, opts.deployGit, opts.deployKube),
     });
   }
+  for (const [i, p] of projects.entries()) {
+    const cfg = specs[i]!.drafter;
+    if (!p.pool || !cfg) continue;
+    p.drafter = new Drafter({
+      networkDir: p.networkDir, fs: p.fs, config: cfg, context: () => draftContext(p),
+      ...(p.prices ? { prices: async () => (await p.prices!()) ?? {} } : {}),
+      ...(opts.draftRun ? { run: opts.draftRun } : {}), ...(opts.draftInspect ? { inspect: opts.draftInspect } : {}),
+      onActivity: (e) => p.pool!.recordActivity("drafter", e),
+    });
+  }
+
   // what waits for the operator, every few seconds for every project: the page's inbox, and a notification of what is new
   const sender = opts.notifySend !== undefined ? opts.notifySend : await linuxSender();
   for (const [i, p] of projects.entries()) if (p.pool) p.notifier = new Notifier(sender, specs[i]!.notify ?? {});
@@ -486,6 +523,11 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         const agents = (url.searchParams.get("agents") ?? "").split(",").filter(Boolean);
         return json(200, { change, inProject: await hasChange(p.projectDir, change), missing: await foldersWithoutChange(p, change, agents) });
       }
+      const draftOf = /^\/api\/drafts\/(draft-\d+)$/.exec(path);
+      if (draftOf) {
+        const d = await p.drafter?.get(draftOf[1]!);
+        return d ? json(200, { draft: d }) : json(404, { error: "NOT_FOUND", message: `No draft ${draftOf[1]}` });
+      }
       if (path === "/api/attention") {
         // every project's: the inbox counts across the page, not only the project on screen
         const all = await Promise.all(projects.map(async (x) => ({ id: x.id, name: x.name, items: x.attention ?? (await attentionOf(x).catch(() => [])) })));
@@ -508,6 +550,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
           control: p.pool
             ? {
                 runners: await p.pool.details(), maxTaskCostUsd: p.maxTaskCostUsd ?? null, verifyCommand: p.verifyCommand ?? null,
+                drafter: p.drafter ? { model: p.drafter.model ?? null } : null,
                 /** Agents in auto worktrees: the DONE task card offers to merge the lead's branch and remove the worktrees. */
                 worktrees: p.pool.ids().filter((id) => p.pool!.agentFolder(id)?.worktree),
               }
@@ -737,6 +780,16 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       await acted(task.id, "check" in r ? `${r.check.status === "conflict" ? "merge conflicts" : "merge check started"}${r.check.scope ? " (contract)" : ""}: ${r.check.branch} into ${r.check.into}` : `merged ${task.id}`);
       return r;
     };
+    if (path === "/api/drafts") {
+      // the operator's idea → one read-only session that fills the task form; nothing is created
+      if (!p.drafter) return json(404, { error: "NOT_FOUND", message: 'No drafter: add a "drafter" section to runners.json' });
+      return json(202, { draft: await p.drafter.start(String((body as { text?: unknown }).text ?? "")) });
+    }
+    const draftStop = /^\/api\/drafts\/(draft-\d+)\/stop$/.exec(path);
+    if (draftStop) {
+      await p.drafter?.stop(draftStop[1]!);
+      return json(200, { draft: await p.drafter?.get(draftStop[1]!) });
+    }
     const setContract = /^\/api\/tasks\/([^/]+)\/contract$/.exec(path);
     if (setContract) {
       // named while the task is designed: the lead's next session can write the contract's worktree, so the current one

@@ -58,7 +58,7 @@ button{font:inherit;border:1px solid var(--accent);background:var(--accent);colo
 button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:.5;cursor:default}
 .note{font-size:13px}.note.err{color:var(--bad)}.note.ok{color:var(--ok)}
 .banner{padding:10px 14px;margin-bottom:14px;border:1px solid var(--line);border-left:3px solid var(--bad);background:var(--card)}
-.openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}.mcheck{margin:6px 0;overflow-wrap:anywhere}.inboxrow{margin:8px 0;padding:10px 12px}.inboxrow.blocking{border-left:3px solid var(--bad)}.inboxrow button{margin-top:6px}button.danger{color:var(--bad);border-color:var(--bad)}
+.openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}.mcheck{margin:6px 0;overflow-wrap:anywhere}.draftbox{border:1px dashed var(--accent);border-radius:6px;padding:10px;margin-bottom:12px}.draftbox ul{margin:4px 0 8px;padding-left:18px}.draftbox li.err{color:var(--bad)}.inboxrow{margin:8px 0;padding:10px 12px}.inboxrow.blocking{border-left:3px solid var(--bad)}.inboxrow button{margin-top:6px}button.danger{color:var(--bad);border-color:var(--bad)}
 .toasts{position:fixed;top:12px;right:12px;z-index:50;display:flex;flex-direction:column;gap:8px;width:min(340px,calc(100vw - 24px));pointer-events:none}
 .toast{pointer-events:auto;cursor:pointer;position:relative;background:var(--card);color:var(--text);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:9px 30px 9px 12px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:13px;animation:tin .18s ease-out}
 .planov{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;flex-direction:column}.planov[hidden]{display:none}body.noscroll{overflow:hidden}
@@ -231,6 +231,9 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     <section data-panel="tasks" hidden>
       <div class="hrow"><div><h1>Задачи</h1><div class="lead" id="tasks-lead">Текущие и завершённые задачи проекта.</div></div><button class="end" id="newbtn" type="button" hidden>+ Новая задача</button></div>
       <form class="card" id="newtask" hidden>
+        <div class="draftbox" id="draftbox" hidden><label>Опишите своими словами — агент изучит код и заполнит форму ниже: название, конкретное описание, команду, подготовку, сборку, контракт. Можно вставить тикет целиком<textarea id="draftidea" placeholder="Нужен частичный возврат заказа, по сумме; письмо клиенту после возврата"></textarea></label>
+          <div class="checks"><button type="button" class="ghost" id="draftgo">Составить черновик</button><button type="button" class="ghost" id="draftstop" hidden>Остановить</button><span class="muted" id="draftstate"></span></div>
+          <div id="draftwhy" hidden></div></div>
         <label>OpenSpec change (необязательно): агенты делят его tasks.md по номерам задач — или пишут новый<select name="openspec" id="openspec"><option value="">— без OpenSpec —</option><option value="__new__">+ написать новый change…</option></select></label>
         <div id="specfolders" class="note" hidden></div>
         <label id="proposes-row" hidden>Имя нового change (латиница, цифры, -): lead пишет его, остальные ревьюят; код не меняется<input name="proposes" placeholder="add-loyalty-discount" maxlength="60"></label>
@@ -394,7 +397,7 @@ async function tick(){
 }
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
-  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderSkills();renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();if(route.tab==="deploy")renderDeploy();if(route.tab==="inbox")renderInbox();
+  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderSkills();renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();if(route.tab==="deploy")renderDeploy();if(route.tab==="inbox")renderInbox();if(route.tab==="tasks"&&!DRAFT)draftShow();
   if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y)} // a refresh never moves the page
 
 function current(){return PROJ.find(p=>p.id===route.project)}
@@ -1439,6 +1442,31 @@ $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev
   try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,...(v("contract").value.trim()?{contract:v("contract").value.trim()}:{}),clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,allowSpawn:v("allowSpawn").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value,from:v("from").value.split("\n").map(x=>x.trim()).filter(Boolean)}:{openspec:v("openspec").value})});
     note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("contract").value="";$("contractnote").textContent="";v("openspec").value="";v("proposes").value="";v("from").value="";delete v("from").dataset.grilled;$("proposes-row").hidden=true;$("from-row").hidden=true;await tick()}
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
+
+/* ---------- the task drafted by an agent: the idea → the form, with why and the open questions ---------- */
+let DRAFT=null;let draftPoll=null;
+const DRAFT_FIELD={title:"название",description:"описание",agents:"команда",lead:"lead",depth:"подготовка",verifyCommand:"сборка",contract:"контракт",openspec:"OpenSpec change"};
+function draftShow(){const box=$("draftbox");box.hidden=!(S&&S.control&&S.control.drafter);if(box.hidden)return;
+  const d=DRAFT;const st=$("draftstate");const go=$("draftgo");const stop=$("draftstop");
+  go.disabled=!!(d&&d.status==="running");stop.hidden=!(d&&d.status==="running");
+  st.textContent=!d?"модель "+(S.control.drafter.model||"по команде"):d.status==="running"?"агент изучает проект…":d.status==="done"?"готово — проверьте поля и создайте задачу"+(d.costUsd!==undefined?" · $"+d.costUsd:""):d.status==="stopped"?"остановлено":"не вышло: "+(d.error||"");
+  const why=$("draftwhy");why.replaceChildren();why.hidden=!(d&&d.status==="done"&&d.result);if(why.hidden)return;const r=d.result;
+  const w=Object.entries(r.why||{});if(w.length){why.append(el("b","","Почему так"));const ul=el("ul","");w.forEach(([k,v])=>ul.append(el("li","",(DRAFT_FIELD[k]||k)+": "+v)));why.append(ul)}
+  if(r.dropped&&r.dropped.length){const ul=el("ul","");r.dropped.forEach(x=>ul.append(el("li","err",(DRAFT_FIELD[x.field]||x.field)+" не подставлено: "+x.reason)));why.append(el("b","","Что не подошло"),ul)}
+  if(r.questions&&r.questions.length){why.append(el("b","","Открытые вопросы — решите их правкой описания"));const ul=el("ul","");r.questions.forEach(q=>{const li=el("li","",q.question);if(q.options&&q.options.length)li.append(el("div","muted","варианты: "+q.options.join(" · ")+(q.recommended?" — агент советует «"+q.recommended+"»":"")));ul.append(li)});why.append(ul)}}
+// the checked draft into the form: only the fields the server took; the rest stays as it was
+function draftFill(r){const f=$("newtask");const set=(n,v)=>{if(v!==undefined&&v!==null){f.elements.namedItem(n).value=v}};
+  set("title",r.title);set("description",r.description);set("verifyCommand",r.verifyCommand);
+  if(r.depth){set("depth",r.depth);applyDepth()}
+  if(r.lead){const lead=$("lead");lead.value=r.lead;lead.dispatchEvent(new Event("change"))}
+  if(r.agents)setTimeout(()=>{$("others").querySelectorAll("input").forEach(i=>{i.checked=r.agents.includes(i.value)})},0);
+  if(r.contract){set("contract",r.contract);checkContract()}
+  if(r.openspec){const sel=$("openspec");sel.value=r.openspec;sel.dispatchEvent(new Event("change"))}}
+async function draftWatch(id){clearTimeout(draftPoll);try{const j=await getJSON(q("/api/drafts/"+id));DRAFT=j.draft}catch(e){}
+  if(DRAFT&&DRAFT.status==="running"){draftPoll=setTimeout(()=>draftWatch(id),2000)}else if(DRAFT&&DRAFT.status==="done"&&DRAFT.result&&!DRAFT.filled){DRAFT.filled=true;draftFill(DRAFT.result)}draftShow()}
+$("draftgo").onclick=async()=>{const text=$("draftidea").value.trim();if(!text){$("draftstate").textContent="напишите идею хотя бы парой слов";return}
+  try{const r=await post("/api/drafts",{text});DRAFT=r.draft;draftShow();draftWatch(r.draft.id)}catch(e){$("draftstate").textContent=e.message}};
+$("draftstop").onclick=async()=>{if(!DRAFT)return;try{const r=await post("/api/drafts/"+DRAFT.id+"/stop",{});DRAFT=r.draft}catch(e){}draftShow()};
 
 /* ---------- runs ---------- */
 function fillSelect(id,label,values,fmt){const sel=$(id);const keep=sel.value;const sig=values.join("|");if(sel.dataset.sig===sig)return;sel.dataset.sig=sig;

@@ -147,6 +147,8 @@ export interface RunnersConfig {
   mergeCheck?: { setup?: string[] };
   /** What waits for the operator (src/attention.ts): desktop notifications (Linux: notify-send), reminders, which kinds. */
   notify?: NotifyConfig;
+  /** «Составить черновик» in the task form (src/drafter.ts): a read-only session drafts a task from the operator's idea. */
+  drafter?: ObserverConfig;
 }
 
 export interface ObserverConfig {
@@ -318,7 +320,7 @@ function costLimit(value: unknown, what: string): number {
 
 export async function loadRunnersConfig(path: string, opts: { projectDir?: string } = {}): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; verifyCommand?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown; mergeCheck?: unknown; notify?: unknown };
+  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; verifyCommand?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown; mergeCheck?: unknown; notify?: unknown; drafter?: unknown };
   try {
     // {agentNetworkMcp} anywhere in the file is this package's folder
     raw = JSON.parse((await readFile(file, "utf8")).replaceAll("{agentNetworkMcp}", PACKAGE_DIR.replaceAll("\\", "/")));
@@ -436,7 +438,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     if (o.model !== undefined && !isValidModel(o.model)) bad('"model" must be a model name');
     if (usesModel(command) && !o.model) bad('command has {model}: set "model"');
     if (o.models !== undefined && (!Array.isArray(o.models) || !o.models.every(isValidModel))) bad('"models" must be a list of model names');
-    if (typeof o.promptFile !== "string") bad(`needs "promptFile" (e.g. "{agentNetworkMcp}/examples/runner/${key === "observer" ? "observer" : "plan-critic"}-prompt.md")`);
+    if (typeof o.promptFile !== "string") bad(`needs "promptFile" (e.g. "{agentNetworkMcp}/examples/runner/${key === "planCritic" ? "plan-critic" : key}-prompt.md")`);
     const promptFile = abs(o.promptFile as string);
     await readFile(promptFile, "utf8").catch((e: Error) => bad(`promptFile ${promptFile}: ${e.message}`));
     const systemPromptFile = typeof o.systemPromptFile === "string" ? abs(o.systemPromptFile) : undefined;
@@ -470,6 +472,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
   if (raw.mergeStrategy !== undefined && raw.mergeStrategy !== "squash" && raw.mergeStrategy !== "merge") throw new AppError("INVALID_CONFIG", `${file}: "mergeStrategy" is "squash" (one commit per task) or "merge"`);
   const mergeCheck = raw.mergeCheck === undefined ? undefined : parseMergeCheck(raw.mergeCheck, file);
   const notify = raw.notify === undefined ? undefined : parseNotify(raw.notify, file);
+  const drafter = raw.drafter === undefined ? undefined : await parseObserver({ ...(raw.drafter as object), cron: undefined }, "drafter");
   const prices = parsePrices(raw.prices, file);
   const maxTaskCostUsd = raw.maxTaskCostUsd === undefined || raw.maxTaskCostUsd === null ? undefined : costLimit(raw.maxTaskCostUsd, `${file}: "maxTaskCostUsd"`);
   const verifyCommand = raw.verifyCommand === undefined || raw.verifyCommand === null ? undefined : parseVerifyCommand(raw.verifyCommand, `${file}: "verifyCommand"`);
@@ -487,6 +490,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     ...(raw.mergeStrategy ? { mergeStrategy: raw.mergeStrategy as "squash" | "merge" } : {}),
     ...(mergeCheck ? { mergeCheck } : {}),
     ...(notify ? { notify } : {}),
+    ...(drafter ? { drafter } : {}),
   };
 }
 
