@@ -3,6 +3,7 @@ import type { FileStore } from "../storage/fileStore.js";
 import type { Task } from "../types.js";
 import { deployNotes, type DeployNotes } from "./notes.js";
 import { branchName, pushTask, runGit, type Git, type PushResult } from "./push.js";
+import { checkRollout, runKubectl, type Kubectl } from "./kube.js";
 import { jenkinsMissing, loadSettings, type DeploySettings } from "./settings.js";
 
 /**
@@ -96,6 +97,8 @@ export class Deployer {
     private readonly fs: FileStore,
     private readonly projectDir: string,
     private readonly git: Git = runGit,
+    /** Tests: a fake kubectl and a short poll. */
+    private readonly kube: { kubectl?: Kubectl; intervalMs?: number } = {},
   ) {}
 
   settings(): Promise<DeploySettings> {
@@ -200,9 +203,35 @@ export class Deployer {
         s.summary = jenkinsMissing(settings) ?? "запуск job через MCP Jenkins появится на следующем этапе";
       })) &&
       (await step("kubernetes", async (s) => {
-        s.status = "skipped";
         const e = settings.environments.find((x) => x.name === run.env);
-        s.summary = !e?.namespace || !e.deployment ? `Kubernetes для ${run.env} не настроен: namespace и deployment в настройках` : "проверка раскатки появится на следующем этапе";
+        if (!e?.namespace || !e.deployment) {
+          s.status = "skipped";
+          s.summary = `Kubernetes для ${run.env} не настроен: namespace и deployment в настройках`;
+          return;
+        }
+        let saved = 0;
+        const r = await checkRollout(this.kube.kubectl ?? runKubectl(settings.kubernetes.kubectl), {
+          ...(settings.kubernetes.context ? { context: settings.kubernetes.context } : {}),
+          namespace: e.namespace,
+          deployment: e.deployment,
+          ...(e.selector ? { selector: e.selector } : {}),
+        }, {
+          since: run.createdAt,
+          timeoutSec: settings.kubernetes.rolloutTimeoutSec,
+          ...(this.kube.intervalMs !== undefined ? { intervalMs: this.kube.intervalMs } : {}),
+          ...(run.notes ? { notes: run.notes } : {}),
+          signal,
+          progress: async (text) => {
+            s.summary = text;
+            if (Date.now() - saved > 5_000) {
+              saved = Date.now();
+              await this.save(run);
+            }
+          },
+        });
+        s.summary = r.summary;
+        s.output = r.output;
+        if (!r.ok) s.status = "failed";
       }));
     if (signal.aborted) return;
     run.status = ok ? "ok" : "failed";

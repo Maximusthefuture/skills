@@ -30,6 +30,7 @@ import { PACKAGE_DIR } from "./runners.js";
 import { Deployer, taskDeployState } from "../deploy/deployer.js";
 import { saveSettings } from "../deploy/settings.js";
 import type { Git } from "../deploy/push.js";
+import type { Kubectl } from "../deploy/kube.js";
 
 export interface UiServer {
   server: Server;
@@ -77,6 +78,8 @@ export interface UiOptions {
   merge?: (project: string, branch: string, message: string) => Promise<MergeResult>;
   /** Tests: the git of the «Раскатка» tab (push to Bitbucket). */
   deployGit?: Git;
+  /** Tests: kubectl of the rollout check, and its poll interval. */
+  deployKube?: { kubectl?: Kubectl; intervalMs?: number };
 }
 
 interface Project {
@@ -170,7 +173,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       ...(spec.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: spec.maxTaskCostUsd } : {}),
       ...(spec.verifyCommand ? { verifyCommand: spec.verifyCommand } : {}),
       ...(spec.mergeStrategy ? { mergeStrategy: spec.mergeStrategy } : {}),
-      deployer: new Deployer(await FileStore.open(networkDir), projectDir, opts.deployGit),
+      deployer: new Deployer(await FileStore.open(networkDir), projectDir, opts.deployGit, opts.deployKube),
     });
   }
   const host = opts.host ?? "127.0.0.1";

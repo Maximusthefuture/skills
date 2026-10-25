@@ -3,7 +3,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Deployer, taskDeployState, type DeployRun } from "../../src/deploy/deployer.js";
-import { deployNotes, envVarOf, flattenYaml, javaProperties } from "../../src/deploy/notes.js";
+import { checkRollout } from "../../src/deploy/kube.js";
+import { deployNotes, envVarOf, flattenYaml, javaProperties, type DeployNotes } from "../../src/deploy/notes.js";
 import { branchName, branchWebUrl, pushTask } from "../../src/deploy/push.js";
 import { checkSettings, saveSettings } from "../../src/deploy/settings.js";
 import { preBashDecision } from "../../src/hook.js";
@@ -164,5 +165,88 @@ describe("where a merged task stands", () => {
     expect(taskDeployState("task-001", [run("dep-003", "stage", "failed", "ok", "failed", "3"), ...onDev])).toMatchObject({ stage: "deployed", envs: ["dev"], lastRun: { id: "dep-003", status: "failed" } });
     expect(taskDeployState("task-001", [run("dep-003", "stage", "running", "ok", "pending", "3"), ...onDev]).stage).toBe("running");
     expect(taskDeployState("task-002", onDev).stage).toBe("merged");
+  });
+});
+
+/** A cluster that answers kubectl get/logs from plain objects, and remembers every call. */
+function fakeCluster(o: { revision: string; rsCreated: string; ready: number; replicas?: number; reason?: string; restarts?: number; logs?: string }) {
+  const calls: string[][] = [];
+  const state = { ...o };
+  const kubectl = async (args: string[]) => {
+    calls.push(args);
+    const want = state.replicas ?? 2;
+    const rs = { metadata: { name: `svc-${state.revision}`, creationTimestamp: state.rsCreated, annotations: { "deployment.kubernetes.io/revision": state.revision }, ownerReferences: [{ kind: "Deployment", name: "orders-service" }] } };
+    const pod = (i: number) => ({ metadata: { name: `svc-${state.revision}-p${i}`, ownerReferences: [{ kind: "ReplicaSet", name: rs.metadata.name }] }, status: { containerStatuses: [{ ready: i < state.ready, restartCount: state.restarts ?? 0, ...(state.reason ? { state: { waiting: { reason: state.reason } } } : {}) }] } });
+    const verb = args[args.indexOf("--request-timeout=20s") + 1];
+    const kind = args[args.indexOf("--request-timeout=20s") + 2];
+    if (verb === "get" && kind === "deployment") return { ok: true, err: "", out: JSON.stringify({ metadata: { name: "orders-service", generation: 3, annotations: { "deployment.kubernetes.io/revision": state.revision } }, spec: { replicas: want, selector: { matchLabels: { app: "orders" } } }, status: { observedGeneration: 3, replicas: want, updatedReplicas: want, readyReplicas: state.ready, availableReplicas: state.ready } }) };
+    if (verb === "get" && kind === "rs") return { ok: true, err: "", out: JSON.stringify({ items: [rs] }) };
+    if (verb === "get" && kind === "pods") return { ok: true, err: "", out: JSON.stringify({ items: Array.from({ length: want }, (_, i) => pod(i)) }) };
+    if (verb === "get" && kind === "events") return { ok: true, err: "", out: JSON.stringify({ items: [{ involvedObject: { name: "svc-7-p0" }, reason: "BackOff", message: "Back-off restarting failed container" }] }) };
+    if (verb === "logs") return { ok: true, err: "", out: state.logs ?? "" };
+    return { ok: false, out: "", err: `unexpected kubectl ${args.join(" ")}` };
+  };
+  return { kubectl, calls, state };
+}
+
+describe("the rollout check in Kubernetes (read-only kubectl)", () => {
+  const target = { context: "dev-cluster", namespace: "orders-dev", deployment: "orders-service" };
+  const readOnly = (calls: string[][]) => calls.every((a) => a.slice(0, 4).join(" ") === "--context dev-cluster -n orders-dev" && ["get", "logs"].includes(a[a.indexOf("--request-timeout=20s") + 1]!));
+
+  it("waits for a ReplicaSet newer than the deploy, then for every replica ready", async () => {
+    const since = "2026-10-25T10:00:00.000Z";
+    const c = fakeCluster({ revision: "6", rsCreated: "2026-10-24T09:00:00Z", ready: 2 });
+    const seen: string[] = [];
+    let n = 0;
+    const r = await checkRollout(c.kubectl, target, {
+      since, timeoutSec: 10, intervalMs: 1,
+      progress: (t) => {
+        seen.push(t);
+        if (++n === 1) Object.assign(c.state, { revision: "7", rsCreated: "2026-10-25T10:01:00Z", ready: 1 }); // the job rolled out
+        else Object.assign(c.state, { ready: 2 });
+      },
+    });
+    expect(seen[0]).toContain("ждём новую раскатку");
+    expect(seen[1]).toContain("раскатывается");
+    expect(r).toMatchObject({ ok: true, replicaSet: { name: "svc-7", revision: "7" } });
+    expect(r.summary).toContain("готово 2/2");
+    expect(readOnly(c.calls)).toBe(true);
+  });
+
+  it("pods that do not start fail at once, with the missing setting named from «Для раскатки»", async () => {
+    const c = fakeCluster({ revision: "7", rsCreated: "2026-10-25T10:01:00Z", ready: 0, reason: "CrashLoopBackOff", restarts: 3, logs: "APPLICATION FAILED TO START\nCould not resolve placeholder 'ORDERS_PARTNERAPIKEY' in value \"${ORDERS_PARTNERAPIKEY}\"" });
+    const notes = { properties: [{ key: "orders.partner-api-key", envVar: "ORDERS_PARTNERAPIKEY" }] } as unknown as DeployNotes;
+    const r = await checkRollout(c.kubectl, target, { since: "2026-10-25T10:00:00.000Z", timeoutSec: 60, intervalMs: 1, notes });
+    expect(r.ok).toBe(false);
+    expect(r.summary).toContain("поды не стартуют: CrashLoopBackOff");
+    expect(r.summary).toContain("не задано ORDERS_PARTNERAPIKEY (orders.partner-api-key) — оно было в «Для раскатки»");
+    expect(r.output).toContain("Back-off restarting failed container");
+    expect(c.calls.some((a) => a.includes("logs") && a.includes("--previous"))).toBe(true);
+    expect(readOnly(c.calls)).toBe(true);
+  });
+
+  it("no new rollout in time, and a cluster it cannot read, are failures with the reason", async () => {
+    const c = fakeCluster({ revision: "6", rsCreated: "2026-10-24T09:00:00Z", ready: 2 });
+    const r = await checkRollout(c.kubectl, target, { since: "2026-10-25T10:00:00.000Z", timeoutSec: 0, intervalMs: 1 });
+    expect(r).toMatchObject({ ok: false });
+    expect(r.summary).toContain("новой раскатки не было");
+    const down = await checkRollout(async () => ({ ok: false, out: "", err: "error: context \"dev-cluster\" does not exist" }), target, { since: "2026-10-25T10:00:00.000Z", timeoutSec: 5, intervalMs: 1 });
+    expect(down.summary).toContain('context "dev-cluster" does not exist');
+  });
+
+  it("a deploy with Kubernetes set up ends on the stand", async () => {
+    const { dir, task } = await project();
+    const fs = await FileStore.open(join(dir, ".agent-network"));
+    await saveSettings(fs, { kubernetes: { context: "dev-cluster" }, environments: [{ name: "dev", namespace: "orders-dev", deployment: "orders-service" }] });
+    const c = fakeCluster({ revision: "7", rsCreated: new Date(Date.now() + 60_000).toISOString(), ready: 2 });
+    const d = new Deployer(fs, dir, undefined, { kubectl: c.kubectl, intervalMs: 1 });
+    let run = await d.start(task, "dev");
+    for (let i = 0; i < 100 && run.status === "running"; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      run = await d.get(run.id);
+    }
+    expect(run.steps.map((s) => s.status)).toEqual(["ok", "ok", "skipped", "ok"]);
+    expect(run.steps[3]!.summary).toContain("раскатилось");
+    expect(taskDeployState(task.id, await d.list())).toMatchObject({ stage: "deployed", envs: ["dev"] });
   });
 });
