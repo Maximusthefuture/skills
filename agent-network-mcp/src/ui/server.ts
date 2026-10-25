@@ -31,7 +31,7 @@ import type { Supervisor } from "../supervisor/supervisor.js";
 import type { Scheduler } from "../schedule/scheduler.js";
 import { buildUiState } from "./state.js";
 import { nextRun, parseCron } from "../schedule/cron.js";
-import { branchDiff, fileDiff, gitRoot, mergeCheckWorktrees, mergeProjectInto, removeMergeCheckWorktree, removeTaskWorktree, removeWorktrees, type MergeResult } from "../worktrees.js";
+import { branchDiff, branchExists, fileDiff, gitRoot, mergeCheckWorktrees, parkedBranch, mergeProjectInto, removeMergeCheckWorktree, removeTaskWorktree, removeWorktrees, type MergeResult } from "../worktrees.js";
 import { ObserverStore } from "../observer/store.js";
 import type { Observer } from "../observer/observer.js";
 import { readCritiques, type PlanCritic } from "../planCritic.js";
@@ -142,11 +142,18 @@ type Reply = { status: number; type: string; body: string; csp?: string };
 const json = (status: number, value: unknown): Reply => ({ status, type: "application/json", body: JSON.stringify(value) });
 const text = (status: number, body: string): Reply => ({ status, type: "text/plain; charset=utf-8", body });
 
-/** The lead's own branch of a task: its auto worktree's, else the branch checked out in its own folder. */
-async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { agents: string[] }, agentId?: string): Promise<{ project: string; branch: string }> {
+/**
+ * The lead's own branch of a task: its auto worktree's, else the branch checked out in its own folder. A task put aside
+ * for another (or the one taken instead) has its work parked on <branch>--<task> while the agent is on the other task.
+ */
+async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { id?: string; agents: string[] }, agentId?: string): Promise<{ project: string; branch: string }> {
   const lead = agentId && task.agents.includes(agentId) ? agentId : task.agents[0]!;
   const folder = p.pool?.agentFolder(lead);
   const project = folder?.worktree?.project ?? p.projectDir;
+  if (folder?.worktree && task.id) {
+    const parked = parkedBranch(folder.worktree.branch, task.id);
+    if (await branchExists(project, parked)) return { project, branch: parked };
+  }
   const branch = folder?.worktree?.branch ?? (folder?.cwd && resolve(folder.cwd) !== p.projectDir ? (await readGitContext(folder.cwd))?.branch : undefined);
   if (!branch || branch === "HEAD") {
     throw new AppError("INVALID_INPUT", `${lead} (the lead) has no branch of its own: it works in the project folder${folder?.cwd ? ` or on no branch in ${folder.cwd}` : ""}, so its commits are there already`);
@@ -784,6 +791,22 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       // the operator's idea → one read-only session that fills the task form; nothing is created
       if (!p.drafter) return json(404, { error: "NOT_FOUND", message: 'No drafter: add a "drafter" section to runners.json' });
       return json(202, { draft: await p.drafter.start(String((body as { text?: unknown }).text ?? "")) });
+    }
+    const setAside = /^\/api\/tasks\/([^/]+)\/set-aside$/.exec(path);
+    if (setAside) {
+      // a BLOCKED task waits for the operator; its agents take their next task meanwhile (the supervisor decides, or you)
+      const id = decodeURIComponent(setAside[1]!);
+      const task = await operator.tasks.get(id);
+      const branches: Record<string, string> = {};
+      const sharedFolder: string[] = [];
+      for (const a of task.agents) {
+        const wt = pool.agentFolder(a)?.worktree;
+        if (wt) branches[a] = parkedBranch(wt.branch, id);
+        else sharedFolder.push(a);
+      }
+      const saved = await operator.setAsideTask({ taskId: id, reason: String((body as { reason?: unknown }).reason ?? ""), by: bySupervisor ? "supervisor" : "operator", branches, sharedFolder });
+      await acted(id, `put aside: its agents go on with ${Object.entries(saved.setAside!.next).map(([a, t]) => `${a} → ${t}`).join(", ")}`);
+      return json(200, { task: saved });
     }
     const draftStop = /^\/api\/drafts\/(draft-\d+)\/stop$/.exec(path);
     if (draftStop) {

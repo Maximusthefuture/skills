@@ -200,7 +200,7 @@ function operatorQuestions(messages: Message[]) {
 }
 
 function pickTask(t: Task) {
-  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify, planReview, grill, jobOf, allowSpawn, acceptance, contract } = t;
+  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify, planReview, grill, jobOf, allowSpawn, acceptance, contract, setAside } = t;
   return {
     id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
@@ -230,6 +230,8 @@ function pickTask(t: Task) {
     followUpBudget: maxFollowUps ? { max: maxFollowUps, used: followUpsUsed ?? 0 } : null,
     /** BLOCKED: unless the operator decides by dueAt, the lead takes over the stuck fix. */
     handover: status === "BLOCKED" ? (handover ?? null) : null,
+    /** BLOCKED and put aside: its agents work on their next task meanwhile (per agent), and come back once it is closed. */
+    setAside: setAside ?? null,
     /** The lead took over the fix of these agents (from that round on, a failure is final). */
     takeover: takeover ?? null,
     /** When the task entered its current phase. */

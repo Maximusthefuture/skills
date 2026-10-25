@@ -75,6 +75,16 @@ export interface Task {
     /** "Откатить": the revert commit that undid it. */
     reverted?: { at: string; commit: string };
   };
+  /**
+   * A BLOCKED task put aside so that its agents take their next task while the operator sorts it out: next names, per
+   * agent, the task it moved to. The agent skips this task until that one is closed, then comes back to it.
+   */
+  setAside?: { at: string; by: "supervisor" | "operator"; reason: string; next: Record<string, string> };
+  /**
+   * Where an agent's work on this task is, when not on the agent's own worktree branch: a branch parked under the task's
+   * name (swarm-backend--task-003) while the agent works on another task. Absent: the agent's branch.
+   */
+  branches?: Record<string, string>;
   /** The task changes the API contract too: its repository, this task's worktree of it, the version it started from (contract.ts). */
   contract?: TaskContract;
   /** After DONE: the operator's verdict on the acceptance page (returned: the follow-up task with its comments). */
@@ -358,6 +368,7 @@ export const EVENT_TYPES = [
   "TASK_REVERTED",
   "TASK_ACCEPTANCE",
   "TASK_CONTRACT",
+  "TASK_SET_ASIDE",
   "AGENT_SPAWNED",
   "REVIEW_COMMENTS",
   "REVIEW_RESOLVED",

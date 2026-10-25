@@ -23,6 +23,7 @@ import { MessageStore } from "./stores/messageStore.js";
 import { SubtaskStore } from "./stores/subtaskStore.js";
 import { SyncStore } from "./stores/syncStore.js";
 import { TaskStore } from "./stores/taskStore.js";
+import { pickTask } from "./pick.js";
 import { CONTRACT_PREFIX, contractPath, inspectContract, isContractFile, openContractWorktree, type TaskContract } from "./contract.js";
 import type {
   Agent,
@@ -1466,6 +1467,55 @@ export class NetworkService {
       if (await this.agreements.find(id)) throw new AppError("INVALID_PHASE", `${id} has an agreement already: name the contract before the lead proposes, or cancel and create the task with it`);
       const saved = await this.tasks.save({ ...task, contract: await this.contractFor(id, c) });
       await this.emit({ type: "TASK_CONTRACT", taskId: id, sourceAgent: OPERATOR, payload: { project: c.project } });
+      return saved;
+    });
+  }
+
+  /**
+   * Operator (or the supervisor through the page): a BLOCKED task is put aside so that its agents take their next task
+   * while the operator sorts it out; each agent comes back to it once it closed the one it took. Refused when nothing
+   * waits for its agents, and when a next task plainly depends on this one: a follow-up or job of it, the same API
+   * contract or OpenSpec change, a description that names it. `branches`: where the agents' work on it is parked
+   * meanwhile (their worktree branch renamed under the task's name; the runner does the renaming before their next session).
+   */
+  async setAsideTask(input: { taskId: string; reason: string; by: "supervisor" | "operator"; branches?: Record<string, string>; sharedFolder?: string[] }): Promise<Task> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator (or the supervisor, through the page) puts a task aside");
+    const id = assertTaskId(input.taskId);
+    const reason = input.reason.trim().slice(0, 1000);
+    if (!reason) throw new AppError("INVALID_INPUT", "Say why the task can wait and the next one can go first");
+    return this.fs.withLock(this.tasks.lockPath(id), async () => {
+      const task = await this.tasks.get(id);
+      if (task.status !== "BLOCKED") throw new AppError("INVALID_PHASE", `Only a BLOCKED task is put aside; ${id} is ${task.status}`);
+      if (task.setAside) throw new AppError("ALREADY_COMPLETED", `${id} is put aside already, for ${Object.values(task.setAside.next).join(", ")}`);
+      const all = await this.tasks.list();
+      const next: Record<string, string> = {};
+      for (const a of task.agents) {
+        const n = pickTask(all.filter((t) => t.id !== id), a);
+        if (n) next[a] = n.id;
+      }
+      if (!Object.keys(next).length) throw new AppError("INVALID_INPUT", `No other open task waits for the agents of ${id} (${task.agents.join(", ")}): there is nothing to take instead`);
+      // an agent without a branch of its own (it works in the project folder) would mix the two tasks' work
+      const shared = (input.sharedFolder ?? []).filter((a) => next[a]);
+      if (shared.length) throw new AppError("INVALID_INPUT", `${shared.join(", ")} ${shared.length > 1 ? "work" : "works"} in the project folder, not in a worktree of ${shared.length > 1 ? "their" : "its"} own: the next task's work would mix with ${id}'s. Sort ${id} out first.`, { shared });
+      const depends = [...new Set(Object.values(next))].map((nid) => all.find((t) => t.id === nid)!).flatMap((n) => {
+        const why = [
+          n.parentTaskId === id || n.rootTaskId === id ? "it is a follow-up of it" : "",
+          n.jobOf?.taskId === id ? "it is a job it delegated" : "",
+          task.contract && n.contract && task.contract.project === n.contract.project ? `both change the API contract in ${task.contract.project}` : "",
+          (task.openspec?.change ?? task.proposes?.change) && (task.openspec?.change ?? task.proposes?.change) === (n.openspec?.change ?? n.proposes?.change) ? `both are about the change ${task.openspec?.change ?? task.proposes?.change}` : "",
+          new RegExp(`\\b${id}\\b`).test(n.description) ? `its description names ${id}` : "",
+        ].filter(Boolean);
+        return why.length ? [`${n.id}: ${why.join("; ")}`] : [];
+      });
+      if (depends.length) throw new AppError("DEPENDS_ON_BLOCKED", `The next task depends on ${id}, so it cannot go first: ${depends.join(". ")}. Sort ${id} out first.`, { depends });
+      const at = new Date().toISOString();
+      // a branch is parked only for an agent that moves on: one that stays (nothing else to do) keeps its own
+      const parked = Object.fromEntries(Object.entries(input.branches ?? {}).filter(([a]) => next[a]));
+      const saved = await this.tasks.save({
+        ...task, setAside: { at, by: input.by, reason, next },
+        ...(Object.keys(parked).length ? { branches: { ...task.branches, ...parked } } : {}),
+      });
+      await this.emit({ type: "TASK_SET_ASIDE", taskId: id, sourceAgent: OPERATOR, payload: { by: input.by, reason, next } });
       return saved;
     });
   }

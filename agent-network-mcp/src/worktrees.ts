@@ -306,3 +306,69 @@ export async function mergeProjectInto(project: string, cwd: string): Promise<{ 
   }
   return { into, from, result: /Already up to date/.test(r.out) ? "up to date" : /Fast-forward/.test(r.out) ? "fast-forward" : "merged" };
 }
+
+/**
+ * A task put aside: its work on the agent's branch is parked under `parked` (uncommitted changes committed as WIP first)
+ * and the agent gets a fresh branch of the same name from the project's HEAD for the task it takes instead.
+ */
+export async function parkTaskBranch(cwd: string, project: string, branch: string, parked: string, wip: string): Promise<string> {
+  if (await branchExists(cwd, parked)) return `${parked} exists already: nothing to park`;
+  if ((await git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"])).out.trim() !== branch) throw new AppError("INVALID_INPUT", `${cwd} is not on ${branch}: cannot park its work under ${parked}`);
+  if ((await git(cwd, ["status", "--porcelain"])).out.trim()) {
+    await git(cwd, ["add", "-A"]);
+    await git(cwd, ["commit", "-q", "-m", wip]);
+  }
+  const head = (await git(project, ["rev-parse", "HEAD"])).out.trim();
+  const mv = await git(cwd, ["branch", "-m", branch, parked]);
+  if (!mv.ok) throw new AppError("INVALID_INPUT", `Cannot park ${branch} as ${parked}: ${mv.err.trim().slice(0, 300)}`);
+  const fresh = await git(cwd, ["checkout", "-q", "-b", branch, head]);
+  if (!fresh.ok) {
+    await git(cwd, ["branch", "-m", parked, branch]); // as it was
+    throw new AppError("INVALID_INPUT", `Cannot start a fresh ${branch}: ${fresh.err.trim().slice(0, 300)}`);
+  }
+  return `parked the work of the task put aside on ${parked}; ${branch} starts anew from ${head.slice(0, 7)}`;
+}
+
+/** Back to a task put aside: the branch's current work is parked under `current` (WIP committed), `parked` becomes `branch` again. */
+export async function restoreTaskBranch(cwd: string, branch: string, parked: string, current: string, wip: string): Promise<string> {
+  if (!(await branchExists(cwd, parked))) return `${parked} is gone: ${branch} stays`;
+  if ((await git(cwd, ["status", "--porcelain"])).out.trim()) {
+    await git(cwd, ["add", "-A"]);
+    await git(cwd, ["commit", "-q", "-m", wip]);
+  }
+  const mv = await git(cwd, ["branch", "-m", branch, current]);
+  if (!mv.ok) throw new AppError("INVALID_INPUT", `Cannot park ${branch} as ${current}: ${mv.err.trim().slice(0, 300)}`);
+  const co = await git(cwd, ["checkout", "-q", parked]);
+  if (!co.ok) {
+    await git(cwd, ["branch", "-m", current, branch]);
+    throw new AppError("INVALID_INPUT", `Cannot check out ${parked}: ${co.err.trim().slice(0, 300)}`);
+  }
+  await git(cwd, ["branch", "-m", parked, branch]);
+  return `back to the task put aside: ${branch} is its work again; the other task's work is on ${current}`;
+}
+
+/** The name a task's own work is parked under on an agent's branch (a task put aside, or the one taken instead of it). */
+export const parkedBranch = (branch: string, taskId: string): string => `${branch}--${taskId}`;
+
+export const branchExists = async (cwd: string, name: string): Promise<boolean> => (await git(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${name}`])).ok;
+
+/**
+ * Before a session of `task` on an agent's own branch, with a task put aside for another (decision of the set-aside):
+ * the agent takes the next task → the put-aside task's work is parked on <branch>--<put aside> and the branch starts anew;
+ * the agent is back on the put-aside task → the taken task's work is parked on <branch>--<taken> and the parked work
+ * becomes the branch again. Each task's diff and merge read its parked branch while it exists (see the page's leadBranch).
+ */
+export async function switchTaskBranch(cwd: string, project: string, branch: string, agent: string, task: { id: string }, tasks: { id: string; agents: string[]; status: string; setAside?: { next: Record<string, string> } }[]): Promise<string | null> {
+  for (const s of tasks) {
+    const next = s.setAside?.next[agent];
+    if (!next || !s.agents.includes(agent) || (s.status !== "ACTIVE" && s.status !== "BLOCKED")) continue;
+    const away = parkedBranch(branch, s.id);
+    if (task.id === next && !(await branchExists(cwd, away)) && !(await branchExists(cwd, parkedBranch(branch, next)))) {
+      return parkTaskBranch(cwd, project, branch, away, `WIP of ${s.id}, put aside for ${next}`);
+    }
+    if (task.id === s.id && (await branchExists(cwd, away))) {
+      return restoreTaskBranch(cwd, branch, away, parkedBranch(branch, next), `WIP of ${next}, left for ${s.id}`);
+    }
+  }
+  return null;
+}

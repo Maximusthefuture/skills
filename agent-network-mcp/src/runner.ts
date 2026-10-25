@@ -147,13 +147,10 @@ export function turnLimitOf(command: string[]): number | undefined {
 /** Used for {systemPrompt} when the system prompt file cannot be read: the CLI must not get an empty system prompt. */
 export const FALLBACK_SYSTEM_PROMPT = "You are a headless coding agent in an agent-network swarm. Follow nextAction from the agent-network tools.";
 
-const seq = (t: Task): number => Number(t.id.slice(t.id.lastIndexOf("-") + 1));
 const isFinished = (t: Task): boolean => t.status === "COMPLETED" || t.status === "CANCELLED";
 
-/** The same task the server treats as current: the oldest unfinished (ACTIVE or BLOCKED) task of the agent. */
-export function pickTask(tasks: Task[], agent: string): Task | null {
-  return [...tasks].sort((a, b) => seq(a) - seq(b)).find((t) => t.agents.includes(agent) && (t.status === "ACTIVE" || t.status === "BLOCKED")) ?? null;
-}
+import { pickTask } from "./pick.js";
+export { pickTask };
 
 export interface RunningSession {
   taskId: string;
@@ -214,9 +211,8 @@ export interface RunnerOptions {
    * after the turn limit: every turn reads the whole context again. Claude Code's stream-json reports it; off when unset.
    */
   maxContextTokens?: number;
-  /** Before a session starts: e.g. create the agent's worktree again after the operator removed it. Throwing = not now. */
   /** Before each session of a task (e.g. its worktree, its branch up to the task's base); a returned line goes to the log. */
-  prepare?: (task: Task) => Promise<string | void>;
+  prepare?: (task: Task, tasks: Task[]) => Promise<string | void>;
   /** The runner gave up on a task (maxRestarts sessions failed): the page blocks the task, so the operator sees it. */
   onGiveUp?: (taskId: string, reason: string) => Promise<void> | void;
   /** After a session is recorded, before the runner looks at the task again (the page checks the task's cost limit here). */
@@ -338,7 +334,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
 
   say(`waiting for tasks in ${networkDir}`);
   while (!signal?.aborted) {
-    const task = pickTask(await tasks.listForAgent(agent), agent);
+    const mine = await tasks.listForAgent(agent);
+    const task = pickTask(mine, agent);
     if (!task) {
       say("no task; waiting");
       await sleep(pollMs, signal);
@@ -396,7 +393,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     }
     if (opts.prepare) {
       try {
-        const line = await opts.prepare(task);
+        const line = await opts.prepare(task, mine);
         if (line) say(`${task.id}: ${line}`);
       } catch (e) {
         say(`cannot prepare the session: ${(e as Error).message}; waiting`);

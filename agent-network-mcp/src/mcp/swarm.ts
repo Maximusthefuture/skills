@@ -3,6 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { commitContract, contractDiff, contractPath, contractVersion, installCommand, isContractFile } from "../contract.js";
 import { checkAcceptance, missingEvidence, needsAcceptance, specScenarios, uncoveredScenarios } from "../acceptance.js";
 import { buildTools, DEFAULT_BUILD_TIMEOUT_MIN, parseBuildCommand, runBuild } from "../build.js";
+import { pickTask } from "../pick.js";
 import { AppError, isAppError } from "../errors.js";
 import { containsCommit, filesChangedSince, ownCommitsSince, readGitContext, resolveCommit, workTreeState } from "../git.js";
 import { phaseEpoch } from "../handoff.js";
@@ -848,7 +849,8 @@ export class Swarm {
       if (own?.status === "COMPLETED" || own?.status === "CANCELLED") return own;
     }
     const tasks = (await this.service.tasks.listForAgent(this.me)).filter((t) => t.status !== "CANCELLED");
-    return tasks.find((t) => t.status === "ACTIVE" || t.status === "BLOCKED") ?? tasks.at(-1) ?? null;
+    // the runner's rule: a task put aside waits until the agent closed the one it took instead
+    return pickTask(tasks, this.me) ?? tasks.at(-1) ?? null;
   }
 
   private async requireTask(): Promise<Task> {

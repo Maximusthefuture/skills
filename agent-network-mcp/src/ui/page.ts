@@ -1223,6 +1223,11 @@ function renderBlocked(t){
     b.onclick=()=>act("unblock",{rounds:n},t.id+": дать ещё "+n+" раунд(а) исправлений? Задача вернётся в работу, отложенное исправление начнётся сразу.");r.append(b)});
   if(h){const b=el("button","ghost","Отдать lead'у сейчас");b.type="button";b.disabled=!!st.pending;
     b.onclick=()=>act("handover",{},t.id+": "+h.lead+" (lead) берёт исправление "+h.from.join(", ")+" сейчас, их файлы на этот раунд переходят к нему?");r.append(b)}
+  if(!t.setAside){const b=el("button","ghost","Отложить и взять следующую");b.type="button";b.disabled=!!st.pending;
+    b.title="Агенты задачи берут свою следующую задачу, пока вы разбираетесь с этой; вернутся к ней, когда та закроется. Сервер откажет, если следующая зависит от этой.";
+    b.onclick=async()=>{const why=await ask(t.id+": отложить? Её агенты возьмут свою следующую задачу и вернутся к этой, когда та закроется. Работа этой задачи останется на своей ветке.","Почему следующая может идти первой");
+      if(!why)return;unblockState.set(key,{pending:true});render();
+      try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/set-aside",{reason:why});unblockState.delete(key)}catch(e){unblockState.set(key,{error:e.message})}await tick()};r.append(b)}
   const c=el("button","ghost","Отменить задачу");c.type="button";c.disabled=!!st.pending;
   c.onclick=()=>act("cancel",{reason:"cancelled on the page"},t.id+": отменить задачу? Агенты перейдут к следующей.");r.append(c);
   box.append(r);if(st.error)box.append(el("pre","log err",st.error));
@@ -1272,6 +1277,7 @@ function renderTask(t){
   hd.append(renderStats(t));
   if(controlMode&&(t.status==="COMPLETED"||t.status==="CANCELLED"))hd.append(renderDelete(t));
   if(t.status==="BLOCKED")hd.append(renderBlocked(t));
+  if(t.setAside&&(t.status==="ACTIVE"||t.status==="BLOCKED"))hd.append(el("div","muted","Отложена "+(t.setAside.by==="supervisor"?"надзором":"вами")+" ради "+Object.entries(t.setAside.next).map(([a,n])=>n+" ("+a+")").join(", ")+": агенты вернутся к ней, когда та закроется. Почему: "+t.setAside.reason));
   if(t.takeover&&t.status!=="BLOCKED")hd.append(el("div","muted","Lead взял исправление "+t.takeover.from.join(", ")+" в раунде "+t.takeover.round+" ("+(t.takeover.by==="timeout"?"оператор не ответил вовремя":"передал оператор")+")."));
   c.append(hd);
   if(t.stats)c.append(phaseBar(t));

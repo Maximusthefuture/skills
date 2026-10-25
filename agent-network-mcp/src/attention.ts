@@ -38,6 +38,7 @@ interface TaskView {
   /** A task that implements a change. */
   openspec?: { change: string } | null;
   blockedReason?: string | null; blockedBy?: string | null; handover?: { dueAt: string; lead: string } | null;
+  setAside?: { next: Record<string, string> } | null;
   plan?: { status: string; stage?: string | null; version?: number | null; at?: string | null } | null;
   waitingOn?: string[];
   mergeCheck?: { status: string; into: string; startedAt: string; finishedAt?: string; followUp?: string; build?: { tests?: { total: number; failed: number } }; files?: string[] } | null;
@@ -81,9 +82,9 @@ export function attentionItems(i: AttentionInput): AttentionItem[] {
     }
     if (t.status === "BLOCKED") {
       out.push({
-        key: `blocked:${t.id}:${t.syncRound ?? 0}:${t.blockedBy ?? "rounds"}`, kind: "blocked", taskId: t.id, blocking: true, since: t.phaseSince ?? t.updatedAt,
+        key: `blocked:${t.id}:${t.syncRound ?? 0}:${t.blockedBy ?? "rounds"}`, kind: "blocked", taskId: t.id, blocking: !t.setAside, since: t.phaseSince ?? t.updatedAt,
         ...(t.handover ? { due: t.handover.dueAt } : {}),
-        title: `${t.id}: BLOCKED`, text: (t.blockedReason ?? t.title) + (t.handover ? ` — потом исправление возьмёт ${t.handover.lead}` : ""), open: { tab: "tasks" },
+        title: `${t.id}: BLOCKED`, text: (t.blockedReason ?? t.title) + (t.handover ? ` — потом исправление возьмёт ${t.handover.lead}` : "") + (t.setAside ? ` — отложена: агенты пока делают ${[...new Set(Object.values(t.setAside.next))].join(", ")}` : ""), open: { tab: "tasks" },
       });
     }
     if (t.status === "COMPLETED" && t.proposes) {

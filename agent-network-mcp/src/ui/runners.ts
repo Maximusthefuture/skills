@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { catchUpBranch, ensureWorktrees, type AgentWorktree } from "../worktrees.js";
+import { catchUpBranch, ensureWorktrees, switchTaskBranch, type AgentWorktree } from "../worktrees.js";
 import { AppError } from "../errors.js";
 import { parseFreshPhases } from "../handoff.js";
 import { isValidModel, runRunner, usesModel, type RunnerOptions, type RunningSession } from "../runner.js";
@@ -982,8 +982,12 @@ export class RunnerPool {
       // and its branch gets the task's base when it lacks it (the project moved on, e.g. by the squash of its previous task)
       ...(m.config.worktree
         ? {
-            prepare: async (task: Task) => {
+            prepare: async (task: Task, tasks: Task[]) => {
               (await ensureWorktrees([m.config])).forEach((line) => this.say(m, `[ui] worktree created again: ${line}`));
+              const wt = m.config.worktree!;
+              // a task put aside for another one: each keeps its work on a branch of its own
+              const switched = m.config.cwd ? await switchTaskBranch(m.config.cwd, wt.project, wt.branch, m.config.id, task, tasks) : null;
+              if (switched) this.say(m, `[ui] ${switched}`);
               const base = task.baseCommit ?? task.git?.commit;
               return base && m.config.cwd ? ((await catchUpBranch(m.config.cwd, base)) ?? undefined) : undefined;
             },

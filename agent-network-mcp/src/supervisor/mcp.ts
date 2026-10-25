@@ -138,6 +138,16 @@ export function createSupervisorServer(o: SupervisorServerOptions): McpServer {
     return { id: t.id, phase: t.phase, status: t.status, takeover: t.takeover };
   });
 
+  tool(
+    "set_aside",
+    "Put a BLOCKED task aside so that its agents take their next task while the operator sorts it out; each comes back to it once it closed the one it took (its work is kept on a branch of its own meanwhile). Only when the next task does not depend on it: check with task_detail of both — the blocked task's agreement files and what it changed, the next task's description — and do not when the next one touches the same files or builds on its code; unsure: escalate. The server refuses a follow-up or job of it, the same API contract or OpenSpec change, a description that names it.",
+    { taskId: z.string(), reason: z.string().describe("Why the next task can go first: what it touches, why that is apart from this one") },
+    async ({ taskId, reason }) => {
+      const t = (await api("POST", `/api/tasks/${encodeURIComponent(taskId)}/set-aside`, { reason })).task as Json;
+      return { id: t.id, status: t.status, setAside: t.setAside };
+    },
+  );
+
   tool("note", "Record what you found or decided in your journal on the page (short, concrete).", { text: z.string(), taskId: z.string().optional() }, async ({ text, taskId }) => (await note("note", text, taskId)).entry);
 
   tool(

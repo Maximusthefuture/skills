@@ -123,7 +123,7 @@ describe("remove the agents' worktrees", () => {
     const pool = new RunnerPool(join(project, ".agent-network"), [{ id: "backend", command: ["x"], cwd: backend, worktree: agents[0]!.worktree, autostart: false }], {
       run: async (o) => {
         seen.push(o);
-        await o.prepare?.({ git: null } as never);
+        await o.prepare?.({ id: "task-001", git: null } as never, []);
         return 0;
       },
     });
