@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Deployer, taskDeployState, type DeployRun } from "../../src/deploy/deployer.js";
+import { buildNumberOf, buildStateOf, buildUrlOf, expandEnv, jobParams, openJenkinsMcp, renderArgs, runJob } from "../../src/deploy/jenkins.js";
 import { checkRollout } from "../../src/deploy/kube.js";
 import { deployNotes, envVarOf, flattenYaml, javaProperties, type DeployNotes } from "../../src/deploy/notes.js";
 import { branchName, branchWebUrl, pushTask } from "../../src/deploy/push.js";
@@ -188,6 +189,79 @@ function fakeCluster(o: { revision: string; rsCreated: string; ready: number; re
   };
   return { kubectl, calls, state };
 }
+
+describe("the Jenkins job through its MCP server", () => {
+  const FAKE = join(process.cwd(), "test", "helpers", "fakeJenkinsMcp.mjs");
+  const jenkins = (calls: string, result = "SUCCESS") => ({
+    mcpCommand: ["node", FAKE], mcpEnv: { FAKE_CALLS: calls, FAKE_RESULT: result, JENKINS_TOKEN: "${TEST_JENKINS_TOKEN}" },
+    job: "orders-service/deploy", params: { BRANCH: "{branch}", ENV: "{env}" },
+    triggerTool: "trigger_build", triggerArgs: '{"jobName": "{job}", "parameters": {params}}',
+    statusTool: "get_build", statusArgs: '{"jobName": "{job}", "buildNumber": {build}}',
+    logTool: "get_build_log", logArgs: '{"jobName": "{job}", "buildNumber": {build}}', timeoutMin: 1,
+  });
+  const readCalls = (f: string) => readFileSync(f, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { tool: string; args: Record<string, unknown>; token: string | null });
+
+  it("fills the argument templates, reads the build number, state and link from the answers", () => {
+    expect(renderArgs('{"job": "{job}", "p": {params}, "n": {build}, "msg": "deploy {branch} to {env}"}', { job: "a/b", params: { X: "1" }, build: 42, branch: 'f/"x"', env: "dev" })).toEqual({ job: "a/b", p: { X: "1" }, n: 42, msg: 'deploy f/"x" to dev' });
+    expect(jobParams({ BRANCH: "{branch}", ENV: "{env}" }, { ENV: "development", REPLICAS: "1" }, { branch: "feature/a", env: "dev" })).toEqual({ BRANCH: "feature/a", ENV: "development", REPLICAS: "1" });
+    expect(expandEnv({ T: "${TOK}", U: "https://j/${HOST_X}" }, { TOK: "s3cret" })).toEqual({ T: "s3cret", U: "https://j/" });
+    const r = (text: string) => ({ text, json: (() => { try { return JSON.parse(text) as unknown; } catch { return null; } })(), isError: false });
+    expect(buildNumberOf(r('{"queueItem": {"executable": {"number": 17}}}'))).toBe("17");
+    expect(buildNumberOf(r("Triggered orders-service build #128"))).toBe("128");
+    expect(buildUrlOf(r("see https://ci.corp/job/orders/128/ now"))).toBe("https://ci.corp/job/orders/128/");
+    expect(buildStateOf(r('{"building": true, "result": null}'))).toEqual({ done: false });
+    expect(buildStateOf(r('{"building": false, "result": "UNSTABLE"}'))).toEqual({ done: true, result: "UNSTABLE" });
+    expect(buildStateOf(r("Build #12 is still in progress"))).toEqual({ done: false });
+    expect(buildStateOf(r("Build #12 finished: FAILED"))).toEqual({ done: true, result: "FAILURE" });
+  });
+
+  it("a status tool that keeps refusing stops the step with its error instead of waiting out the timeout", async () => {
+    let statusCalls = 0;
+    const open = async () => ({
+      call: async (tool: string) => {
+        if (tool === "trigger_build") return { text: '{"number": 5}', json: { number: 5 }, isError: false };
+        statusCalls++;
+        return { text: "Invalid arguments: buildNumber expected number", json: null, isError: true };
+      },
+      close: async () => undefined,
+    });
+    const r = await runJob(open, jenkins("/dev/null"), { branch: "b", commit: "c", env: "dev", task: "task-001", params: {} }, { intervalMs: 1 });
+    expect(statusCalls).toBe(3);
+    expect(r).toMatchObject({ ok: false, build: "5", summary: "инструмент get_build отвечает ошибкой: Invalid arguments: buildNumber expected number" });
+  });
+
+  it("starts the job with the branch and environment, waits for SUCCESS; the token comes from the server's environment", async () => {
+    process.env.TEST_JENKINS_TOKEN = "tok-123";
+    const calls = join(await tmpDir(), "calls.jsonl");
+    const progress: string[] = [];
+    const r = await runJob(openJenkinsMcp, jenkins(calls), { branch: "feature/task-001-a", commit: "abc", env: "dev", task: "task-001", params: { BRANCH: "feature/task-001-a", ENV: "dev" } }, { intervalMs: 10, progress: (t) => void progress.push(t) });
+    expect(r).toMatchObject({ ok: true, build: "42", url: "https://jenkins.example.com/job/orders-service/deploy/42/", summary: "job orders-service/deploy #42: SUCCESS" });
+    expect(progress[0]).toBe("job orders-service/deploy запущен · сборка #42");
+    const c = readCalls(calls);
+    expect(c[0]).toEqual({ tool: "trigger_build", args: { jobName: "orders-service/deploy", parameters: { BRANCH: "feature/task-001-a", ENV: "dev" } }, token: "tok-123" });
+    expect(c.filter((x) => x.tool === "get_build").map((x) => x.args)).toEqual([{ jobName: "orders-service/deploy", buildNumber: 42 }, { jobName: "orders-service/deploy", buildNumber: 42 }]);
+  });
+
+  it("a failed job brings its log and stops the deploy before Kubernetes", async () => {
+    const { dir, task } = await project();
+    const fs = await FileStore.open(join(dir, ".agent-network"));
+    const calls = join(await tmpDir(), "calls.jsonl");
+    await saveSettings(fs, { jenkins: jenkins(calls, "FAILURE"), environments: [{ name: "dev", namespace: "orders-dev", deployment: "orders-service" }] });
+    const kube = fakeCluster({ revision: "7", rsCreated: new Date(Date.now() + 60_000).toISOString(), ready: 2 });
+    const d = new Deployer(fs, dir, undefined, { kubectl: kube.kubectl, intervalMs: 1, jenkinsIntervalMs: 10 });
+    let run = await d.start(task, "dev");
+    for (let i = 0; i < 200 && run.status === "running"; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      run = await d.get(run.id);
+    }
+    expect(run.status).toBe("failed");
+    expect(run.steps.map((s) => s.status)).toEqual(["ok", "ok", "failed", "pending"]);
+    expect(run.steps[2]).toMatchObject({ summary: "job orders-service/deploy #42: FAILURE", link: "https://jenkins.example.com/job/orders-service/deploy/42/" });
+    expect(run.steps[2]!.output).toContain("UPGRADE FAILED");
+    expect(kube.calls).toEqual([]);
+    expect(readCalls(calls)[0]!.args).toEqual({ jobName: "orders-service/deploy", parameters: { BRANCH: "feature/task-001-podarochnaya-upakovka-gift-wrap", ENV: "dev" } });
+  });
+});
 
 describe("the rollout check in Kubernetes (read-only kubectl)", () => {
   const target = { context: "dev-cluster", namespace: "orders-dev", deployment: "orders-service" };

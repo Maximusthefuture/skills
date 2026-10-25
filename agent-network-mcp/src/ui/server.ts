@@ -31,6 +31,7 @@ import { Deployer, taskDeployState } from "../deploy/deployer.js";
 import { saveSettings } from "../deploy/settings.js";
 import type { Git } from "../deploy/push.js";
 import type { Kubectl } from "../deploy/kube.js";
+import type { OpenJenkins } from "../deploy/jenkins.js";
 
 export interface UiServer {
   server: Server;
@@ -79,7 +80,7 @@ export interface UiOptions {
   /** Tests: the git of the «Раскатка» tab (push to Bitbucket). */
   deployGit?: Git;
   /** Tests: kubectl of the rollout check, and its poll interval. */
-  deployKube?: { kubectl?: Kubectl; intervalMs?: number };
+  deployKube?: { kubectl?: Kubectl; intervalMs?: number; jenkins?: OpenJenkins; jenkinsIntervalMs?: number };
 }
 
 interface Project {

@@ -3,6 +3,7 @@ import type { FileStore } from "../storage/fileStore.js";
 import type { Task } from "../types.js";
 import { deployNotes, type DeployNotes } from "./notes.js";
 import { branchName, pushTask, runGit, type Git, type PushResult } from "./push.js";
+import { jobParams, openJenkinsMcp, runJob, type OpenJenkins } from "./jenkins.js";
 import { checkRollout, runKubectl, type Kubectl } from "./kube.js";
 import { jenkinsMissing, loadSettings, type DeploySettings } from "./settings.js";
 
@@ -98,7 +99,7 @@ export class Deployer {
     private readonly projectDir: string,
     private readonly git: Git = runGit,
     /** Tests: a fake kubectl and a short poll. */
-    private readonly kube: { kubectl?: Kubectl; intervalMs?: number } = {},
+    private readonly kube: { kubectl?: Kubectl; intervalMs?: number; jenkins?: OpenJenkins; jenkinsIntervalMs?: number } = {},
   ) {}
 
   settings(): Promise<DeploySettings> {
@@ -199,8 +200,31 @@ export class Deployer {
         if (r.webUrl) s.link = r.webUrl;
       })) &&
       (await step("jenkins", async (s) => {
-        s.status = "skipped";
-        s.summary = jenkinsMissing(settings) ?? "запуск job через MCP Jenkins появится на следующем этапе";
+        const missing = jenkinsMissing(settings);
+        if (missing) {
+          s.status = "skipped";
+          s.summary = missing;
+          return;
+        }
+        const env = settings.environments.find((x) => x.name === run.env);
+        const vars = { branch: run.branch, commit: run.commit, env: run.env, task: run.taskId };
+        let saved = 0;
+        const r = await runJob(this.kube.jenkins ?? openJenkinsMcp, settings.jenkins, { ...vars, params: jobParams(settings.jenkins.params, env?.jobParams, vars) }, {
+          ...(this.kube.jenkinsIntervalMs !== undefined ? { intervalMs: this.kube.jenkinsIntervalMs } : {}),
+          signal,
+          progress: async (text, link) => {
+            s.summary = text;
+            if (link) s.link = link;
+            if (Date.now() - saved > 5_000) {
+              saved = Date.now();
+              await this.save(run);
+            }
+          },
+        });
+        s.summary = r.summary;
+        s.output = r.output;
+        if (r.url) s.link = r.url;
+        if (!r.ok) s.status = "failed";
       })) &&
       (await step("kubernetes", async (s) => {
         const e = settings.environments.find((x) => x.name === run.env);
