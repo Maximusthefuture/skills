@@ -72,9 +72,10 @@ nextAction:
 - `integrate` (INTEGRATE, lead only): bring everyone's work together (in separate worktrees merge their branches), run the
   build and ALL tests (`task.verifyCommand` if set), then `complete({status: "PASS", result})` (add `commits: [<merged HEAD>]` if you merged with git), or
   `complete({status: "NEEDS_FIX", result, findings: [{severity: "ERROR", description, relatedAgent}]})` for conflicts or failing tests.
-  PASS of a code task carries `acceptance: {criteria: [{requirement, status: done|partial|not-done, tests: ["path#method"], where, note}],
+  PASS of a code task carries `acceptance: {criteria: [{requirement, status: done|partial|not-done, tests: ["path#test name"], where, note}],
   checks: [{step, command, expect}], risks}`: one criterion per requirement (with OpenSpec: per scenario, named first), the tests and code
-  that prove it at the merged commit (`ACCEPTANCE_EVIDENCE` if one is not there), how to see it work by hand. The operator accepts the task by it.
+  that prove it at the merged commit (`ACCEPTANCE_EVIDENCE` if one is not there), how to see it work by hand. Name each test whole
+  (`path#` plus its method or its `it()`/`test()` title): a file alone is flagged to the operator. The operator accepts the task by it.
   Work that is left but does not block the task (`followUps.notes`: WARNING/INFO findings of the reviews, things noticed while merging) may
   become new tasks when `followUps.remaining` > 0: add `followUps: [{title, description, agents?}]` to the PASS call. Each description must be
   concrete; the agents start them when this task is DONE. Never invent work; everything else goes into `result`.

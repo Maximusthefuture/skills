@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { splitRef } from "./acceptance.js";
 import { deployNotes, type DeployNotes } from "./deploy/notes.js";
 import type { DeployEnvironment } from "./deploy/settings.js";
 import { creditedSessions } from "./observer/digest.js";
@@ -12,7 +13,7 @@ import { MessageStore } from "./stores/messageStore.js";
 import { SubtaskStore } from "./stores/subtaskStore.js";
 import { SyncStore } from "./stores/syncStore.js";
 import { TaskStore } from "./stores/taskStore.js";
-import type { Acceptance, ReviewComment, Severity, Task } from "./types.js";
+import type { Acceptance, AcceptanceCriterion, ReviewComment, Severity, Task } from "./types.js";
 import { branchDiff } from "./worktrees.js";
 
 /**
@@ -125,6 +126,7 @@ export function acceptanceAlerts(d: AcceptanceData): Alert[] {
   for (const c of d.acceptance?.criteria ?? []) {
     if (c.status !== "done") out.push({ level: c.status === "not-done" ? "bad" : "warn", text: `${c.status === "not-done" ? "Не сделано" : "Сделано частично"}: ${c.requirement}${c.note ? ` — ${c.note}` : ""}` });
     else if (!c.tests.length) out.push({ level: "warn", text: `Без теста: ${c.requirement}` });
+    else if (fileOnly(c)) out.push({ level: "warn", text: `Тест назван только файлом, без имени: ${c.requirement} (${c.tests.join(", ")}) — какой тест это доказывает, не видно` });
   }
   if (d.task.verifyCommand && !d.build?.ok) out.push({ level: "bad", text: `Последняя сборка lead'а не зелёная: ${d.build?.command ?? "не запускалась"}` });
   const outside = d.files.filter((f) => f.outside);
@@ -138,6 +140,9 @@ export function acceptanceAlerts(d: AcceptanceData): Alert[] {
   if (warnings.length) out.push({ level: "warn", text: `Предупреждения ревью, которые остались: ${warnings.length}` });
   return out.sort((a, b) => (a.level === b.level ? 0 : a.level === "bad" ? -1 : 1));
 }
+
+/** A done requirement whose tests are only files: the server could check nothing but that the file is there. */
+const fileOnly = (c: AcceptanceCriterion): boolean => c.tests.length > 0 && c.tests.every((t) => !splitRef(t).method);
 
 const firstLine = (s: string): string => {
   const line = s.split("\n").find((l) => l.trim()) ?? "";
@@ -180,7 +185,7 @@ export function renderAcceptancePage(d: AcceptanceData, alerts = acceptanceAlert
     : `<p class="muted">Вопросов вам не было.</p>`;
 
   const criteria = d.acceptance?.criteria.length
-    ? `<table><tr><th>Требование</th><th>Итог</th><th>Тесты</th><th>Код</th></tr>${d.acceptance.criteria.map((c) => `<tr class="${c.status === "done" ? (c.tests.length ? "ok" : "warn") : c.status === "partial" ? "warn" : "bad"}"><td>${inline(c.requirement)}${c.note ? `<br><span class="muted">${inline(c.note)}</span>` : ""}</td><td>${STATUS_RU[c.status]}</td><td>${c.tests.map((x) => `<code>${esc(x)}</code>`).join("<br>") || "—"}</td><td>${c.where.map((x) => `<code>${esc(x)}</code>`).join("<br>") || "—"}</td></tr>`).join("")}</table>`
+    ? `<table><tr><th>Требование</th><th>Итог</th><th>Тесты</th><th>Код</th></tr>${d.acceptance.criteria.map((c) => `<tr class="${c.status === "done" ? (c.tests.length && !fileOnly(c) ? "ok" : "warn") : c.status === "partial" ? "warn" : "bad"}"><td>${inline(c.requirement)}${c.note ? `<br><span class="muted">${inline(c.note)}</span>` : ""}</td><td>${STATUS_RU[c.status]}</td><td>${c.tests.map((x) => `<code>${esc(x)}</code>`).join("<br>") || "—"}${fileOnly(c) ? `<br><span class="muted">только файл: какой тест — не сказано</span>` : ""}</td><td>${c.where.map((x) => `<code>${esc(x)}</code>`).join("<br>") || "—"}</td></tr>`).join("")}</table>`
     : `<p class="muted">Lead не прислал таблицу.</p>`;
 
   const fixedIn = (round: number) => (round < d.lastRound ? `исправлено в раунде ${round + 1}` : "");

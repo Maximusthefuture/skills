@@ -111,6 +111,7 @@ describe("PASS in INTEGRATE", () => {
     const head = git(backendDir, "rev-parse", "HEAD");
     // the integrator's own checks first: the tester is no integrator, whatever it sends
     expect(await tester.complete({ status: "PASS", result: "m" }).catch((e) => tester.errorBody(e))).toMatchObject({ error: "NOT_ASSIGNED" });
+    expect((await backend.context()).hint).toContain("name every test whole");
     const missing = await backend.complete({ status: "PASS", result: "merged", commits: [head] }).catch((e) => backend.errorBody(e));
     expect(missing).toMatchObject({ error: "ACCEPTANCE_MISSING" });
     const ghost = await backend.complete({ status: "PASS", result: "merged", commits: [head], acceptance: { criteria: [{ requirement: "second refund is 409", status: "done", tests: ["test/RefundsTest.java#refundsTwice"] }] } }).catch((e) => backend.errorBody(e));
@@ -160,6 +161,16 @@ describe("the page", () => {
     expect(acceptanceAlerts(base)[0]!.text).toContain("Lead не прислал таблицу");
     expect(acceptanceAlerts({ ...base, acceptance: { criteria: [{ requirement: "r", status: "done", tests: ["a#b"], where: [] }], checks: [], risks: [] } })).toEqual([]);
   });
+
+  it("flags a done requirement whose tests are only files: which test proves it is not said", () => {
+    const table = (tests: string[]) => ({ ...base, acceptance: { criteria: [{ requirement: "Refund twice is 409", status: "done" as const, tests, where: [] }], checks: [], risks: [] } });
+    expect(acceptanceAlerts(table(["test/refunds.test.js", "test/orders.test.js"]))).toEqual([
+      { level: "warn", text: "Тест назван только файлом, без имени: Refund twice is 409 (test/refunds.test.js, test/orders.test.js) — какой тест это доказывает, не видно" },
+    ]);
+    expect(renderAcceptancePage(table(["test/refunds.test.js"]))).toContain("только файл: какой тест — не сказано");
+    // one test named whole is enough
+    expect(acceptanceAlerts(table(["test/refunds.test.js", "test/refunds.test.js#refuses a second refund"]))).toEqual([]);
+  });
 });
 
 let ui: UiServer | undefined;
@@ -199,7 +210,10 @@ describe("the acceptance routes", () => {
     commit(agents[0]!.cwd, "b.txt", "feature");
     const first = await done("Feature");
     const info = (await (await fetch(`${ui.url}/api/tasks/${first.id}/acceptance`)).json()) as any;
-    expect(info).toMatchObject({ table: true, verdict: null, ownBranch: true, alerts: [{ level: "warn", text: "Код изменён, а тесты — нет." }] });
+    expect(info).toMatchObject({ table: true, verdict: null, ownBranch: true, alerts: [
+      { level: "warn", text: "Тест назван только файлом, без имени: Feature works (b.txt) — какой тест это доказывает, не видно" },
+      { level: "warn", text: "Код изменён, а тесты — нет." },
+    ] });
     const view = await fetch(`${ui.url}/api/tasks/${first.id}/acceptance/view`);
     expect(view.headers.get("content-security-policy")).toContain("sandbox allow-scripts");
     const html = await view.text();

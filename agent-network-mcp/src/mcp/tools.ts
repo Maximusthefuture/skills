@@ -127,7 +127,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
           criteria: z.array(z.object({
             requirement: z.string().describe("A requirement of the task in a sentence (with OpenSpec: starting with the scenario's name)"),
             status: z.enum(["done", "partial", "not-done"]),
-            tests: z.array(z.string()).optional().describe("Tests that prove it, at the merged commit: 'path#method' or 'path'"),
+            tests: z.array(z.string()).optional().describe("Tests that prove it, at the merged commit, each named whole: 'path#test name' (its method or it()/test() title); a file alone is flagged to the operator"),
             where: z.array(z.string()).optional().describe("Where the code is: 'path' or 'path:line'"),
             note: z.string().optional().describe("Required for partial / not-done: what is missing"),
           })).describe("One per requirement of the task"),

@@ -172,8 +172,9 @@ const OPERATOR_POLL_MS = 30_000;
 /** The INTEGRATE hint's part about the acceptance table that goes with PASS. */
 function acceptanceHint(spec: string | null): string {
   return ` PASS carries acceptance — the operator accepts the task by it on a page the server builds (description, reviews, diff, deploy notes): ` +
-    `acceptance: {criteria: [{requirement, status: "done"|"partial"|"not-done", tests: ["path#method"], where: ["path"], note}], checks: [{step, command, expect}], risks: [{what, why}]} — ` +
+    `acceptance: {criteria: [{requirement, status: "done"|"partial"|"not-done", tests: ["path#test name"], where: ["path"], note}], checks: [{step, command, expect}], risks: [{what, why}]} — ` +
     `one criterion per requirement of the task${spec ? ` (every scenario of ${spec}/specs: start the requirement with the scenario's name)` : ""}, the tests that prove it and the code, as they are at the merged commit (the server checks each one); ` +
+    `name every test whole — its file, #, and its own name (the method, or the title of its it()/test()), e.g. "test/refunds.test.js#refuses a second refund": a file alone does not say which test proves the requirement, and the operator's page flags it; ` +
     `a note on what is missing for partial / not-done; checks: 1-5 steps to see it work by hand (a curl, a command, a page) with what to expect; risks: what you are unsure of. Do not claim more than the tests show.`;
 }
 
@@ -598,7 +599,7 @@ export class Swarm {
    * around it (acceptancePage.ts).
    */
   private async checkAcceptance(task: Task, raw: unknown, merged: string | undefined): Promise<NonNullable<ReturnType<typeof checkAcceptance>>> {
-    const shape = `acceptance: {criteria: [{requirement, status: "done"|"partial"|"not-done", tests: ["path#method"], where: ["path"], note}], checks: [{step, command, expect}], risks: [{what, why}]}`;
+    const shape = `acceptance: {criteria: [{requirement, status: "done"|"partial"|"not-done", tests: ["path#test name"], where: ["path"], note}], checks: [{step, command, expect}], risks: [{what, why}]}`;
     const acceptance = checkAcceptance(raw);
     if (!acceptance?.criteria.length) {
       throw new AppError("ACCEPTANCE_MISSING", `PASS needs the acceptance table the operator checks the task by: ${shape} — one criterion per requirement of the task (its description${task.openspec ? ", every scenario of the change's specs" : ""}), with the tests that prove it and where the code is; checks: how to see it work by hand.`);
@@ -613,7 +614,7 @@ export class Swarm {
     if (commit) {
       const missing = await missingEvidence(this.workdir, commit, acceptance);
       if (missing.length) {
-        throw new AppError("ACCEPTANCE_EVIDENCE", `acceptance names proof the merged commit does not have: ${missing.join("; ")}. Name only tests and files that are in it (path#method for a test), as git shows them, then complete again.`, { missing });
+        throw new AppError("ACCEPTANCE_EVIDENCE", `acceptance names proof the merged commit does not have: ${missing.join("; ")}. Name only tests and files that are in it (path#test name for a test), as git shows them, then complete again.`, { missing });
       }
     }
     return acceptance;
