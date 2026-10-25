@@ -58,7 +58,7 @@ button{font:inherit;border:1px solid var(--accent);background:var(--accent);colo
 button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:.5;cursor:default}
 .note{font-size:13px}.note.err{color:var(--bad)}.note.ok{color:var(--ok)}
 .banner{padding:10px 14px;margin-bottom:14px;border:1px solid var(--line);border-left:3px solid var(--bad);background:var(--card)}
-.openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}.mcheck{margin:6px 0;overflow-wrap:anywhere}.draftbox{border:1px dashed var(--accent);border-radius:6px;padding:10px;margin-bottom:12px}.draftbox ul{margin:4px 0 8px;padding-left:18px}.draftbox li.err{color:var(--bad)}.inboxrow{margin:8px 0;padding:10px 12px}.inboxrow.blocking{border-left:3px solid var(--bad)}.inboxrow button{margin-top:6px}button.danger{color:var(--bad);border-color:var(--bad)}
+.openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}.mcheck{margin:6px 0;overflow-wrap:anywhere}.draftbox{border:1px dashed var(--accent);border-radius:6px;padding:10px;margin-bottom:12px}.draftbox ul{margin:4px 0 8px;padding-left:18px}.draftbox li.err{color:var(--bad)}.taskback{margin:0 0 10px;font-size:14px}.taskback a{color:var(--accent);text-decoration:none}h3.link{cursor:pointer}h3.link:hover{color:var(--accent)}.inboxrow{margin:8px 0;padding:10px 12px}.inboxrow.blocking{border-left:3px solid var(--bad)}.inboxrow button{margin-top:6px}button.danger{color:var(--bad);border-color:var(--bad)}
 .toasts{position:fixed;top:12px;right:12px;z-index:50;display:flex;flex-direction:column;gap:8px;width:min(340px,calc(100vw - 24px));pointer-events:none}
 .toast{pointer-events:auto;cursor:pointer;position:relative;background:var(--card);color:var(--text);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:9px 30px 9px 12px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:13px;animation:tin .18s ease-out}
 .planov{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;flex-direction:column}.planov[hidden]{display:none}body.noscroll{overflow:hidden}
@@ -137,7 +137,7 @@ button.warnbtn{background:var(--warn);border-color:var(--warn);color:#fff}
 .ptl .seg.past,.ptl .seg.now,.ptl .seg.bad{min-width:140px}
 .ptl .seg .rd{display:inline-flex;gap:2px;margin-left:6px;vertical-align:1px}.ptl .seg .rd i{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.45}.ptl .seg .rd i.last{opacity:1}
 .ptl .seg.past{background:var(--okbg);color:var(--ok);border-color:transparent}.ptl .seg.now{background:var(--accbg);color:var(--accent);border-color:var(--accent);font-weight:600}.ptl .seg.bad{background:var(--badbg);color:var(--bad);border-color:var(--bad);font-weight:600}
-.pbar{height:8px;border-radius:4px;background:var(--card2);border:1px solid var(--line);overflow:hidden;display:flex}.pbar>span{height:100%}.pbar .g{background:var(--ok)}.pbar .b{background:var(--accent)}.pbar .r{background:var(--bad)}
+.pbar{height:8px;border-radius:4px;background:var(--card2);border:1px solid var(--line);overflow:hidden;display:flex}.pbar>span{height:100%}.pbar .g{background:var(--ok)}.pbar .q{background:var(--muted);opacity:.6}.pbar .b{background:var(--accent)}.pbar .r{background:var(--bad)}
 .pbar.wait{background:repeating-linear-gradient(45deg,var(--card2) 0 6px,var(--line) 6px 8px)}
 .pkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:4px 0 10px}
 .pk{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px 12px}.pk .l{font-size:12px;color:var(--muted)}.pk .v{font:500 18px var(--mono);margin:2px 0 6px}.pk .v small{font-size:12px;color:var(--muted);margin-left:6px;font-weight:400}.pk .h{font-size:12px;color:var(--muted);margin-top:5px}
@@ -146,7 +146,7 @@ button.warnbtn{background:var(--warn);border-color:var(--warn);color:#fff}
 .prow .st{font-size:12px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}.prow .st.ok{color:var(--ok)}.prow .st.warn{color:var(--warn)}.prow .st.now{color:var(--text)}.prow .st.bad{color:var(--bad)}
 .prow .cnt{font:12px var(--mono);text-align:right;color:var(--muted)}.prow .cnt b{color:var(--text);font-weight:500}
 .plegend{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:6px}.plegend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-.ovp{display:grid;grid-template-columns:minmax(0,1.5fr) 104px minmax(0,2fr) 70px;gap:12px;align-items:center;padding:8px 14px;border-top:1px solid var(--line);cursor:pointer;font-size:13px}.ovp:hover{background:var(--card2)}
+.ovp{display:grid;grid-template-columns:minmax(0,1.5fr) 168px minmax(0,2fr) 60px;gap:12px;align-items:center;padding:8px 14px;border-top:1px solid var(--line);cursor:pointer;font-size:13px}.ovp:hover{background:var(--card2)}
 .ovp .tt{overflow-wrap:anywhere}.ovp .tt span{color:var(--muted);font:11px var(--mono);margin-right:6px}.ovp .badge{text-align:center}.ovp .pct{font:12px var(--mono);text-align:right}
 @media (max-width:700px){.ptl .seg,.ptl .seg.past,.ptl .seg.now,.ptl .seg.bad{min-width:0;padding:0 4px;font-size:10px}.ovp{grid-template-columns:minmax(0,1fr) auto}.ovp .pbar{grid-column:1/-1}.ovp .pct{grid-row:1;grid-column:2}.ovp .badge{display:none}.prow{grid-template-columns:90px minmax(0,1fr) 44px}}
 .tscroll{overflow-x:auto}
@@ -264,6 +264,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
         <div class="checks"><button type="submit">Создать задачу</button><span class="note" id="formnote"></span></div>
       </form>
       <div class="panel" id="schedules" hidden></div>
+      <div class="taskback" id="taskback" hidden><a href="#" id="taskback-link">← Все задачи</a><span class="muted"> · открыта <span id="taskback-id"></span></span></div>
       <div id="tasks"></div>
     </section>
 
@@ -357,8 +358,10 @@ function row(cells){const r=el("tr");cells.forEach(c=>r.append(c instanceof Node
 function head(names){const r=el("tr");names.forEach(n=>r.append(el("th","",n)));return r}
 
 let route=parseHash();
-function parseHash(){const m=location.hash.replace(/^#\/?/,"").split("/");return {tab:TABS.includes(m[0])?m[0]:"overview",project:m[1]?decodeURIComponent(m[1]):null}}
-function go(tab,project){location.hash="#/"+tab+(project?"/"+encodeURIComponent(project):"")}
+function parseHash(){const m=location.hash.replace(/^#\/?/,"").split("/");const tab=TABS.includes(m[0])?m[0]:"overview";return {tab,project:m[1]?decodeURIComponent(m[1]):null,task:tab==="tasks"&&m[2]?decodeURIComponent(m[2]):null}}
+function go(tab,project,task){location.hash="#/"+tab+(project?"/"+encodeURIComponent(project):"")+(project&&task?"/"+encodeURIComponent(task):"")}
+// one task on its own: #/tasks/<project>/<task> shows its card alone, at the top, with the way back to the list
+function openTask(taskId,project){go("tasks",project||route.project,taskId);window.scrollTo(0,0)}
 function q(path){return path+(route.project?(path.includes("?")?"&":"?")+"project="+encodeURIComponent(route.project):"")}
 async function getJSON(path){const r=await fetch(path,{cache:"no-store"});if(!r.ok)throw new Error(r.status+"");return r.json()}
 // a question in the page instead of confirm(): some browsers (the desktop app's own) answer confirm() with "cancel" by themselves
@@ -371,7 +374,7 @@ function ask(text,input){return new Promise(done=>{const o=el("div","askov");o.s
   yes.onclick=()=>end(ok());no.onclick=()=>end(false);o.onclick=e=>{if(e.target===o)end(false)};addEventListener("keydown",key,true);
   r.append(yes,no);b.append(r);o.append(b);document.body.append(o);(f||yes).focus()})}
 async function post(url,body){const r=await fetch(q(url),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body||{})});const t=await r.text();let j;try{j=JSON.parse(t)}catch(e){j={message:t}}if(!r.ok)throw new Error(j.message||t);return j}
-window.addEventListener("hashchange",()=>{const r=parseHash();const switched=r.project&&r.project!==route.project;route.tab=r.tab;if(r.project)route.project=r.project;if(switched)resetProject();showTab();tick()});
+window.addEventListener("hashchange",()=>{const r=parseHash();const switched=r.project&&r.project!==route.project;route.tab=r.tab;route.task=r.task;if(r.project)route.project=r.project;if(switched)resetProject();showTab();tick()});
 document.querySelectorAll("nav a").forEach(a=>a.addEventListener("click",ev=>{ev.preventDefault();go(a.dataset.tab,route.project)}));
 $("projcard").onclick=()=>go("projects",route.project);
 function showTab(){document.querySelectorAll("[data-panel]").forEach(s=>s.hidden=s.dataset.panel!==route.tab);document.querySelectorAll("nav a").forEach(a=>a.classList.toggle("on",a.dataset.tab===route.tab))}
@@ -482,7 +485,7 @@ function watchAttention(a){if(!a)return;const fresh=[];
 function openAttention(projectId,i){const o=i.open||{tab:"tasks"};const switching=projectId!==route.project;route.project=projectId;go(o.tab,projectId);
   setTimeout(async()=>{if(switching)await tick();
     if(o.plan&&i.taskId)openPlan(i.taskId);else if(o.acceptance&&i.taskId)openAcceptance(i.taskId);
-    else if(o.tab==="tasks"&&i.taskId&&!o.messageId){const c=document.querySelector('#tasks [data-id="'+i.taskId+'"]');if(c)c.scrollIntoView({block:"start",behavior:"smooth"})}
+    else if(o.tab==="tasks"&&i.taskId&&!o.messageId)openTask(i.taskId,projectId)
     else if(o.messageId)window.scrollTo({top:0,behavior:"smooth"})},switching?50:300)}
 function renderInbox(){const box=$("inbox");box.replaceChildren();const st=$("notif-state");
   const perm=typeof Notification==="undefined"?"unsupported":Notification.permission;$("notif-on").hidden=perm!=="default";
@@ -495,11 +498,14 @@ function renderInbox(){const box=$("inbox");box.replaceChildren();const st=$("no
       if(i.text)r.append(el("div","",i.text));
       r.append(el("div","muted small","ждёт с "+time(i.since).slice(0,5)+(i.due?" · "+(i.kind==="question"?"агент пойдёт по своему варианту в ":"решение уйдёт само в ")+time(i.due).slice(0,5):"")));
       const b=el("button","small","Открыть");b.type="button";b.onclick=()=>openAttention(p.id,i);r.append(b);box.append(r)}}}
+$("taskback-link").onclick=ev=>{ev.preventDefault();go("tasks",route.project)};
 $("notif-on").onclick=async()=>{try{await Notification.requestPermission()}catch(e){}renderInbox()};
 
 /* ---------- pop-ups: a task changed its phase or status ---------- */
 const seenTasks=new Map();let seenProject=null;
 const phaseName=t=>t.phase+(t.phase==="SYNC"&&t.syncRound?" #"+t.syncRound:"");
+// the phase with its round, for lists: SYNC #2 is the second review, IMPLEMENT after a review is a fix round
+const phaseLabel=t=>t.phase==="IMPLEMENT"&&t.syncRound>0?"IMPLEMENT · исправления #"+t.syncRound:phaseName(t);
 function watchTransitions(s){
   // the first look at a project only remembers: pop-ups are for changes while the page is open
   if(seenProject!==s.project.id){seenProject=s.project.id;seenTasks.clear();s.tasks.forEach(t=>seenTasks.set(t.id,t));return}
@@ -520,7 +526,7 @@ function toast(kind,title,text,taskId,tab){
   const box=$("toasts");const d=el("div","toast "+kind);d.setAttribute("role","status");d.title="открыть задачу";
   d.append(el("b","",title),el("div","muted",text.length>220?text.slice(0,220)+"…":text));
   const x=el("button","x","×");x.type="button";x.title="закрыть";x.onclick=e=>{e.stopPropagation();d.remove()};d.append(x);
-  d.onclick=()=>{d.remove();if(tab){go(tab,route.project);return}go("tasks",route.project);if(taskId)setTimeout(()=>{const c=document.querySelector('#tasks [data-id="'+taskId+'"]');if(c)c.scrollIntoView({block:"start",behavior:"smooth"})},300)};
+  d.onclick=()=>{d.remove();if(tab){go(tab,route.project);return}if(taskId)openTask(taskId);else go("tasks",route.project)};
   box.prepend(d);
   // at most four: the oldest ordinary one goes first, a BLOCKED one only when nothing else is left
   while(box.children.length>4){const all=[...box.children];(all.reverse().find(x=>!x.classList.contains("bad"))||all[0]).remove()}
@@ -540,6 +546,10 @@ function progressOf(t){
   // one number for lists: the change's tasks if there are any, else the subtasks
   res.share=res.os&&res.os.total?res.os.reported/res.os.total:res.subs.total?res.subs.done/res.subs.total:null;
   res.doingShare=res.os&&res.os.total?0:res.subs.total?res.subs.doing/res.subs.total:0;
+  // the whole task as one share: the phase it is in, and within IMPLEMENT how far its subtasks (or OpenSpec tasks) are
+  const ph=t.phase;
+  res.overall=ph==="DONE"?1:ph==="INTEGRATE"?0.9:ph==="SYNC"?0.75:ph==="IMPLEMENT"?0.1+0.6*(t.syncRound>0?1:(res.share||0)):0.05;
+  res.overallDoing=ph==="IMPLEMENT"&&!t.syncRound?0.6*res.doingShare:0;
   return res}
 /** The phases as one bar: how long each took (fix rounds summed), the current one highlighted. */
 function phaseBar(t){
@@ -599,15 +609,19 @@ function progressBlock(t){
 /** Overview: every open task on one line with how far it is. */
 function renderOvProgress(){
   const box=$("ov-progress");const open=S.tasks.filter(t=>t.queue==="running"||t.queue==="blocked"||t.queue==="queued").sort((a,b)=>["running","blocked","queued"].indexOf(a.queue)-["running","blocked","queued"].indexOf(b.queue)||a.id.localeCompare(b.id));
+  // rebuilt only when a row would change: a row replaced under the mouse between press and release takes no click
+  const sig=route.project+JSON.stringify(open.map(t=>{const pr=progressOf(t);return [t.id,t.title,t.queue,t.status,t.phase,t.syncRound,t.blockedBy,pr.overall,pr.overallDoing]}));
+  if(box.dataset.sig===sig&&box.childElementCount)return;box.dataset.sig=sig;
   box.hidden=!open.length;box.replaceChildren();if(!open.length)return;
-  const ph=el("div","ph","Прогресс задач");ph.append(el("span","end","OpenSpec-задачи, иначе подзадачи агентов"));box.append(ph);
+  const ph=el("div","ph","Прогресс задач");ph.append(el("span","end","по фазам; в IMPLEMENT — по подзадачам агентов или задачам OpenSpec"));box.append(ph);
   for(const t of open){const pr=progressOf(t);const row=el("div","ovp");row.title="открыть задачу";
-    row.onclick=()=>{go("tasks",route.project);setTimeout(()=>{const c=document.querySelector('#tasks [data-id="'+t.id+'"]');if(c)c.scrollIntoView({block:"start",behavior:"smooth"})},300)};
+    row.onclick=()=>openTask(t.id);
     const tt=el("div","tt");tt.append(el("span","",t.id),t.title);
     const blocked=t.status==="BLOCKED",queued=t.queue==="queued";
-    const pill=badge(blocked?"BLOCKED":queued?"queued":"running",blocked?"BLOCKED":queued?"в очереди":phaseName(t));
-    const bar=blocked?pbar([[pr.share||0,"r"]]):queued?pbar([]):pbar([[pr.share||0,"g"],[pr.doingShare,"b"]]);
-    const pct=el("div","pct",blocked?(t.blockedBy==="cost"?"$ лимит":"р. "+t.syncRound+"/"+t.maxFixRounds):queued||pr.share===null?"—":Math.round(pr.share*100)+"%");
+    // where it stands even while it waits for its agents: the phase and round, then "в очереди"
+    const pill=badge(blocked?"BLOCKED":queued?"queued":"running",blocked?"BLOCKED · "+phaseLabel(t):queued?phaseLabel(t)+" · в очереди":phaseLabel(t));
+    const bar=blocked?pbar([[pr.overall,"r"]]):pbar([[pr.overall,queued?"q":"g"],[queued?0:pr.overallDoing,"b"]]);
+    const pct=el("div","pct",blocked?(t.blockedBy==="cost"?"$ лимит":"р. "+t.syncRound+"/"+t.maxFixRounds):Math.round(pr.overall*100)+"%");
     row.append(tt,pill,bar,pct);box.append(row)}
 }
 
@@ -1240,7 +1254,9 @@ function longText(text,key,limit){text=text||"";if(text.length<=limit)return el(
   const d=el("details","more");d.dataset.key=key;const sm=el("summary");sm.append(el("span","pv",text.slice(0,limit).replace(/\s+\S*$/,"")+"… "),el("span","tg"));d.append(sm,el("div","txt full",text));return d}
 function renderTask(t){
   const c=el("div","card task"+(t.status!=="ACTIVE"&&t.status!=="BLOCKED"?" done":""));
-  const hd=el("div");const h3=el("h3","",t.id+" · "+t.title);const sch=scheduleOf(t);if(sch)h3.append(badge("","по расписанию "+sch));h3.append(badge(t.queue,QUEUE[t.queue]||t.queue));if(t.openspec)h3.append(badge("","OpenSpec"));hd.append(h3);hd.append(el("div","muted",t.description));
+  const hd=el("div");const h3=el("h3","",t.id+" · "+t.title);
+  // on the press, not the click: the list is rebuilt every refresh, and a title replaced between press and release takes no click
+  if(route.task!==t.id){h3.classList.add("link");h3.title="открыть задачу отдельно";h3.onmousedown=e=>{if(e.button===0&&!e.shiftKey&&!e.metaKey&&!e.ctrlKey)openTask(t.id)}}const sch=scheduleOf(t);if(sch)h3.append(badge("","по расписанию "+sch));h3.append(badge(t.queue,QUEUE[t.queue]||t.queue));if(t.openspec)h3.append(badge("","OpenSpec"));hd.append(h3);hd.append(el("div","muted",t.description));
   const chain=[];if(t.parentTaskId)chain.push("follow-up от "+t.parentTaskId);if(t.followUps&&t.followUps.length)chain.push("follow-up задачи: "+t.followUps.join(", "));if(t.followUpBudget)chain.push("бюджет follow-up: "+t.followUpBudget.used+"/"+t.followUpBudget.max);
   if(chain.length)hd.append(el("div","muted",chain.join(" · ")));
   if(t.openspec)hd.append(renderOpenspec(t));
@@ -1390,12 +1406,14 @@ function renderTasks(){
   if(box.querySelector("[data-id]")){openDetails.clear();box.querySelectorAll("details[open]").forEach(d=>{const card=d.closest("[data-id]");if(card)openDetails.add(card.dataset.id+"|"+(d.dataset.key||d.firstChild.textContent.split(" ")[0]))})}
   const scrolls=new Map();box.querySelectorAll("[data-scroll]").forEach(b=>{if(b.closest("details:not([open])"))return;const card=b.closest("[data-id]");if(card)scrolls.set(card.dataset.id+"|"+b.dataset.scroll,{top:b.scrollTop,atEnd:b.scrollTop+b.clientHeight>=b.scrollHeight-8})});
   // build every card first and swap them in at once: measuring a half-built list would shrink the page and reset its scroll
-  // the newest task on top (by when it was created; the same moment: the higher number)
-  const newest=s.tasks.slice().sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")||b.id.localeCompare(a.id,undefined,{numeric:true}));
+  // what goes on first, then what is stuck, what waits, what is over; within each the newest on top; one task alone when opened
+  const RANK={running:0,blocked:1,queued:2,done:3,cancelled:4};
+  const one=route.task;$("taskback").hidden=!one;$("taskback-id").textContent=one?one:"";
+  const newest=s.tasks.filter(t=>!one||t.id===one).sort((a,b)=>(RANK[a.queue]??5)-(RANK[b.queue]??5)||(b.createdAt||"").localeCompare(a.createdAt||"")||b.id.localeCompare(a.id,undefined,{numeric:true}));
   const cards=newest.map(t=>{const c=renderTask(t);c.dataset.id=t.id;
     c.querySelectorAll("[data-scroll]").forEach(b=>{const sv=scrolls.get(t.id+"|"+b.dataset.scroll);if(sv&&!(b.dataset.scroll==="msgs"&&sv.atEnd))b.dataset.top=String(sv.top)}); // at the bottom of messages: stay at the newest
     c.querySelectorAll("details").forEach(d=>{if(openDetails.has(t.id+"|"+(d.dataset.key||d.firstChild.textContent.split(" ")[0])))d.open=true});return c});
-  box.replaceChildren(...(cards.length?cards:[el("div","empty",s.control?"Задач нет. Нажмите «+ Новая задача».":"Задач нет. Создайте: agent-network-mcp task create --title … --agents a,b")]));
+  box.replaceChildren(...(cards.length?cards:[el("div","empty",one?"Задачи "+one+" нет на странице (удалена или в другом проекте).":s.control?"Задач нет. Нажмите «+ Новая задача».":"Задач нет. Создайте: agent-network-mcp task create --title … --agents a,b")]));
   cards.forEach(c=>c.querySelectorAll("[data-scroll]").forEach(b=>{if(b.closest("details"))return;const sv=scrolls.get(c.dataset.id+"|"+b.dataset.scroll);
     if(sv)b.scrollTop=sv.top;else{const cur=b.querySelector(".DOING");if(cur)b.scrollTop+=cur.getBoundingClientRect().top-b.getBoundingClientRect().top-b.clientHeight/3}}));
 }
@@ -1823,7 +1841,7 @@ function renderSupervisor(){
   if(nb.dataset.sig!==nsig){nb.dataset.sig=nsig;nb.replaceChildren();
   needs.slice().reverse().forEach(e=>{const c=el("div","card need");const hd=el("div","hd");hd.append(el("b","","Нужно ваше решение"),el("span","muted",(e.taskId?e.taskId+" · ":"")+time(e.at)));
     const parts=e.text.split("\nRecommendation: ");c.append(hd,el("div","",parts[0]));if(parts[1])c.append(el("div","rec","Рекомендация надзора: "+parts[1]));
-    const r=el("div","row2");if(e.taskId){const o=el("button","ghost","Открыть задачу");o.type="button";o.onclick=()=>{go("tasks",route.project);setTimeout(()=>{const x=document.querySelector('#tasks [data-id="'+e.taskId+'"]');if(x)x.scrollIntoView({block:"start",behavior:"smooth"})},300)};r.append(o)}
+    const r=el("div","row2");if(e.taskId){const o=el("button","ghost","Открыть задачу");o.type="button";o.onclick=()=>openTask(e.taskId);r.append(o)}
     if(ctl){
       // what to do with it: the recommendation or your own words go to the agent (an answer to its question, else to the lead); or just close
       const asked=e.data&&e.data.messageId,whom=asked?"ответом на вопрос агента ("+asked+")":"lead'у задачи";
