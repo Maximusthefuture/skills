@@ -8,6 +8,7 @@ import { Swarm } from "../../src/mcp/swarm.js";
 import { NetworkService } from "../../src/service.js";
 import { FileStore } from "../../src/storage/fileStore.js";
 import { tmpDir } from "../helpers/tmp.js";
+import { ACCEPTANCE } from "../helpers/acceptance.js";
 
 const assignments = [
   { agentId: "backend", responsibility: "REST API", files: ["src/main/**"] },
@@ -56,7 +57,7 @@ async function toSync(s: Awaited<ReturnType<typeof setup>>["s"]) {
 async function toDone(s: Awaited<ReturnType<typeof setup>>["s"]) {
   await s.backend.complete({ status: "PASS" });
   await s.reviewer.complete({ status: "PASS" });
-  return s.backend.complete({ status: "PASS", result: "merged, build green" });
+  return s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged, build green" });
 }
 
 describe("swarm_context", () => {
@@ -122,7 +123,7 @@ describe("swarm_context", () => {
     expect(await failure(s.backend, s.backend.complete({ status: "PASS" }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("'result'") });
     expect(await failure(s.reviewer, s.reviewer.complete({ status: "PASS", result: "x" }))).toMatchObject({ error: "NOT_ASSIGNED" });
 
-    const done = await s.backend.complete({ status: "PASS", result: "merged into main, tests green", commits: ["abc999"] });
+    const done = await s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged into main, tests green", commits: ["abc999"] });
     expect(done).toMatchObject({ action: "INTEGRATION_PASS", task: { phase: "DONE", status: "COMPLETED" }, nextAction: "done", allowedActions: [] });
     expect((await s.backend.context({ full: true })).integration).toMatchObject({ status: "PASS", commits: ["abc999"] });
     expect(await s.reviewer.context()).toMatchObject({ nextAction: "done" });
@@ -216,7 +217,7 @@ describe("NEEDS_FIX loop", () => {
     expect(await s.reviewer.context()).toMatchObject({ nextAction: "sync", reviewTargets: ["backend"] });
     expect(await failure(s.backend, s.backend.complete({ status: "PASS" }))).toMatchObject({ error: "NOT_ASSIGNED", nextAction: "wait" });
     expect(await s.reviewer.complete({ status: "PASS" })).toMatchObject({ phaseChanged: { to: "INTEGRATE" } });
-    expect(await s.backend.complete({ status: "PASS", result: "merged" })).toMatchObject({ task: { phase: "DONE" } });
+    expect(await s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged" })).toMatchObject({ task: { phase: "DONE" } });
   });
 
   it("NEEDS_FIX needs an ERROR finding; WARNING-only findings go with PASS", async () => {
@@ -360,7 +361,7 @@ describe("tool misuse (state is never corrupted, errors are actionable)", () => 
     expect(await s.reviewer.complete({ status: "PASS" })).toMatchObject({ phaseChanged: { to: "INTEGRATE" } });
 
     // INTEGRATE: 'filesChanged'/'tasksDone' belong to IMPLEMENT
-    const done = await s.backend.complete({ status: "PASS", result: "merged, build green", commits: ["abc999"], filesChanged: ["src/Api.java"], tasksDone: ["1"] });
+    const done = await s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged, build green", commits: ["abc999"], filesChanged: ["src/Api.java"], tasksDone: ["1"] });
     expect(done).toMatchObject({
       action: "INTEGRATION_PASS",
       task: { phase: "DONE" },

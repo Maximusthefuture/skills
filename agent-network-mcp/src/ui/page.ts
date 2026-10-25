@@ -867,6 +867,62 @@ function renderPlan(t){const p=t.plan;const w=planWords(t,p.stage);const box=el(
     const b=el("button",p.status==="awaiting"&&S.control?"small":"ghost small",p.status==="awaiting"&&S.control?"Открыть и проверить":"Открыть план");b.type="button";b.onclick=()=>openPlan(t.id);box.append(" ",b)}
   else box.append(el("span","muted"," · появится здесь, когда lead его напишет; соглашение — после вашего «Утвердить»"));
   return box}
+// after DONE: the acceptance page (the lead's table, reviews, diff against the agreement, deploy notes): accept it — the
+// lead's branch merges into the project — or return it with comments on its blocks, which become a follow-up task
+function renderAcceptance(t){const box=el("div","openspec planline");const v=t.acceptance;const can=!!S.control&&!v;
+  box.append(el("b","","Пакет приёмки "),el("span","badge "+(v&&v.status==="accepted"?"PASS":"WARNING"),v?(v.status==="accepted"?"принят":"возвращён"+(v.followUp?" → "+v.followUp:"")):"ждёт вас"));
+  if(v)box.append(el("span","muted"," · "+time(v.at).slice(0,5)));
+  const b=el("button",can?"small":"ghost small",can?"Открыть и проверить":"Открыть");b.type="button";b.onclick=()=>openAcceptance(t.id);box.append(" ",b);return box}
+let AV=null;let ACC_EL=null;
+function accEl(){if(ACC_EL)return ACC_EL;const o=el("div","planov");o.setAttribute("role","dialog");o.setAttribute("aria-label","Пакет приёмки");
+  const head=el("div","planhead");const title=el("b","");const x=el("button","ghost","Закрыть");x.type="button";x.onclick=()=>closeAcceptance();head.append(title,x);
+  const body=el("div","planbody");const fr=document.createElement("iframe");fr.title="приёмка";const side=el("div","planside");body.append(fr,side);o.append(head,body);document.body.append(o);
+  return ACC_EL={o,title,fr,side}}
+// a new frame each time: a sandboxed page may not navigate to the next one (see freshFrame)
+function accFrame(){const fr=document.createElement("iframe");fr.title="приёмка";AV.el.fr.replaceWith(fr);AV.el.fr=fr;fr.src=q("/api/tasks/"+encodeURIComponent(AV.taskId)+"/acceptance/view")}
+async function accInfo(){try{AV.info=await getJSON(q("/api/tasks/"+encodeURIComponent(AV.taskId)+"/acceptance"))}catch(e){AV.error="Не удалось загрузить: "+e.message}}
+async function openAcceptance(taskId){const e=accEl();AV={taskId,mode:"view",comments:[],pick:null,confirm:null,pending:false,error:null,info:null,el:e};
+  e.o.hidden=false;document.body.classList.add("noscroll");accFrame();renderAccSide();await accInfo();renderAccSide()}
+function closeAcceptance(force){if(!AV)return;if(!force&&AV.comments.length&&!AV.closeArmed){AV.closeArmed=true;AV.error="Есть неотправленные замечания: «Закрыть» ещё раз — и они пропадут.";renderAccSide();return}
+  AV.el.o.hidden=true;AV.el.fr.src="about:blank";document.body.classList.remove("noscroll");AV=null}
+function accSay(m){if(AV&&AV.el.fr.contentWindow)AV.el.fr.contentWindow.postMessage(m,"*")}
+addEventListener("message",ev=>{if(!AV||ev.source!==AV.el.fr.contentWindow)return;const m=ev.data||{};if(!m.an)return;
+  if(m.type==="ready")accSay({type:"mode",mode:AV.mode});
+  else if(m.type==="pick"){AV.pick={target:m.target,quote:m.quote||"",text:""};renderAccSide();setTimeout(()=>{const ta=AV&&AV.el.side.querySelector(".ppick textarea");if(ta)ta.focus()},0)}});
+addEventListener("keydown",e=>{if(e.key!=="Escape"||!AV||AV.el.o.hidden||(document.activeElement&&document.activeElement.tagName==="TEXTAREA"))return;if(AV.confirm){AV.confirm=null;renderAccSide()}else closeAcceptance()});
+async function accSend(kind){AV.confirm=null;AV.error=null;AV.pending=true;renderAccSide();
+  try{const r=await post("/api/tasks/"+encodeURIComponent(AV.taskId)+"/acceptance/"+kind,kind==="return"?{comments:AV.comments}:{});
+    toast("ok",kind==="accept"?"Задача принята":"Задача возвращена",kind==="accept"?(r.merged?"влита: "+r.merged.branch+" → "+r.merged.into+" ("+r.merged.commit.slice(0,7)+")":"без вливания"):"follow-up "+r.followUp.id+" с вашими замечаниями",AV.taskId);
+    AV.comments=[];AV.pick=null;AV.mode="view";AV.pending=false;await accInfo();accFrame();await tick()}
+  catch(e){AV.pending=false;AV.error="Не получилось: "+e.message}renderAccSide()}
+function renderAccSide(){if(!AV)return;const e=AV.el;const t=S&&S.tasks.find(x=>x.id===AV.taskId);e.title.textContent="Приёмка "+AV.taskId+(t?" · "+t.title:"");
+  const side=e.side;side.replaceChildren();const i=AV.info;const foot=el("div","pfoot");
+  if(!i){side.append(el("div","muted",AV.error||"загружаю…"));return}
+  const can=!!(S&&S.control)&&!i.verdict;
+  const bad=i.alerts.filter(a=>a.level==="bad").length;
+  side.append(el("div","note"+(bad?" bad":""),i.alerts.length?"На что посмотреть: "+i.alerts.length+(bad?" (серьёзных "+bad+")":"")+" — первый раздел страницы.":"Ничего, что требует вас: можно принимать."));
+  if(!i.table)side.append(el("div","muted small","Lead не прислал таблицу «требование → доказательство» (задача старше пакета приёмки)."));
+  if(i.verdict)side.append(el("div","psent",(i.verdict.status==="accepted"?"✓ Принята ":"Возвращена ")+time(i.verdict.at).slice(0,5)+(i.verdict.followUp?": follow-up "+i.verdict.followUp:"")));
+  if(can){const w=el("div","win pmode");[["view","Просмотр"],["comment","Замечание"]].forEach(([m,l])=>{const b=el("button",AV.mode===m?"on":"",l);b.type="button";
+      b.onclick=()=>{AV.mode=m;AV.pick=null;accSay({type:"mode",mode:m});renderAccSide()};w.append(b)});side.append(w);
+    side.append(el("div","muted small",AV.mode==="comment"?"Кликните блок или выделите слова — и напишите, что поменять.":"Замечания к блокам страницы уйдут команде follow-up задачей. Замечания к строкам кода — «Посмотреть изменения» в карточке."))}
+  if(AV.pick&&can){const f=el("div","ppick");f.append(el("div","muted","к "+AV.pick.target));if(AV.pick.quote)f.append(el("div","pquote","«"+AV.pick.quote+"»"));
+    const ta=document.createElement("textarea");ta.rows=3;ta.placeholder="Что поменять…";ta.value=AV.pick.text;ta.oninput=()=>{AV.pick.text=ta.value};
+    const add=el("button","small","Добавить");add.type="button";add.onclick=()=>{if(!ta.value.trim())return;AV.comments.push({target:AV.pick.target,...(AV.pick.quote?{quote:AV.pick.quote}:{}),text:ta.value.trim()});AV.pick=null;AV.closeArmed=false;accSay({type:"unpick"});renderAccSide()};
+    const cancel=el("button","ghost small","Отмена");cancel.type="button";cancel.onclick=()=>{AV.pick=null;accSay({type:"unpick"});renderAccSide()};
+    ta.onkeydown=ev=>{if(ev.key==="Enter"&&(ev.metaKey||ev.ctrlKey))add.click();if(ev.key==="Escape")cancel.click()};f.append(ta,add,cancel);side.append(f)}
+  if(AV.comments.length){const l=el("div","plist");l.append(el("b","","Замечания ("+AV.comments.length+")"));
+    AV.comments.forEach(c=>{const r=el("div","pitem");r.append(el("div","muted",c.target),...(c.quote?[el("div","pquote","«"+c.quote+"»")]:[]),el("div","",c.text));
+      const x=el("button","ghost small","×");x.type="button";x.title="убрать";x.onclick=()=>{AV.comments=AV.comments.filter(y=>y!==c);renderAccSide()};r.append(x);l.append(r)});side.append(l)}
+  if(AV.error)side.append(el("div","note bad",AV.error));
+  if(AV.pending)side.append(el("div","muted small","Отправляю…"));
+  if(can){const acceptLabel=i.ownBranch?"Принять и влить":"Принять";
+    if(AV.confirm){const c=el("div","pconfirm");c.append(el("div","",AV.confirm==="accept"?(i.ownBranch?"Принять задачу и влить ветку lead'а в текущую ветку проекта одним коммитом? При конфликте ничего не изменится.":"Принять задачу?"):"Вернуть задачу? "+AV.comments.length+" замеч. уйдут команде новой follow-up задачей."));
+      const yes=el("button","small",AV.confirm==="accept"?"Да, "+acceptLabel.toLowerCase():"Да, вернуть");yes.type="button";yes.onclick=()=>accSend(AV.confirm);
+      const no=el("button","ghost small","Отмена");no.type="button";no.onclick=()=>{AV.confirm=null;renderAccSide()};c.append(yes," ",no);foot.append(c)}
+    else{const r=el("div","pactions");const ok=el("button","",acceptLabel);ok.type="button";ok.disabled=AV.pending||AV.comments.length>0;ok.title=AV.comments.length?"Есть замечания: верните задачу или уберите их":"";ok.onclick=()=>{AV.confirm="accept";renderAccSide()};
+      const back=el("button","ghost","Вернуть с замечаниями");back.type="button";back.disabled=AV.pending||!AV.comments.length;back.onclick=()=>{AV.confirm="return";renderAccSide()};r.append(ok," ",back);foot.append(r)}}
+  side.append(foot)}
 let PV=null; // the open plan: {taskId, plan, version, mode, comments, pick, edited, diff, pending, el:{...}}
 let PLAN_EL=null;
 function planEl(){if(PLAN_EL)return PLAN_EL;const o=el("div","planov");o.setAttribute("role","dialog");o.setAttribute("aria-label","План задачи");
@@ -1095,6 +1151,7 @@ function renderTask(t){
   {const jobs=(S.tasks||[]).filter(x=>x.jobOf&&x.jobOf.taskId===t.id);if(jobs.length){const box=el("div","openspec");box.append(el("b","","Поручения ("+jobs.length+")"));
     jobs.forEach(j=>{const r=el("div","srow2");r.append(badge(j.status==="COMPLETED"?"PASS":j.status==="CANCELLED"?"INFO":j.status==="BLOCKED"?"FAIL":"WAITING",j.status==="COMPLETED"?"готово":j.status==="CANCELLED"?"отменено":j.status==="BLOCKED"?"BLOCKED":"в работе"),el("span","mono"," "+j.id+" · "+j.agents[0]),el("span",""," "+j.title.replace(/^task-\d+ job: /,"")));
       const im=(j.implementations||[]).find(i=>i.agentId===j.agents[0]);if(im&&im.summary)r.append(el("div","muted why","итог: "+im.summary));box.append(r)});hd.append(box)}}
+  if(t.status==="COMPLETED"&&!t.jobOf&&!t.proposes)hd.append(renderAcceptance(t));
   if(t.status!=="CANCELLED"&&controlMode&&S.control.worktrees&&S.control.worktrees.length)hd.append(renderBranch(t));
   hd.append(renderStats(t));
   if(t.status==="BLOCKED")hd.append(renderBlocked(t));

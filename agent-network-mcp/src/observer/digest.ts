@@ -39,6 +39,8 @@ export interface TaskDigest {
   outcome: {
     merged: "squash" | "merge" | "already" | null;
     reverted: boolean;
+    /** The operator's verdict on the acceptance page: accepted, returned with comments (a follow-up), or none yet. */
+    acceptance: "accepted" | "returned" | null;
     reviewComments: { total: number; fixed: number; declined: number; open: number; texts: string[] };
     followUps: number;
     jobs: number;
@@ -47,7 +49,7 @@ export interface TaskDigest {
 }
 
 /** What changes after a task closed (a merge, a revert, comments): a digest whose key differs is written again. */
-const outcomeKey = (task: Task, comments: number): string => `${task.merged?.commit ?? ""}|${task.merged?.reverted?.commit ?? ""}|${comments}`;
+const outcomeKey = (task: Task, comments: number): string => `${task.merged?.commit ?? ""}|${task.merged?.reverted?.commit ?? ""}|${comments}|${task.acceptance?.status ?? ""}`;
 
 const minutes = (ms: number) => Math.round(ms / 6000) / 10;
 
@@ -71,7 +73,7 @@ async function protocolErrors(root: string, taskId: string): Promise<Record<stri
 }
 
 /** This task's own sessions plus ones from other tasks' folders whose alsoFinished names it (the agent kept going past it without a pause). */
-async function creditedSessions(fs: FileStore, taskId: string): Promise<{ sessions: SessionRecord[]; countedIn: string[] }> {
+export async function creditedSessions(fs: FileStore, taskId: string): Promise<{ sessions: SessionRecord[]; countedIn: string[] }> {
   const store = new SessionStore(fs);
   const own = await store.list(taskId);
   const countedIn: string[] = [];
@@ -152,6 +154,7 @@ export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): P
     outcome: {
       merged: task.merged ? (task.merged.already ? "already" : (task.merged.strategy ?? "merge")) : null,
       reverted: !!task.merged?.reverted,
+      acceptance: task.acceptance?.status ?? null,
       reviewComments: {
         total: review.length,
         fixed: review.filter((c) => c.status === "fixed").length,

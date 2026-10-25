@@ -31,6 +31,7 @@ import type {
   FollowUpRequest,
   Assignment,
   Implementation,
+  Acceptance,
   IntegrationReport,
   Message,
   MessageType,
@@ -1402,6 +1403,20 @@ export class NetworkService {
     });
   }
 
+  /** Operator: the verdict on a DONE task's acceptance page — accepted, or returned with a follow-up task for the comments. */
+  async recordAcceptance(input: { taskId: string; status: "accepted" | "returned"; followUp?: string }): Promise<Task> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator accepts a task");
+    const taskId = assertTaskId(input.taskId);
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `Accept a task once it is DONE; ${taskId} is ${task.phase} (${task.status})`);
+      const acceptance = { status: input.status, at: new Date().toISOString(), ...(input.followUp ? { followUp: input.followUp } : {}) };
+      const saved = await this.tasks.save({ ...task, acceptance });
+      await this.emit({ type: "TASK_ACCEPTANCE", taskId, sourceAgent: OPERATOR, payload: acceptance });
+      return saved;
+    });
+  }
+
   /** Operator: undo a merged task with one revert commit (refused, with nothing changed, on conflicts). */
   async revertTask(input: { taskId: string; project: string }, revert: (project: string, commit: string, message: string) => Promise<{ commit: string }> = revertCommit): Promise<Task> {
     if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator reverts a merged task");
@@ -1509,7 +1524,9 @@ export class NetworkService {
   // ---------------------------------------------------------------- integration
 
   /** INTEGRATE: the lead reports the merged result and the outcome of the build/tests on it. */
-  async submitIntegration(input: { taskId: string; status: SyncStatus; result: string; commits?: string[]; findings?: SyncFinding[]; followUps?: FollowUpRequest[] }): Promise<{ report: IntegrationReport; followUps: Task[]; phase: Task["phase"] }> {
+  async submitIntegration(input: { taskId: string; status: SyncStatus; result: string; commits?: string[]; findings?: SyncFinding[]; followUps?: FollowUpRequest[];
+    /** PASS: the lead's acceptance table, checked once the protocol's own checks passed (so their errors come first). */
+    acceptance?: () => Promise<Acceptance | undefined> }): Promise<{ report: IntegrationReport; followUps: Task[]; phase: Task["phase"] }> {
     const followUps = await this.checkFollowUps(input.followUps ?? [], input.status);
     const findings = (input.findings ?? []).map((f) => ({
       ...f,
@@ -1533,9 +1550,10 @@ export class NetworkService {
         if (f.relatedAgent && !task.agents.includes(f.relatedAgent)) throw new AppError("NOT_ASSIGNED", `relatedAgent '${f.relatedAgent}' is not part of ${task.id}`);
       }
       if ((await this.integrations.list(task.id, task.syncRound)).length) throw new AppError("ALREADY_COMPLETED", `Integration for round ${task.syncRound} is already reported`);
+      const acceptance = input.status === "PASS" ? await input.acceptance?.() : undefined;
       // the budget is taken before anything is written, so a refusal leaves the task untouched
       const rootId = followUps.length ? await this.reserveFollowUps(task, followUps.length) : task.id;
-      const report = await this.integrations.create({ taskId: task.id, agentId: this.me, status: input.status, result: input.result, commits, findings, round: task.syncRound });
+      const report = await this.integrations.create({ taskId: task.id, agentId: this.me, status: input.status, result: input.result, commits, findings, round: task.syncRound, ...(acceptance ? { acceptance } : {}) });
       await this.emit({ type: "INTEGRATION_REPORT_CREATED", taskId: task.id, sourceAgent: this.me, payload: { reportId: report.id, status: report.status, round: report.round } });
       const base = commits[0]; // the merged HEAD, if the lead named one: a hint where the follow-up starts
       const created: Task[] = [];

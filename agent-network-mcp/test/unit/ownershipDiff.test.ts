@@ -7,6 +7,7 @@ import { filesChangedSince } from "../../src/git.js";
 import { Swarm } from "../../src/mcp/swarm.js";
 import { NetworkService } from "../../src/service.js";
 import { tmpDir } from "../helpers/tmp.js";
+import { ACCEPTANCE } from "../helpers/acceptance.js";
 
 const git = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, stdio: "pipe" }).toString().trim();
 
@@ -155,10 +156,10 @@ describe("commits are checked against git, and the lead takes in what it delegat
     expect((await operator.tasks.get(task.id)).phase).toBe("INTEGRATE");
 
     git(backendDir, "merge", "-q", "--no-edit", "tester");
-    const refused = await backend.complete({ status: "PASS", result: "merged", commits: [git(backendDir, "rev-parse", "HEAD")] }).catch((e) => backend.errorBody(e));
+    const refused = await backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged", commits: [git(backendDir, "rev-parse", "HEAD")] }).catch((e) => backend.errorBody(e));
     expect(refused).toMatchObject({ error: "JOBS_OPEN" });
     expect(JSON.stringify(refused)).toContain(bench.slice(0, 7));
     git(backendDir, "merge", "-q", "--no-edit", bench);
-    expect(await backend.complete({ status: "PASS", result: "merged with the benchmark", commits: [git(backendDir, "rev-parse", "HEAD")] })).toMatchObject({ task: { phase: "DONE" } });
+    expect(await backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged with the benchmark", commits: [git(backendDir, "rev-parse", "HEAD")] })).toMatchObject({ task: { phase: "DONE" } });
   });
 });

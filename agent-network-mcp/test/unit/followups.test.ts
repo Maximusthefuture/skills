@@ -6,6 +6,7 @@ import { EventHub } from "../../src/events/eventHub.js";
 import { Swarm } from "../../src/mcp/swarm.js";
 import { NetworkService } from "../../src/service.js";
 import { tmpDir } from "../helpers/tmp.js";
+import { ACCEPTANCE } from "../helpers/acceptance.js";
 
 const assignments = [
   { agentId: "backend", responsibility: "REST API", files: ["src/main/**"] },
@@ -115,9 +116,9 @@ describe("follow-up tasks", () => {
     const ctx = await s.backend.context();
     expect(ctx.followUps).toMatchObject({ max: 0, remaining: 0 });
     expect(ctx.hint).not.toContain("followUps:");
-    const err = await failure(s.backend, s.backend.complete({ status: "PASS", result: "merged", followUps: [{ title: "Currency", description: CONCRETE }] }));
+    const err = await failure(s.backend, s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged", followUps: [{ title: "Currency", description: CONCRETE }] }));
     expect(err).toMatchObject({ error: "FOLLOW_UP_LIMIT", currentPhase: "INTEGRATE" });
-    expect((await s.backend.complete({ status: "PASS", result: "merged" })).task).toMatchObject({ phase: "DONE" });
+    expect((await s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged" })).task).toMatchObject({ phase: "DONE" });
   });
 
   it("the lead turns notes into a follow-up; the agents move on to it; the chain budget is shared", async () => {
@@ -129,7 +130,7 @@ describe("follow-up tasks", () => {
     expect((await s.reviewer.context()).followUps).toBeUndefined(); // only the lead decides
 
     const waiting = s.reviewer.wait({ timeoutMs: 5000 });
-    const res = await s.backend.complete({ status: "PASS", result: "merged", followUps: [{ title: "Currency validation", description: CONCRETE }] });
+    const res = await s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged", followUps: [{ title: "Currency validation", description: CONCRETE }] });
     expect(res.followUpsCreated).toEqual([{ id: "task-002", title: "Currency validation", agents: ["backend", "reviewer"] }]);
     expect((await operator.tasks.get(root.id))).toMatchObject({ status: "COMPLETED", phase: "DONE", followUpsUsed: 1 });
     expect((await operator.tasks.get(root.id)).phaseHistory!.map((h) => h.phase)).toEqual(["DISCUSS", "IMPLEMENT", "SYNC", "INTEGRATE", "DONE"]);
@@ -142,7 +143,7 @@ describe("follow-up tasks", () => {
     // the follow-up's own integration sees the rest of the chain budget
     await toIntegrate(s);
     expect((await s.backend.context()).followUps).toMatchObject({ max: 2, used: 1, remaining: 1 });
-    const tooMany = await failure(s.backend, s.backend.complete({ status: "PASS", result: "m", followUps: [{ title: "a", description: CONCRETE }, { title: "b", description: CONCRETE }] }));
+    const tooMany = await failure(s.backend, s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "m", followUps: [{ title: "a", description: CONCRETE }, { title: "b", description: CONCRETE }] }));
     expect(tooMany).toMatchObject({ error: "FOLLOW_UP_LIMIT", maxFollowUps: 2, followUpsUsed: 1 });
     expect((await operator.tasks.get("task-002")).phase).toBe("INTEGRATE"); // nothing was written
   });
@@ -160,10 +161,10 @@ describe("follow-up tasks", () => {
     await s.reviewer.complete({ status: "PASS" });
     const needsFix = s.backend.complete({ status: "NEEDS_FIX", result: "conflict", findings: [{ severity: "ERROR", description: "merge conflict", relatedAgent: "reviewer" }], followUps: [{ title: "t", description: CONCRETE }] });
     expect(await failure(s.backend, needsFix)).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("only with status PASS") });
-    expect(await failure(s.backend, s.backend.complete({ status: "PASS", result: "m", followUps: [{ title: "t", description: "fix stuff" }] }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("concretely") });
-    expect(await failure(s.backend, s.backend.complete({ status: "PASS", result: "m", followUps: [{ title: "t", description: CONCRETE, agents: ["backend"] }] }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("two distinct agents") });
-    expect(await failure(s.backend, s.backend.complete({ status: "PASS", result: "m", followUps: [{ title: "t", description: CONCRETE, agents: ["backend", "ghost"] }] }))).toMatchObject({ error: "AGENT_NOT_REGISTERED" });
-    const ok = await s.backend.complete({ status: "PASS", result: "m", followUps: [{ title: "t", description: CONCRETE, agents: ["reviewer", "backend"] }] });
+    expect(await failure(s.backend, s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "m", followUps: [{ title: "t", description: "fix stuff" }] }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("concretely") });
+    expect(await failure(s.backend, s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "m", followUps: [{ title: "t", description: CONCRETE, agents: ["backend"] }] }))).toMatchObject({ error: "INVALID_INPUT", message: expect.stringContaining("two distinct agents") });
+    expect(await failure(s.backend, s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "m", followUps: [{ title: "t", description: CONCRETE, agents: ["backend", "ghost"] }] }))).toMatchObject({ error: "AGENT_NOT_REGISTERED" });
+    const ok = await s.backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "m", followUps: [{ title: "t", description: CONCRETE, agents: ["reviewer", "backend"] }] });
     expect(ok.followUpsCreated).toEqual([{ id: "task-002", title: "t", agents: ["reviewer", "backend"] }]); // reviewer leads it
   });
 });

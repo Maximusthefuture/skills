@@ -70,6 +70,8 @@ export interface Task {
     /** "Откатить": the revert commit that undid it. */
     reverted?: { at: string; commit: string };
   };
+  /** After DONE: the operator's verdict on the acceptance page (returned: the follow-up task with its comments). */
+  acceptance?: { status: "accepted" | "returned"; at: string; followUp?: string };
   /** Follow-up: the task whose integration created this one. */
   parentTaskId?: string;
   /** Follow-up: the first task of the chain (the one the operator created). */
@@ -249,7 +251,24 @@ export interface IntegrationReport {
   createdAt: string;
   /** SYNC round this integration follows. */
   round: number;
+  /** PASS of a code task: the lead's half of the acceptance page (acceptance.ts builds the rest from the task's data). */
+  acceptance?: Acceptance;
 }
+
+export type CriterionStatus = "done" | "partial" | "not-done";
+/** A requirement of the task and what proves it: tests (path or path#method) and code at the merged commit. */
+export interface AcceptanceCriterion {
+  requirement: string;
+  status: CriterionStatus;
+  tests: string[];
+  where: string[];
+  /** Required for partial / not-done: what is missing. */
+  note?: string;
+}
+/** A step the operator can take by hand to see it work. */
+export interface AcceptanceCheck { step: string; command?: string; expect?: string }
+export interface AcceptanceRisk { what: string; why?: string }
+export interface Acceptance { criteria: AcceptanceCriterion[]; checks: AcceptanceCheck[]; risks: AcceptanceRisk[] }
 
 export const MESSAGE_TYPES = ["QUESTION", "PROPOSAL", "INFORMATION", "REQUEST", "BLOCKER", "FIX_REQUEST", "FILE_REQUEST", "FILE_GRANT"] as const;
 export type MessageType = (typeof MESSAGE_TYPES)[number];
@@ -330,6 +349,7 @@ export const EVENT_TYPES = [
   "BUILD_RAN",
   "TASK_MERGED",
   "TASK_REVERTED",
+  "TASK_ACCEPTANCE",
   "AGENT_SPAWNED",
   "REVIEW_COMMENTS",
   "REVIEW_RESOLVED",

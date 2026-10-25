@@ -38,7 +38,7 @@ const OUTCOME_RU: Record<CoverageOutcome, string> = { taken: "взято", adapt
 
 export const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-function inline(s: string): string {
+export function inline(s: string): string {
   return esc(s)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
@@ -113,7 +113,7 @@ details{border:1px solid #eee;border-radius:6px;padding:6px 10px;margin:8px 0}su
 </style>`;
 const MERMAID = `<script type="module">import m from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";m.initialize({startOnLoad:true});</script>`;
 
-function page(title: string, body: string, diagrams: boolean): string {
+export function page(title: string, body: string, diagrams: boolean): string {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${esc(title)}</title>${STYLE}</head><body>${body}${diagrams ? MERMAID : ""}</body></html>`;
 }
 

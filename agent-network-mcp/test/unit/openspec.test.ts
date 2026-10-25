@@ -8,6 +8,7 @@ import { isReviewOnly, NetworkService } from "../../src/service.js";
 import { RunnerPool } from "../../src/ui/runners.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { tmpDir } from "../helpers/tmp.js";
+import { ACCEPTANCE } from "../helpers/acceptance.js";
 
 const TASKS = `# Tasks
 
@@ -203,7 +204,7 @@ describe("a swarm task on an OpenSpec change", () => {
     expect(integrate.hint).toContain("tick [x] in openspec/changes/add-currency/tasks.md");
     expect(integrate.hint).toContain("openspec validate add-currency --strict");
     expect((await reviewer.context()).openspec).toEqual({ change: "add-currency", path: "openspec/changes/add-currency" });
-    await backend.complete({ status: "PASS", result: "merged, build green, tasks ticked" });
+    await backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged, build green, tasks ticked" });
 
     const calls: unknown[] = [];
     const exec: Exec = async (_cmd, args, opts) => {
@@ -290,7 +291,7 @@ describe("the page and OpenSpec", () => {
     await reviewer.complete({ result: "v", filesChanged: ["src/test/V.java"], tasksDone: ["2.1"] });
     await backend.complete({ status: "PASS" });
     await reviewer.complete({ status: "PASS" });
-    await backend.complete({ status: "PASS", result: "merged" });
+    await backend.complete({ status: "PASS", acceptance: ACCEPTANCE, result: "merged" });
     tick(changeDir, ["1.1", "1.2", "2.1"]);
     const archived = await post("/api/openspec/archive", { taskId: task.id });
     expect(await archived.json()).toMatchObject({ output: "archived", task: { openspec: { archivedAt: expect.any(String) } } });

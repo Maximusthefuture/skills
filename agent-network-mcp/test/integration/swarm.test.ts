@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeAllAgents, createTaskViaCli, SERVER_ENTRY, spawnAgent } from "../helpers/agentProcess.js";
 import { tmpDir } from "../helpers/tmp.js";
+import { ACCEPTANCE } from "../helpers/acceptance.js";
 
 afterEach(closeAllAgents);
 
@@ -250,7 +251,7 @@ describe("full cycle through the five tools (two processes)", () => {
 
     // INTEGRATE: the lead merges and runs the tests
     expect(await backend.call("wait", { timeoutMs: 20_000 })).toMatchObject({ status: "ACTION_REQUIRED", nextAction: "integrate" });
-    const done = await backend.call("complete", { status: "PASS", result: "All work is in one branch; build and tests are green" });
+    const done = await backend.call("complete", { status: "PASS", acceptance: ACCEPTANCE, result: "All work is in one branch; build and tests are green" });
     expect(done).toMatchObject({ task: { phase: "DONE", status: "COMPLETED", syncRound: 2 }, nextAction: "done", allowedActions: [] });
     expect(await reviewer.call("wait", { timeoutMs: 5_000 })).toMatchObject({ status: "DONE" });
   });
@@ -429,9 +430,9 @@ describe("three agents in three git worktrees", () => {
     const merged = ws.git(ws.trees.backend!, "rev-parse", "HEAD");
     expect(readdirSync(join(ws.trees.backend!, "src")).sort()).toEqual(["UserService.ts", "UserView.ts"]);
     // its word is not enough: PASS needs a green verifyCommand it ran on that commit
-    await expect(backend.call("complete", { status: "PASS", result: "merged, npm test green", commits: [merged] })).rejects.toThrow(/VERIFY_REQUIRED/);
+    await expect(backend.call("complete", { status: "PASS", acceptance: ACCEPTANCE, result: "merged, npm test green", commits: [merged] })).rejects.toThrow(/VERIFY_REQUIRED/);
     expect(await backend.call("build", {})).toMatchObject({ status: "PASS" });
-    const done = await backend.call("complete", { status: "PASS", result: "backend+frontend+qa merged, npm test green", commits: [merged] });
+    const done = await backend.call("complete", { status: "PASS", acceptance: ACCEPTANCE, result: "backend+frontend+qa merged, npm test green", commits: [merged] });
     expect(done).toMatchObject({ task: { phase: "DONE", status: "COMPLETED" } });
     expect((await backend.call("swarm_context", { full: true })).integration).toMatchObject({ status: "PASS", commits: [merged] });
     for (const a of [frontend, qa]) expect(await a.call("wait", { timeoutMs: 5_000 })).toMatchObject({ status: "DONE" });

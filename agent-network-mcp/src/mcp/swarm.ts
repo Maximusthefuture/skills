@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import { checkAcceptance, missingEvidence, needsAcceptance, specScenarios, uncoveredScenarios } from "../acceptance.js";
 import { buildTools, DEFAULT_BUILD_TIMEOUT_MIN, parseBuildCommand, runBuild } from "../build.js";
 import { AppError, isAppError } from "../errors.js";
 import { containsCommit, filesChangedSince, ownCommitsSince, readGitContext, resolveCommit, workTreeState } from "../git.js";
@@ -167,6 +168,14 @@ export interface SwarmOptions {
 
 /** While an agent waits for the operator, wait() looks at the clock this often, so it learns in time that the question timed out. */
 const OPERATOR_POLL_MS = 30_000;
+
+/** The INTEGRATE hint's part about the acceptance table that goes with PASS. */
+function acceptanceHint(spec: string | null): string {
+  return ` PASS carries acceptance — the operator accepts the task by it on a page the server builds (description, reviews, diff, deploy notes): ` +
+    `acceptance: {criteria: [{requirement, status: "done"|"partial"|"not-done", tests: ["path#method"], where: ["path"], note}], checks: [{step, command, expect}], risks: [{what, why}]} — ` +
+    `one criterion per requirement of the task${spec ? ` (every scenario of ${spec}/specs: start the requirement with the scenario's name)` : ""}, the tests that prove it and the code, as they are at the merged commit (the server checks each one); ` +
+    `a note on what is missing for partial / not-done; checks: 1-5 steps to see it work by hand (a curl, a command, a page) with what to expect; risks: what you are unsure of. Do not claim more than the tests show.`;
+}
 
 export class Swarm {
   private registered?: Promise<unknown>;
@@ -491,7 +500,7 @@ export class Swarm {
     return { ...this.reply(await this.contextNow()), ok: true, action: "AGREEMENT_PROPOSED", agreementVersion: res.agreement.version, ...(warnings.length ? { warnings } : {}) } as SwarmContext;
   }
 
-  async complete(input: { result?: string; filesChanged?: string[]; commits?: string[]; tasksDone?: string[]; status?: string; findings?: RawFinding[]; followUps?: FollowUpRequest[] }): Promise<SwarmContext> {
+  async complete(input: { result?: string; filesChanged?: string[]; commits?: string[]; tasksDone?: string[]; status?: string; findings?: RawFinding[]; followUps?: FollowUpRequest[]; acceptance?: unknown }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
     const given = (keys: (keyof typeof input)[]) => keys.filter((k) => input[k] !== undefined);
@@ -501,13 +510,13 @@ export class Swarm {
 
     switch (task.phase) {
       case "DISCUSS": {
-        const extra = given(["result", "filesChanged", "commits", "tasksDone", "status", "findings", "followUps"]);
+        const extra = given(["result", "filesChanged", "commits", "tasksDone", "status", "findings", "followUps", "acceptance"]);
         action = await this.approve(task);
         warnings = this.ignoredFields(extra);
         break;
       }
       case "IMPLEMENT": {
-        const extra = given(["status", "findings", "followUps"]);
+        const extra = given(["status", "findings", "followUps", "acceptance"]);
         const started = await this.service.implementations.find(task.id, this.me);
         // the author approving its own agreement after the others did: its proposal approved it already and IMPLEMENT
         // started; a bare complete() is that stale approval, not a report: the fresh state, not an error
@@ -546,7 +555,7 @@ export class Swarm {
         break;
       }
       case "SYNC": {
-        const extra = given(["result", "filesChanged", "commits", "tasksDone", "followUps"]);
+        const extra = given(["result", "filesChanged", "commits", "tasksDone", "followUps", "acceptance"]);
         if (input.status !== "PASS" && input.status !== "NEEDS_FIX") {
           throw invalid("complete() during SYNC requires 'status': \"PASS\" or \"NEEDS_FIX\" (with 'findings')");
         }
@@ -565,7 +574,12 @@ export class Swarm {
         warnings = [...(checked ? [checked] : []), ...this.ignoredFields(extra)];
         const merged = await this.realCommits(task, input.commits);
         if (input.status === "PASS") await this.requireJobsMerged(task, merged?.[0]);
-        const res = await this.service.submitIntegration({ taskId: task.id, status: input.status, result: input.result, commits: merged, findings: this.findings(input.findings), followUps: input.followUps });
+        const withAcceptance = input.status === "PASS" && needsAcceptance(task);
+        if (input.acceptance !== undefined && !withAcceptance) warnings.push(...this.ignoredFields(["acceptance"]));
+        const res = await this.service.submitIntegration({
+          taskId: task.id, status: input.status, result: input.result, commits: merged, findings: this.findings(input.findings), followUps: input.followUps,
+          ...(withAcceptance ? { acceptance: () => this.checkAcceptance(task, input.acceptance, merged?.[0]) } : {}),
+        });
         action = input.status === "PASS" ? "INTEGRATION_PASS" : "INTEGRATION_NEEDS_FIX";
         if (res.followUps.length) followUpsCreated = res.followUps.map((t) => ({ id: t.id, title: t.title, agents: t.agents }));
         break;
@@ -576,6 +590,33 @@ export class Swarm {
     const after = this.reply(await this.contextNow());
     const phaseChanged = (after.task as { phase: string } | null)?.phase !== task.phase ? { from: task.phase, to: (after.task as { phase: string }).phase } : undefined;
     return { ...after, ok: true, action, ...(phaseChanged ? { phaseChanged } : {}), ...(warnings?.length ? { warnings } : {}), ...(followUpsCreated ? { followUpsCreated } : {}) } as SwarmContext;
+  }
+
+  /**
+   * PASS of a code task: the lead's acceptance table, every test and file it names present at the merged commit, and with
+   * OpenSpec every scenario of the change's specs named by a requirement. The operator accepts the task on a page built
+   * around it (acceptancePage.ts).
+   */
+  private async checkAcceptance(task: Task, raw: unknown, merged: string | undefined): Promise<NonNullable<ReturnType<typeof checkAcceptance>>> {
+    const shape = `acceptance: {criteria: [{requirement, status: "done"|"partial"|"not-done", tests: ["path#method"], where: ["path"], note}], checks: [{step, command, expect}], risks: [{what, why}]}`;
+    const acceptance = checkAcceptance(raw);
+    if (!acceptance?.criteria.length) {
+      throw new AppError("ACCEPTANCE_MISSING", `PASS needs the acceptance table the operator checks the task by: ${shape} — one criterion per requirement of the task (its description${task.openspec ? ", every scenario of the change's specs" : ""}), with the tests that prove it and where the code is; checks: how to see it work by hand.`);
+    }
+    if (task.openspec) {
+      const left = uncoveredScenarios(acceptance, await specScenarios(this.workdir, task.openspec.change));
+      if (left.length) {
+        throw new AppError("ACCEPTANCE_INCOMPLETE", `acceptance.criteria names no requirement for ${left.length} scenario(s) of ${changePath(task.openspec.change)}/specs: ${left.map((x) => `"${x}"`).join(", ")}. Start a requirement with the scenario's name, e.g. {requirement: "${left[0]}: …", status, tests}.`, { scenarios: left });
+      }
+    }
+    const commit = task.git ? merged ?? (await readGitContext(this.workdir).catch(() => null))?.commit : undefined;
+    if (commit) {
+      const missing = await missingEvidence(this.workdir, commit, acceptance);
+      if (missing.length) {
+        throw new AppError("ACCEPTANCE_EVIDENCE", `acceptance names proof the merged commit does not have: ${missing.join("; ")}. Name only tests and files that are in it (path#method for a test), as git shows them, then complete again.`, { missing });
+      }
+    }
+    return acceptance;
   }
 
   /** Fields complete() got that the current phase does not use: dropped, not fatal, named in a warning. */
@@ -1606,7 +1647,7 @@ export class Swarm {
             (spec
               ? `tick [x] in ${spec}/tasks.md the tasks reported done ('openspec.tasks') and run \`openspec validate ${task.openspec!.change} --strict\` if the openspec CLI is installed, then complete({status: "PASS", result}) naming the tasks left open, `
               : `then complete({status: "PASS", result}) `) +
-            `or complete({status: "NEEDS_FIX", result, findings}) with an ERROR naming the agent.` + followUps,
+            `or complete({status: "NEEDS_FIX", result, findings}) with an ERROR naming the agent.` + followUps + (needsAcceptance(task) ? acceptanceHint(spec) : ""),
           [lead],
         );
       }

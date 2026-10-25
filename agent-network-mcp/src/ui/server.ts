@@ -12,7 +12,8 @@ import type { Prices } from "../stats.js";
 import { FileStore } from "../storage/fileStore.js";
 import { MessageStore } from "../stores/messageStore.js";
 import { TaskStore } from "../stores/taskStore.js";
-import type { GitContext } from "../types.js";
+import type { GitContext, Task } from "../types.js";
+import { acceptanceAlerts, collectAcceptance, renderAcceptancePage, type AcceptanceRange } from "../acceptancePage.js";
 import { PAGE_HTML } from "./page.js";
 import { listRuns, queueStates, taskState, type RunView } from "./runs.js";
 import type { RunnerPool } from "./runners.js";
@@ -126,6 +127,25 @@ async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { 
   return { project, branch };
 }
 
+/**
+ * What "Влить в проект" brings: the lead's branch since it left the project's branch (or ?agent='s), after the merge the
+ * merge itself. Throws when the lead has no branch of its own and the task is not merged.
+ */
+async function taskRange(p: { pool?: RunnerPool; projectDir: string }, task: Task, agentId?: string): Promise<AcceptanceRange & { merged: boolean }> {
+  const lead = task.merged && !task.merged.already ? null : await leadBranch(p, task, agentId);
+  return lead
+    ? { project: lead.project, base: "HEAD", head: lead.branch, mode: "three-dot", branch: lead.branch, merged: false }
+    : { project: p.projectDir, base: `${task.merged!.commit}^1`, head: task.merged!.commit, mode: "two-dot", branch: task.merged!.branch, merged: true };
+}
+
+async function acceptanceOf(p: Project, taskId: string) {
+  const task = await new TaskStore(p.fs).get(taskId);
+  if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `${taskId} is not DONE yet: its acceptance page comes with the integration`);
+  const range = await taskRange(p, task).catch(() => null);
+  const environments = await p.deployer.settings().then((s) => s.environments, () => []);
+  return collectAcceptance(p.fs, taskId, range, environments, (await p.prices?.())?.prices);
+}
+
 /** The network of agent-network-mcp's own repository: where accepted improvements of the swarm itself become tasks. */
 async function agentNetworkNetwork(): Promise<string> {
   return join((await gitRoot(PACKAGE_DIR)) ?? PACKAGE_DIR, ".agent-network");
@@ -142,7 +162,7 @@ const slug = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g,
 /**
  * GET / (page), GET /api/projects, and per project (?project=<id>, default: the first one): GET /api/state, /api/runs,
  * /api/openspec/changes, /api/runners/<id>/log; with runners also POST /api/tasks, /api/runners/<id>/start|stop|instructions|model,
- * /api/questions/answer, /api/openspec/archive, /api/tasks/<id>/unblock|handover|cancel|message|merge, /api/worktrees/clean, /api/supervisor/start|stop|model|tools|note|resolve
+ * /api/questions/answer, /api/openspec/archive, /api/tasks/<id>/unblock|handover|cancel|message|merge, /api/tasks/<id>/acceptance/accept|return (GET /api/tasks/<id>/acceptance[/view]), /api/worktrees/clean, /api/supervisor/start|stop|model|tools|note|resolve
  * (GET /api/supervisor, /api/activity). Bound to loopback; foreign Host headers are refused, and state-changing
  * requests must be same-origin JSON (a page on another site cannot create tasks for the agents).
  */
@@ -356,16 +376,20 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         // the list first (commits, files with +/-); one file's diff with ?file=<path>, when the page opens it
         // ?agent=<id>: while the task runs, any agent's own branch (the lead's by default)
         const task = await new TaskStore(p.fs).get(decodeURIComponent(diffOf[1]!));
-        const lead = task.merged && !task.merged.already ? null : await leadBranch(p, task, url.searchParams.get("agent") ?? undefined);
-        const range: { project: string; base: string; head: string; mode: "two-dot" | "three-dot"; branch: string; merged: boolean } = lead
-          ? { project: lead.project, base: "HEAD", head: lead.branch, mode: "three-dot", branch: lead.branch, merged: false }
-          : { project: p.projectDir, base: `${task.merged!.commit}^1`, head: task.merged!.commit, mode: "two-dot", branch: task.merged!.branch, merged: true };
+        const range = await taskRange(p, task, url.searchParams.get("agent") ?? undefined);
         const head = range.head;
         const file = url.searchParams.get("file");
         if (file !== null) return json(200, await fileDiff(range.project, range.base, head, range.mode, file));
         // the agents whose branch can be shown (an own branch, not the project folder)
         const branches = (await Promise.all(task.agents.map(async (a) => ((await leadBranch(p, task, a).catch(() => null)) ? a : null)))).filter((a): a is string => !!a);
         return json(200, { ...(await branchDiff(range.project, range.base, head, range.mode)), branch: range.branch, merged: range.merged, agents: branches });
+      }
+      const acc = /^\/api\/tasks\/([^/]+)\/acceptance(\/view)?$/.exec(path);
+      if (acc) {
+        // the acceptance page of a DONE task: built from the task's data and the lead's table on every open
+        const d = await acceptanceOf(p, decodeURIComponent(acc[1]!));
+        if (acc[2]) return { status: 200, type: "text/html; charset=utf-8", body: injectSdk(renderAcceptancePage(d)), csp: PLAN_CSP };
+        return json(200, { alerts: acceptanceAlerts(d), table: !!d.acceptance, verdict: d.task.acceptance ?? null, ownBranch: !!d.branch && !d.task.merged });
       }
       const planOf = /^\/api\/tasks\/([^/]+)\/plan(?:\/(\d+)(\/view)?)?$/.exec(path);
       if (planOf) {
@@ -537,6 +561,45 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       await acted(id, planAction[2] === "approve" ? `approved plan v${r.state.approved!.version}` : `plan feedback to ${r.message?.to}`);
       return json(201, { plan: r.state, to: r.message?.to ?? null });
     }
+    // a DONE task's result back to its team: a follow-up task whose lead answers the comments like any review comments
+    const reviewFollowUp = async (task: Task, lines: string[], list: { file: string; line?: number; code?: string; text: string }[], where: string) => {
+      const followUp = await operator.createTaskAsOperator({
+        title: `Fix the review comments on ${task.id}: ${task.title}`.slice(0, 200),
+        description: `The operator reviewed the result of ${task.id} ("${task.title}")${where} and asks for these changes:\n${lines.join("\n")}\n\nFix each one in the same branches as ${task.id}; if one is wrong, say why in the result.`,
+        agents: task.agents.filter((a) => !task.spawned?.some((s) => s.id === a)).length >= 2 ? task.agents.filter((a) => !task.spawned?.some((s) => s.id === a)) : task.agents,
+        ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+        ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
+      });
+      await operator.addReviewComments(followUp.id, list);
+      return followUp;
+    };
+    const accAction = /^\/api\/tasks\/([^/]+)\/acceptance\/(accept|return)$/.exec(path);
+    if (accAction) {
+      const id = decodeURIComponent(accAction[1]!);
+      const task = await operator.tasks.get(id);
+      if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `${id} is not DONE: accept it once it is`);
+      if (accAction[2] === "accept") {
+        // accepting a task the page can merge merges it: the lead's branch into the project, as «Влить в проект»
+        const range = task.merged ? null : await leadBranch(p, task).catch(() => null);
+        const merged = range ? await operator.mergeTask({ taskId: id, project: range.project, branch: range.branch, strategy: p.mergeStrategy ?? "squash" }, opts.merge) : null;
+        const saved = await operator.recordAcceptance({ taskId: id, status: "accepted" });
+        await acted(id, `accepted${merged ? ` and merged ${merged.merged!.branch} into ${merged.merged!.into}` : ""}`);
+        return json(200, { task: saved, merged: merged?.merged ?? null });
+      }
+      // comments on blocks of the acceptance page: what to change, for a follow-up task of the same team
+      const comments = (Array.isArray((body as { comments?: unknown }).comments) ? ((body as { comments: unknown[] }).comments) : [])
+        .map((c) => (c ?? {}) as { target?: unknown; quote?: unknown; text?: unknown })
+        .filter((c) => typeof c.text === "string" && c.text.trim())
+        .slice(0, 50)
+        .map((c) => ({ target: String(c.target ?? "страница приёмки").slice(0, 200), quote: typeof c.quote === "string" ? c.quote.slice(0, 300) : "", text: String(c.text).trim().slice(0, 4000) }));
+      if (!comments.length) throw new AppError("INVALID_INPUT", "No comments: click a block of the page and write what to change");
+      const list = comments.map((c) => ({ file: "acceptance page", code: c.quote ? `${c.target}: ${c.quote}` : c.target, text: c.text }));
+      const lines = list.map((c) => `- on the acceptance page, ${c.code} — ${c.text}`);
+      const followUp = await reviewFollowUp(task, lines, list, " on its acceptance page");
+      const saved = await operator.recordAcceptance({ taskId: id, status: "returned", followUp: followUp.id });
+      await acted(id, `returned with ${comments.length} comment(s): ${followUp.id}`);
+      return json(201, { task: saved, followUp });
+    }
     const taskAction = /^\/api\/tasks\/([^/]+)\/(unblock|handover|cancel|message|merge|review|revert)$/.exec(path);
     if (taskAction) {
       const id = decodeURIComponent(taskAction[1]!);
@@ -564,15 +627,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
           await acted(id, `review comments to ${message.to}: ${comments.length}`);
           return json(201, { message, sent: "lead", to: message.to, comments: added });
         }
-        const followUp = await operator.createTaskAsOperator({
-          title: `Fix the review comments on ${task.id}: ${task.title}`.slice(0, 200),
-          description: `The operator reviewed the result of ${task.id} ("${task.title}")${where} and asks for these changes:\n${lines.join("\n")}\n\nFix each one in the same branches as ${task.id}; if one is wrong, say why in the result.`,
-          agents: task.agents.filter((a) => !task.spawned?.some((s) => s.id === a)).length >= 2 ? task.agents.filter((a) => !task.spawned?.some((s) => s.id === a)) : task.agents,
-          ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
-          ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
-        });
-        await operator.addReviewComments(followUp.id, list); // the follow-up's lead answers them like any review comments
-        return json(201, { task: followUp, sent: "task" });
+        return json(201, { task: await reviewFollowUp(task, lines, list, where), sent: "task" });
       }
       if (taskAction[2] === "merge") {
         const { project, branch } = await leadBranch(p, await operator.tasks.get(id));

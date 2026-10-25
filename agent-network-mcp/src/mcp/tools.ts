@@ -113,7 +113,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
   );
   tool(
     "complete",
-    "Finish your step. DISCUSS: no arguments = approve the agreement. IMPLEMENT: {result, filesChanged?, commits?, tasksDone?} = your part is ready. SYNC: {status: PASS|NEEDS_FIX, findings?} = your review (NEEDS_FIX needs an ERROR with relatedAgent). INTEGRATE (lead): {status, result, commits?, findings?, followUps?} after merging and a green build.",
+    "Finish your step. DISCUSS: no arguments = approve the agreement. IMPLEMENT: {result, filesChanged?, commits?, tasksDone?} = your part is ready. SYNC: {status: PASS|NEEDS_FIX, findings?} = your review (NEEDS_FIX needs an ERROR with relatedAgent). INTEGRATE (lead): {status, result, commits?, findings?, followUps?, acceptance} after merging and a green build.",
     {
       result: z.string().optional().describe("IMPLEMENT: what you did. INTEGRATE: what was merged, the build/test outcome"),
       filesChanged: z.array(z.string()).optional().describe("IMPLEMENT only: project-relative paths you changed"),
@@ -122,6 +122,20 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
       status: z.string().optional().describe("SYNC / INTEGRATE: PASS or NEEDS_FIX"),
       findings: z.array(finding).optional().describe("SYNC / INTEGRATE; NEEDS_FIX needs an ERROR"),
       followUps: z.array(followUp).optional().describe("INTEGRATE PASS, when followUps.remaining > 0: new tasks for work that is left"),
+      acceptance: z
+        .object({
+          criteria: z.array(z.object({
+            requirement: z.string().describe("A requirement of the task in a sentence (with OpenSpec: starting with the scenario's name)"),
+            status: z.enum(["done", "partial", "not-done"]),
+            tests: z.array(z.string()).optional().describe("Tests that prove it, at the merged commit: 'path#method' or 'path'"),
+            where: z.array(z.string()).optional().describe("Where the code is: 'path' or 'path:line'"),
+            note: z.string().optional().describe("Required for partial / not-done: what is missing"),
+          })).describe("One per requirement of the task"),
+          checks: z.array(z.object({ step: z.string(), command: z.string().optional(), expect: z.string().optional() })).optional().describe("How the operator sees it work by hand"),
+          risks: z.array(z.object({ what: z.string(), why: z.string().optional() })).optional().describe("What you are unsure of"),
+        })
+        .optional()
+        .describe("INTEGRATE PASS of a code task (required): what the operator accepts the task by"),
     },
     async (a) => swarm.complete(a),
   );
