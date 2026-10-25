@@ -2,13 +2,15 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sessionCost, taskStats, type Prices } from "../stats.js";
 import { FileStore } from "../storage/fileStore.js";
+import { matches } from "../ownership.js";
+import { AgreementStore } from "../stores/agreementStore.js";
 import { EventStore } from "../stores/eventStore.js";
 import { MessageStore } from "../stores/messageStore.js";
 import { SessionStore, type SessionRecord } from "../stores/sessionStore.js";
 import { SyncStore } from "../stores/syncStore.js";
 import { TaskStore } from "../stores/taskStore.js";
 import { Journal } from "../supervisor/journal.js";
-import type { Task } from "../types.js";
+import type { ReviewComment, Task } from "../types.js";
 
 /** One closed task in short: what the observer reads to find the system's problems across tasks (no model needed). */
 export interface TaskDigest {
@@ -46,11 +48,27 @@ export interface TaskDigest {
     reverted: boolean;
     /** The operator's verdict on the acceptance page: accepted, returned with comments (a follow-up), or none yet. */
     acceptance: "accepted" | "returned" | null;
-    reviewComments: { total: number; fixed: number; declined: number; open: number; texts: string[] };
+    /**
+     * The operator's comments on the diff (and, in a follow-up, on the acceptance page): what was said, where, whose file
+     * it was by the agreement, and how it ended — declined with the lead's reason, or fixed. Comments that repeat across
+     * tasks for one role are a rule that role should have been given.
+     */
+    reviewComments: { total: number; fixed: number; declined: number; open: number; items: ReviewItem[] };
     followUps: number;
     jobs: number;
     sessionsEndedBy: Record<string, number>;
   };
+}
+
+export interface ReviewItem {
+  /** file:line, or "acceptance page". */
+  where: string;
+  text: string;
+  status: "open" | "fixed" | "declined";
+  /** The agent whose file it is by the agreement; null when no assignment names it (the acceptance page, a stray file). */
+  owner: string | null;
+  /** The lead's answer: what was fixed, or why it was declined. */
+  note?: string;
 }
 
 /** What changes after a task closed (a merge, a revert, comments): a digest whose key differs is written again. */
@@ -101,7 +119,8 @@ export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): P
   const messages = await new MessageStore(fs).list(task.id);
   const reports = await new SyncStore(fs).list(task.id);
   const journal = (await new Journal(fs).list(1000)).filter((j) => j.taskId === task.id);
-  const review = (await fs.readJson<{ file: string; line?: number; text: string; status: string }[]>(["tasks", task.id, "review.json"])) ?? [];
+  const review = (await fs.readJson<ReviewComment[]>(["tasks", task.id, "review.json"])) ?? [];
+  const agreement = await new AgreementStore(fs).find(task.id);
   const allTasks = await new TaskStore(fs).list();
 
   const agents = task.agents.map((id) => {
@@ -165,8 +184,12 @@ export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): P
         fixed: review.filter((c) => c.status === "fixed").length,
         declined: review.filter((c) => c.status === "declined").length,
         open: review.filter((c) => c.status === "open").length,
-        // the words, short: repeated comments across tasks are what a role should learn
-        texts: review.slice(0, 20).map((c) => `${c.file}${c.line ? `:${c.line}` : ""}: ${c.text}`.slice(0, 200)),
+        // the words, short, with whose file and how it ended: repeated comments across tasks are what a role should learn
+        items: review.slice(0, 20).map((c): ReviewItem => ({
+          where: `${c.file}${c.line ? `:${c.line}` : ""}`, text: c.text.slice(0, 200), status: c.status,
+          owner: agreement?.assignments.find((a) => (a.files ?? []).some((f) => matches(f, c.file)))?.agentId ?? null,
+          ...(c.note ? { note: c.note.slice(0, 200) } : {}),
+        })),
       },
       followUps: allTasks.filter((t) => t.parentTaskId === task.id && !t.jobOf).length,
       jobs: allTasks.filter((t) => t.jobOf?.taskId === task.id).length,

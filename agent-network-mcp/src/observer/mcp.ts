@@ -43,7 +43,7 @@ export function createObserverServer(networkDir: string): McpServer {
 
   tool(
     "digests",
-    "Digests of the closed tasks you have not reported on yet (all: every one): phases and minutes, cost per agent, failed and turn-limit sessions, blocks with reasons, review findings, questions to the operator and answer times, refused tool calls by code, red builds, supervisor incidents. deleted: the operator deleted the task (its reason, and the folder its files moved to, deleted/<id>/).",
+    "Digests of the closed tasks you have not reported on yet (all: every one): phases and minutes, cost per agent, failed and turn-limit sessions, blocks with reasons, review findings, questions to the operator and answer times, refused tool calls by code, red builds, supervisor incidents. deleted: the operator deleted the task (its reason, and the folder its files moved to, deleted/<id>/). outcome.reviewComments.items: the operator's comments with whose file it was (owner) and how they ended — repeated ones are a rule a role lacks.",
     { all: z.boolean().optional() },
     async ({ all }) => {
       const digests = await readDigests(networkDir);

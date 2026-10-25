@@ -302,18 +302,21 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
   // what waits for the operator, every few seconds for every project: the page's inbox, and a notification of what is new
   const sender = opts.notifySend !== undefined ? opts.notifySend : await linuxSender();
   for (const [i, p] of projects.entries()) if (p.pool) p.notifier = new Notifier(sender, specs[i]!.notify ?? {});
-  let looking = false;
-  const lookAround = async (): Promise<void> => {
-    if (looking) return;
-    looking = true;
-    try {
+  // one look at a time; closing the page waits for the one in flight (it writes attention.json)
+  let looking: Promise<void> | null = null;
+  let closing = false;
+  const lookAround = (): Promise<void> => {
+    if (looking || closing) return looking ?? Promise.resolve();
+    looking = (async () => {
       for (const p of projects) {
+        if (closing) return;
         p.attention = await attentionOf(p).catch(() => p.attention ?? []);
         await p.notifier?.tick(p.name, p.fs, p.attention).catch(() => undefined);
       }
-    } finally {
-      looking = false;
-    }
+    })().finally(() => {
+      looking = null;
+    });
+    return looking;
   };
   const attentionTimer = setInterval(() => void lookAround(), opts.attentionMs ?? 5000);
   attentionTimer.unref();
@@ -1130,9 +1133,11 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     url: `http://${host === "::1" ? "[::1]" : host}:${port}`,
     projects: projects.map((p) => ({ id: p.id, networkDir: p.networkDir })),
     close: () =>
-      new Promise((resolve) => {
-        for (const p of projects) p.operator?.close();
+      new Promise(async (resolve) => {
+        closing = true;
         clearInterval(attentionTimer);
+        await looking?.catch(() => undefined);
+        for (const p of projects) p.operator?.close();
         server.closeAllConnections();
         server.close(() => resolve());
       }),

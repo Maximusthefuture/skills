@@ -51,6 +51,13 @@ describe("what waits for the operator", () => {
     expect(items.find((i) => i.kind === "acceptance")!.open).toEqual({ tab: "tasks", acceptance: true });
   });
 
+  it("a written change waits to be merged, then to be implemented — until a task implements it", () => {
+    const done = (over: Record<string, unknown>) => task({ status: "COMPLETED", phase: "DONE", proposes: { change: "add-refunds" }, ...over });
+    expect(attentionItems(input({ tasks: [done({})] })).map((i) => i.title)).toEqual(["task-001: change add-refunds ждёт вливания"]);
+    expect(attentionItems(input({ tasks: [done({ merged: { commit: "c" }, proposedReady: true })] })).map((i) => i.title)).toEqual(["task-001: change add-refunds готов к реализации"]);
+    expect(attentionItems(input({ tasks: [done({ proposedReady: true }), task({ id: "task-002", openspec: { change: "add-refunds" } })] }))).toEqual([]);
+  });
+
   it("a red contract merge is the item, the service's waits behind it", () => {
     const items = attentionItems(input({ tasks: [task({ status: "COMPLETED", phase: "DONE", contractMergeCheck: { status: "conflict", into: "main", startedAt: T0, files: ["orders.yaml"] } })] }));
     expect(items).toEqual([expect.objectContaining({ kind: "merge", title: "task-001: вливание контракта — конфликт", text: "Refunds · orders.yaml" })]);

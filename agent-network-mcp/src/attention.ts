@@ -32,7 +32,11 @@ export interface AttentionItem {
 
 interface TaskView {
   id: string; title: string; status: string; phase: string; updatedAt: string; phaseSince?: string; syncRound?: number;
-  grill?: boolean; jobOf?: unknown; proposes?: unknown; merged?: unknown; acceptance?: unknown;
+  grill?: boolean; jobOf?: unknown; merged?: unknown; acceptance?: unknown;
+  /** A change-writing task, and whether its change is in the project folder (merged) after DONE. */
+  proposes?: { change: string } | null; proposedReady?: boolean;
+  /** A task that implements a change. */
+  openspec?: { change: string } | null;
   blockedReason?: string | null; blockedBy?: string | null; handover?: { dueAt: string; lead: string } | null;
   plan?: { status: string; stage?: string | null; version?: number | null; at?: string | null } | null;
   waitingOn?: string[];
@@ -82,6 +86,17 @@ export function attentionItems(i: AttentionInput): AttentionItem[] {
         title: `${t.id}: BLOCKED`, text: (t.blockedReason ?? t.title) + (t.handover ? ` — потом исправление возьмёт ${t.handover.lead}` : ""), open: { tab: "tasks" },
       });
     }
+    if (t.status === "COMPLETED" && t.proposes) {
+      // a written change waits too: to be merged into the project, then to be implemented by a task of its own
+      const name = t.proposes.change;
+      const implemented = i.tasks.some((x) => x.openspec?.change === name && x.status !== "CANCELLED");
+      if (!t.proposedReady && !t.merged) {
+        out.push({ key: `change:${t.id}:merge`, kind: "acceptance", taskId: t.id, blocking: false, since: t.updatedAt, title: `${t.id}: change ${name} ждёт вливания`, text: "Посмотрите изменения и влейте ветку lead'а: тогда change можно реализовать", open: { tab: "tasks" } });
+      } else if (t.proposedReady && !implemented) {
+        out.push({ key: `change:${t.id}:implement`, kind: "acceptance", taskId: t.id, blocking: false, since: t.updatedAt, title: `${t.id}: change ${name} готов к реализации`, text: "«Реализовать change» в карточке задачи откроет форму с ним", open: { tab: "tasks" } });
+      }
+      continue;
+    }
     if (t.status !== "COMPLETED" || t.merged) continue;
     // a merge that did not pass: the contract's first (the service waits for it), then the service's
     const bad = [t.contractMergeCheck && { c: t.contractMergeCheck, scope: "contract" }, t.mergeCheck && { c: t.mergeCheck, scope: "" }].find(
@@ -97,7 +112,7 @@ export function attentionItems(i: AttentionInput): AttentionItem[] {
     }
     // being checked, or handed to a follow-up whose merge brings this work: nothing to accept here yet
     const checking = [t.mergeCheck, t.contractMergeCheck].some((c) => c?.status === "running" || !!c?.followUp);
-    if (!t.acceptance && !t.jobOf && !t.proposes && !checking) {
+    if (!t.acceptance && !t.jobOf && !checking) {
       out.push({ key: `acceptance:${t.id}`, kind: "acceptance", taskId: t.id, blocking: false, since: t.updatedAt, title: `${t.id}: ждёт приёмки`, text: t.title, open: { tab: "tasks", acceptance: true } });
     }
   }

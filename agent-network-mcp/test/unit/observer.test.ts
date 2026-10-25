@@ -51,6 +51,8 @@ afterEach(async () => {
   ui = undefined;
 });
 
+const fs = (d: string) => FileStore.open(d);
+
 describe("digests of closed tasks", () => {
   it("say in short what happened, without a model, once per task", async () => {
     const { networkDir, task } = await closedTask();
@@ -232,8 +234,18 @@ describe("the digest says how a task ended up", () => {
 
     const done = await operator.tasks.get(task.id);
     await operator.tasks.save({ ...done, merged: { at: "", branch: "swarm-backend", into: "main", commit: "abc1234", already: false, strategy: "squash", reverted: { at: "", commit: "def5678" } } });
-    await operator.addReviewComments(task.id, [{ file: "src/A.java", line: 3, text: "no test for the error case" }]);
+    await operator.agreements.save({ taskId: task.id, summary: "s", assignments: [{ agentId: "backend", responsibility: "api", files: ["src/**"] }, { agentId: "reviewer", responsibility: "review", files: [] }], decisions: [], interfaces: [], approvedBy: [], createdAt: "", proposedBy: "backend", version: 1 });
+    await operator.addReviewComments(task.id, [{ file: "src/A.java", line: 3, text: "no test for the error case" }, { file: "acceptance page", code: "td «r»", text: "also cancelled orders" }]);
+    const rc = (await fs(dir)).readJson<{ id: string; status: string; note?: string }[]>(["tasks", task.id, "review.json"]);
+    const all = (await rc)!;
+    await (await fs(dir)).writeJson(["tasks", task.id, "review.json"], all.map((c, i) => (i === 1 ? { ...c, status: "declined", note: "out of the task's scope" } : c)));
     expect(await collectDigests(dir)).toEqual([task.id]);
-    expect((await readDigests(dir))[0]!.outcome).toMatchObject({ merged: "squash", reverted: true, reviewComments: { total: 1, open: 1, texts: ["src/A.java:3: no test for the error case"] } });
+    expect((await readDigests(dir))[0]!.outcome).toMatchObject({
+      merged: "squash", reverted: true,
+      reviewComments: { total: 2, open: 1, declined: 1, items: [
+        { where: "src/A.java:3", text: "no test for the error case", status: "open", owner: "backend" },
+        { where: "acceptance page", text: "also cancelled orders", status: "declined", owner: null, note: "out of the task's scope" },
+      ] },
+    });
   });
 });
