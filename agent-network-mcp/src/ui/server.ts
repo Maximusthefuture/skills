@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
@@ -15,6 +16,8 @@ import { MessageStore } from "../stores/messageStore.js";
 import { TaskStore } from "../stores/taskStore.js";
 import type { GitContext, Task } from "../types.js";
 import { acceptanceAlerts, collectAcceptance, renderAcceptancePage, type AcceptanceRange } from "../acceptancePage.js";
+import { inspectContract, m2Origin, pomCoords } from "../contract.js";
+import { detectStack } from "../stack.js";
 import { MergeChecker, mergeRef, type MergeCheck } from "../mergeCheck.js";
 import { collectDigests } from "../observer/digest.js";
 import { PAGE_HTML } from "./page.js";
@@ -26,7 +29,7 @@ import type { Supervisor } from "../supervisor/supervisor.js";
 import type { Scheduler } from "../schedule/scheduler.js";
 import { buildUiState } from "./state.js";
 import { nextRun, parseCron } from "../schedule/cron.js";
-import { branchDiff, fileDiff, gitRoot, mergeProjectInto, removeWorktrees, type MergeResult } from "../worktrees.js";
+import { branchDiff, fileDiff, gitRoot, mergeCheckWorktrees, mergeProjectInto, removeMergeCheckWorktree, removeTaskWorktree, removeWorktrees, type MergeResult } from "../worktrees.js";
 import { ObserverStore } from "../observer/store.js";
 import type { Observer } from "../observer/observer.js";
 import { readCritiques, type PlanCritic } from "../planCritic.js";
@@ -134,16 +137,63 @@ async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { 
   return { project, branch };
 }
 
+/** Tasks deleted from the page: their folders moved to <network>/deleted/<id>/ (service.deleteTask). */
+async function deletedTasks(networkDir: string): Promise<Task[]> {
+  const dir = join(networkDir, "deleted");
+  const out: Task[] = [];
+  for (const name of await readdir(dir).catch(() => [] as string[])) {
+    const t = await readFile(join(dir, name, "task.json"), "utf8").then((x) => JSON.parse(x) as Task, () => null);
+    if (t) out.push(t);
+  }
+  return out;
+}
+
+/** The contract's version (its pom) at a commit or branch of its repository. */
+function contractVersionAt(project: string, ref: string): Promise<string | undefined> {
+  return new Promise((done) => execFile("git", ["show", `${ref}:pom.xml`], { cwd: project, timeout: 15_000 }, (e, out) => done(e ? undefined : pomCoords(String(out)).version)));
+}
+
 /** The merge check of a project: a green merge is recorded by the operator, with the acceptance when «Принять и влить» started it. */
-function newMergeChecker(fs: FileStore, operator: NetworkService, setup: string[] | undefined): MergeChecker {
+function newMergeChecker(fs: FileStore, operator: NetworkService, setup: string[] | undefined, after: (check: MergeCheck) => Promise<void>): MergeChecker {
   return new MergeChecker(fs, {
     ...(setup ? { setup } : {}),
     land: async (task, input, move) => {
       const verified = { command: input.verified.command, ...(input.verified.tests ? { tests: input.verified.tests } : {}) };
+      if (input.scope === "contract") {
+        await operator.mergeContract({ taskId: task.id, strategy: input.strategy, verified: { command: verified.command } }, () => move());
+        return; // the service's merge follows (after), and the acceptance with it
+      }
       await operator.mergeTask({ taskId: task.id, project: input.project, branch: input.branch, strategy: input.strategy, verified }, () => move());
       if (input.accept) await operator.recordAcceptance({ taskId: task.id, status: "accepted" });
     },
+    after,
   });
+}
+
+/**
+ * «Влить в проект» / «Принять и влить»: the task's API contract first, into its own repository (checked with the contract
+ * project's own build), then the service; a task with verifyCommand is checked before it lands, one without merges as
+ * it is, marked unverified. Returns the check that started, or the task once merged.
+ */
+async function startTaskMerge(p: Project, operator: NetworkService, task: Task, accept: boolean, mergeFn?: UiOptions["merge"]): Promise<{ check: MergeCheck } | { task: Task }> {
+  const strategy = p.mergeStrategy ?? "squash";
+  const c = task.contract;
+  if (c && !c.merged) {
+    const verify = (await detectStack(c.project))?.verifyCommand;
+    if (verify && p.mergeChecker) {
+      const check = await p.mergeChecker.start(task, { project: c.project, branch: c.branch, strategy, accept, verifyCommand: verify, scope: "contract" });
+      if (check) return { check };
+    }
+    task = await operator.mergeContract({ taskId: task.id, strategy, ...(verify ? {} : { unverified: true as const }) });
+  }
+  if (task.merged) return { task: accept ? await operator.recordAcceptance({ taskId: task.id, status: "accepted" }) : task };
+  const { project, branch } = await leadBranch(p, task);
+  if (task.verifyCommand && p.mergeChecker) {
+    const check = await p.mergeChecker.start(task, { project, branch, strategy, accept });
+    if (check) return { check };
+  }
+  const merged = await operator.mergeTask({ taskId: task.id, project, branch, strategy, ...(task.verifyCommand ? {} : { unverified: true as const }) }, mergeFn);
+  return { task: accept ? await operator.recordAcceptance({ taskId: task.id, status: "accepted" }) : merged };
 }
 
 /**
@@ -205,7 +255,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       projectDir,
       fs: await FileStore.open(networkDir),
       journal: new Journal(await FileStore.open(networkDir)),
-      ...(spec.runners && operator ? { pool: spec.runners, operator, mergeChecker: newMergeChecker(await FileStore.open(networkDir), operator, spec.mergeSetup) } : {}),
+      ...(spec.runners && operator ? { pool: spec.runners, operator, mergeChecker: newMergeChecker(await FileStore.open(networkDir), operator, spec.mergeSetup, (check) => afterMerge(id, check)) } : {}),
       ...(spec.prices ? { prices: spec.prices } : {}),
       ...(spec.runners && spec.supervisor ? { supervisor: spec.supervisor } : {}),
       ...(spec.runners && spec.observer ? { observer: spec.observer } : {}),
@@ -217,6 +267,16 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       deployer: new Deployer(await FileStore.open(networkDir), projectDir, opts.deployGit, opts.deployKube),
     });
   }
+  // the contract's merge landed: the service's follows (its own check), with the acceptance when «Принять и влить» began it
+  async function afterMerge(projectId: string, check: MergeCheck): Promise<void> {
+    if (check.scope !== "contract") return;
+    const p = projects.find((x) => x.id === projectId);
+    if (!p?.operator) return;
+    await startTaskMerge(p, p.operator, await p.operator.tasks.get(check.taskId), !!check.accept, opts.merge).catch(async (e: Error) => {
+      await p.journal.add({ kind: "note", by: "operator", taskId: check.taskId, text: `the contract was merged, the service's merge did not start: ${e.message}` });
+    });
+  }
+
   const host = opts.host ?? "127.0.0.1";
 
   /** Agents in their own worktree see only committed work: the change must be in each runner's folder already. */
@@ -371,6 +431,10 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         const agents = (url.searchParams.get("agents") ?? "").split(",").filter(Boolean);
         return json(200, { change, inProject: await hasChange(p.projectDir, change), missing: await foldersWithoutChange(p, change, agents) });
       }
+      if (path === "/api/contract/inspect") {
+        // the form checks a contract project as it is typed: its coordinates and specs
+        return json(200, await inspectContract(url.searchParams.get("path") ?? ""));
+      }
       if (path === "/api/openspec/changes") return json(200, { projectDir: p.projectDir, changes: await listChanges(p.projectDir) });
       if (path === "/api/state") {
         // the page is open: a BLOCKED task whose deadline passed goes to its lead even with no runner around
@@ -379,7 +443,9 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         const state = await buildUiState(p.fs, undefined, pricing);
         // a DONE task's merge check: running, green, red (what failed), a conflict, handed to a follow-up
         for (const t of state.tasks as { id: string; status: string; mergeCheck?: MergeCheck | null }[]) {
-          if (t.status === "COMPLETED") t.mergeCheck = p.mergeChecker ? await p.mergeChecker.get(t.id) : await p.fs.readJson<MergeCheck>(["tasks", t.id, "merge-check.json"]);
+          if (t.status !== "COMPLETED") continue;
+          t.mergeCheck = p.mergeChecker ? await p.mergeChecker.get(t.id) : await p.fs.readJson<MergeCheck>(["tasks", t.id, "merge-check.json"]);
+          (t as { contractMergeCheck?: MergeCheck | null }).contractMergeCheck = p.mergeChecker ? await p.mergeChecker.get(t.id, "contract") : await p.fs.readJson<MergeCheck>(["tasks", t.id, "merge-check-contract.json"]);
         }
         return json(200, {
           ...state,
@@ -530,6 +596,15 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const depStart = /^\/api\/tasks\/([^/]+)\/deploy$/.exec(path);
     if (depStart) {
       const task = await operator.tasks.get(decodeURIComponent(depStart[1]!));
+      // a service on a contract version that is only in this machine's ~/.m2 would not build anywhere else
+      if (task.contract && (body as { contractUnreleased?: unknown }).contractUnreleased !== true) {
+        const c = task.contract;
+        const version = await contractVersionAt(c.project, c.merged?.commit ?? c.branch);
+        const origin = version ? await m2Origin(c.groupId, c.artifactId, version) : null;
+        if (version && origin !== "remote") {
+          throw new AppError("CONTRACT_NOT_RELEASED", `Сервис зависит от контракта ${c.groupId}:${c.artifactId} ${version}, а его ${origin === "local" ? "нет в Nexus: он есть только локально в ~/.m2" : "нет даже в ~/.m2"}. Выпустите контракт до пуша сервиса — иначе сборка сервиса в Jenkins его не найдёт.`, { version, origin });
+        }
+      }
       const run = await p.deployer.start(task, String((body as { env?: unknown }).env ?? ""));
       await p.journal.add({ kind: "action", by: "operator", taskId: task.id, text: `раскатка ${run.id}: ${run.branch} → ${run.remote}, окружение ${run.env}` });
       return json(201, { run });
@@ -537,7 +612,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const depCancel = /^\/api\/deploys\/(dep-\d+)\/cancel$/.exec(path);
     if (depCancel) return json(200, { run: await p.deployer.cancel(depCancel[1]!) });
     if (path === "/api/tasks") {
-      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; from?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown; allowSpawn?: unknown };
+      const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; from?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown; allowSpawn?: unknown; contract?: unknown };
       // a preset (fast / standard / thorough) sets the three; without one, each comes as it is
       const prep = typeof b.depth === "string" && b.depth !== "custom" ? depthFlags(b.depth) : { clarify: b.clarify === true, grill: b.grill === true, planReview: b.planReview === true };
       // the page sends "" for "no limit"; a field it leaves out gets the config's maxTaskCostUsd
@@ -558,6 +633,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         ...(prep.planReview ? { planReview: true } : {}),
         ...(prep.grill ? { grill: true } : {}),
         ...(b.allowSpawn === true ? { allowSpawn: true } : {}),
+        ...(typeof b.contract === "string" && b.contract.trim() ? { contract: b.contract.trim() } : {}),
         ...(verifyCommand ? { verifyCommand } : {}),
         ...(b.maxFollowUps !== undefined && b.maxFollowUps !== "" ? { maxFollowUps: Number(b.maxFollowUps) } : {}),
         ...(b.maxFixRounds !== undefined && b.maxFixRounds !== "" ? { maxFixRounds: Number(b.maxFixRounds) } : {}),
@@ -602,19 +678,21 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     // «Влить в проект»: a task with verifyCommand is checked first (the merge built and its build run apart from the
     // project; only a green one lands); without one it merges as it is, marked unverified
     const startMerge = async (task: Task, accept: boolean): Promise<{ check: MergeCheck } | { task: Task }> => {
-      const { project, branch } = await leadBranch(p, task);
-      const strategy = p.mergeStrategy ?? "squash";
-      if (task.verifyCommand && p.mergeChecker) {
-        const check = await p.mergeChecker.start(task, { project, branch, strategy, accept });
-        if (check) {
-          await acted(task.id, `${check.status === "conflict" ? "merge conflicts" : "merge check started"}: ${branch} into ${check.into}`);
-          return { check };
-        }
-      }
-      const merged = await operator.mergeTask({ taskId: task.id, project, branch, strategy, ...(task.verifyCommand ? {} : { unverified: true as const }) }, opts.merge);
-      await acted(task.id, `merged ${branch} into ${merged.merged!.into}`);
-      return { task: accept ? await operator.recordAcceptance({ taskId: task.id, status: "accepted" }) : merged };
+      const r = await startTaskMerge(p, operator, task, accept, opts.merge);
+      await acted(task.id, "check" in r ? `${r.check.status === "conflict" ? "merge conflicts" : "merge check started"}${r.check.scope ? " (contract)" : ""}: ${r.check.branch} into ${r.check.into}` : `merged ${task.id}`);
+      return r;
     };
+    const setContract = /^\/api\/tasks\/([^/]+)\/contract$/.exec(path);
+    if (setContract) {
+      // named while the task is designed: the lead's next session can write the contract's worktree, so the current one
+      // ends after its tool call in flight and a fresh one starts with the news
+      const task = await operator.setContract(decodeURIComponent(setContract[1]!), String((body as { path?: unknown }).path ?? ""));
+      const lead = task.agents[0]!;
+      const note = `The operator named the API contract project: ${task.contract!.project} (${task.contract!.groupId}:${task.contract!.artifactId} ${task.contract!.version}). You change it in your worktree ${task.contract!.worktree}; see swarm_context.contract.`;
+      const interrupted = pool.list().some((r) => r.id === lead) ? pool.interrupt(lead, note) : "not-running";
+      await acted(task.id, `named the contract project ${task.contract!.project}`);
+      return json(200, { task, interrupted });
+    }
     const del = /^\/api\/tasks\/([^/]+)\/delete$/.exec(path);
     if (del) {
       // for good, so the operator's alone; a task still being merged or deployed is left alone
@@ -625,20 +703,34 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       // its digest first, while the folder is where collectDigests reads it: the observer gets the deleted task too
       await collectDigests(p.networkDir, (await p.prices?.())?.prices).catch(() => []);
       const reason = (body as { reason?: unknown }).reason;
+      const contractProject = (await operator.tasks.find(id))?.contract?.project; // read before its folder moves
       const deleted = await operator.deleteTask(id, typeof reason === "string" ? reason : undefined);
       await new Promise((done) => execFile("git", ["update-ref", "-d", mergeRef(id)], { cwd: p.projectDir, timeout: 15_000 }, () => done(null)));
+      if (contractProject) await new Promise((done) => execFile("git", ["update-ref", "-d", mergeRef(id, "contract")], { cwd: contractProject, timeout: 15_000 }, () => done(null)));
       return json(200, { deleted });
     }
     const mergeAction = /^\/api\/tasks\/([^/]+)\/merge\/(retry|handoff|force)$/.exec(path);
     if (mergeAction) {
       const id = decodeURIComponent(mergeAction[1]!);
       const task = await operator.tasks.get(id);
+      const scope = (body as { scope?: unknown }).scope === "contract" ? ("contract" as const) : undefined;
       if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `${id} is not DONE`);
-      if (task.merged) throw new AppError("ALREADY_COMPLETED", `${id} is merged already (${task.merged.commit.slice(0, 7)})`);
-      const check = await p.mergeChecker?.get(id);
+      const done = scope ? task.contract?.merged : task.merged;
+      if (done) throw new AppError("ALREADY_COMPLETED", `${scope ? "The contract of " : ""}${id} is merged already (${done.commit.slice(0, 7)})`);
+      const check = await p.mergeChecker?.get(id, scope);
       if (!check) throw new AppError("INVALID_INPUT", `${id} has no merge check: «Влить в проект» first`);
       if (check.status === "running") throw new AppError("MERGE_CHECK_RUNNING", `The merge of ${id} is being checked`);
       if (mergeAction[2] === "retry") return json(202, await startMerge(task, !!check.accept));
+      if (scope && mergeAction[2] === "force") {
+        // the contract's red build overridden by the operator: merged as it is, then the service's own merge
+        if (bySupervisor) return json(403, { error: "FORBIDDEN", message: "Merging a red build anyway is the operator's decision: escalate it" });
+        if (check.status === "conflict") throw new AppError("MERGE_CONFLICT", `The contract of ${id} conflicts with ${check.into}: resolve it in ${task.contract!.project} by hand`);
+        await operator.mergeContract({ taskId: id, strategy: p.mergeStrategy ?? "squash", unverified: true });
+        return json(202, await startMerge(await operator.tasks.get(id), !!check.accept));
+      }
+      if (scope) {
+        throw new AppError("INVALID_INPUT", `A red or conflicting contract merge is fixed in its repository (${task.contract!.project}): fix it there and «Проверить снова», or «Влить всё равно»; a follow-up of the team is for the service's merge`);
+      }
       if (mergeAction[2] === "force") {
         // the operator's override of a red check: merged as it is, marked unverified; never the supervisor's call
         if (bySupervisor) return json(403, { error: "FORBIDDEN", message: "Merging a red build anyway is the operator's decision: escalate it" });
@@ -708,8 +800,12 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const id = decodeURIComponent(taskAction[1]!);
       if (taskAction[2] === "revert") {
         const task = await operator.tasks.get(id);
-        const reverted = await operator.revertTask({ taskId: id, project: task.merged ? (await leadBranch(p, task).catch(() => null))?.project ?? p.projectDir : p.projectDir });
-        await acted(id, `reverted the merge of ${id}`);
+        // the service first (it refuses a second revert itself); skipped only when it is back and its contract is not
+        const contractLeft = !!task.contract?.merged && !task.contract.merged.already && !task.contract.merged.reverted;
+        let reverted = task.merged?.reverted && contractLeft ? task : await operator.revertTask({ taskId: id, project: task.merged ? (await leadBranch(p, task).catch(() => null))?.project ?? p.projectDir : p.projectDir });
+        // the contract goes back with the service: a service reverted on a contract that stays would be the odd one out
+        if (reverted.contract?.merged && !reverted.contract.merged.already && !reverted.contract.merged.reverted) reverted = await operator.revertContract({ taskId: id });
+        await acted(id, `reverted the merge of ${id}${reverted.contract?.merged?.reverted ? " and of its contract" : ""}`);
         return json(200, { task: reverted });
       }
       if (taskAction[2] === "review") {
@@ -815,6 +911,40 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
       });
       return json(201, { proposal: await store.decide(id, { status: "accepted", taskId: task.id, network: target }), task: { id: task.id, network: tilde(target), here: target === p.networkDir } });
+    }
+    if (path === "/api/worktrees/clean-all") {
+      if (bySupervisor) return json(403, { error: "FORBIDDEN", message: "Removing the project's worktrees is the operator's decision" });
+      // every worktree of the project in one go: the agents' (as the card's button, only with nothing open), the contracts'
+      // of closed tasks (deleted ones too), the merge checks' left behind; what stays says why
+      const out: { kind: "agent" | "contract" | "merge-check"; id: string; path: string; removed: boolean; branchDeleted?: boolean; note?: string }[] = [];
+      const tasks = await operator.tasks.list();
+      const ids = pool.ids().filter((id) => pool.agentFolder(id)?.worktree);
+      const busy = pool.list().filter((r) => ids.includes(r.id) && r.session).map((r) => r.id);
+      const open = tasks.filter((t) => (t.status === "ACTIVE" || t.status === "BLOCKED") && t.agents.some((a) => ids.includes(a)));
+      if (ids.length && (busy.length || open.length)) {
+        for (const id of ids) out.push({ kind: "agent", id, path: pool.agentFolder(id)!.cwd ?? "", removed: false, note: busy.length ? `${busy.join(", ")} in a session now` : `open tasks need them: ${open.map((t) => t.id).join(", ")}` });
+      } else {
+        for (const r of await removeWorktrees(ids.map((id) => ({ id, ...pool.agentFolder(id)! })))) out.push({ kind: "agent", ...r });
+      }
+      const deleted = await deletedTasks(p.networkDir);
+      for (const t of [...tasks, ...deleted]) {
+        const c = t.contract;
+        if (!c || !existsSync(c.worktree)) continue;
+        if (t.status === "ACTIVE" || t.status === "BLOCKED") {
+          out.push({ kind: "contract", id: t.id, path: c.worktree, removed: false, note: `${t.id} is open` });
+          continue;
+        }
+        out.push({ kind: "contract", id: t.id, path: c.worktree, ...(await removeTaskWorktree(c.project, c.worktree, c.branch, !!c.merged && !c.merged.reverted)) });
+      }
+      const repos = new Set([p.projectDir, ...[...tasks, ...deleted].flatMap((t) => (t.contract ? [t.contract.project] : []))]);
+      for (const repo of repos) {
+        for (const wt of await mergeCheckWorktrees(repo)) {
+          const id = /-merge-(task-\d+)$/.exec(wt)![1]!;
+          const running = (await p.mergeChecker?.get(id))?.status === "running" || (await p.mergeChecker?.get(id, "contract"))?.status === "running";
+          out.push(running ? { kind: "merge-check", id, path: wt, removed: false, note: "its merge is being checked" } : { kind: "merge-check", id, path: wt, removed: await removeMergeCheckWorktree(repo, wt) });
+        }
+      }
+      return json(200, { result: out });
     }
     if (path === "/api/worktrees/clean") {
       // remove the agents' auto worktrees and merged branches: only while none of them works on anything

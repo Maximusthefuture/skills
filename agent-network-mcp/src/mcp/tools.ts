@@ -127,7 +127,7 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
           criteria: z.array(z.object({
             requirement: z.string().describe("A requirement of the task in a sentence (with OpenSpec: starting with the scenario's name)"),
             status: z.enum(["done", "partial", "not-done"]),
-            tests: z.array(z.string()).optional().describe("Tests that prove it, at the merged commit, each named whole: 'path#test name' (its method or it()/test() title); a file alone is flagged to the operator"),
+            tests: z.array(z.string()).optional().describe("Tests that prove it, at the merged commit, each named whole: 'path#test name' (its method or it()/test() title); a file alone is flagged to the operator; a file of the task's API contract: 'contract:path#operationId'"),
             where: z.array(z.string()).optional().describe("Where the code is: 'path' or 'path:line'"),
             note: z.string().optional().describe("Required for partial / not-done: what is missing"),
           })).describe("One per requirement of the task"),
@@ -145,8 +145,18 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
     {
       command: z.string().optional().describe("Build or test command, e.g. './mvnw -q test -Dtest=OrderServiceTest -Dsurefire.timeout=300' or 'npm test'; omit to run the task's verifyCommand"),
       timeoutMin: z.number().optional().describe("Stop it after this many minutes (default 20)"),
+      in: z.literal("contract").optional().describe("A task that changes the API contract: run it in the contract's worktree (default command: its Maven install)"),
     },
     async (a, signal) => swarm.build(a, signal),
+  );
+  tool(
+    "contract",
+    "A task that changes the API contract (swarm_context.contract): read it — its coordinates, the version so far, the changed files; a file of it; the diff against where the task started. Read-only: the lead edits the contract in its worktree.",
+    {
+      file: z.string().optional().describe("A path inside the contract's repository, e.g. 'src/main/resources/openapi/orders.yaml'"),
+      diff: z.boolean().optional().describe("true: the change so far against the contract's base"),
+    },
+    async (a) => swarm.contract(a),
   );
   tool(
     "spawn_agent",

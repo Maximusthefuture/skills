@@ -186,6 +186,45 @@ export async function removeWorktrees(agents: { id: string; cwd?: string; worktr
   return out;
 }
 
+/**
+ * A worktree that belongs to a task, not to an agent (a contract's): removed without --force — one with uncommitted
+ * changes stays — and its branch dropped only when `merged` (its work is in the repository's branch).
+ */
+export async function removeTaskWorktree(project: string, path: string, branch: string, merged: boolean): Promise<{ removed: boolean; branchDeleted: boolean; note?: string }> {
+  let removed = !existsSync(path);
+  let note: string | undefined;
+  if (!removed) {
+    const r = await git(project, ["worktree", "remove", path]);
+    removed = r.ok;
+    if (!r.ok) note = `worktree kept: ${r.err.trim().split("\n").pop()?.replace(/^fatal: /, "")}`;
+  }
+  let branchDeleted = false;
+  if (removed && (await git(project, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).ok) {
+    if (!merged) note = `branch ${branch} kept: its work is not merged`;
+    else {
+      let d = await git(project, ["branch", "-d", branch]);
+      if (!d.ok && (await contentMerged(project, branch))) d = await git(project, ["branch", "-D", branch]);
+      branchDeleted = d.ok;
+      if (!d.ok) note = `branch ${branch} kept: git does not see it merged (git branch -D ${branch} drops it)`;
+    }
+  }
+  await git(project, ["worktree", "prune"]);
+  return { removed, branchDeleted, ...(note ? { note } : {}) };
+}
+
+/** Worktrees a merge check left behind (<repo>-merge-task-NNN), e.g. when the page stopped in the middle of one. */
+export async function mergeCheckWorktrees(project: string): Promise<string[]> {
+  const list = await git(project, ["worktree", "list", "--porcelain"]);
+  return list.out.split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9)).filter((p) => /-merge-task-\d+$/.test(p));
+}
+
+/** A merge check's worktree: throwaway, so removed even with changes in it. */
+export async function removeMergeCheckWorktree(project: string, path: string): Promise<boolean> {
+  const r = await git(project, ["worktree", "remove", "--force", path]);
+  await git(project, ["worktree", "prune"]);
+  return r.ok;
+}
+
 export interface BranchDiff {
   /** Commits on the branch that the base lacks, newest first: "abc1234 subject" (at most MAX_COMMITS). */
   commits: string[];

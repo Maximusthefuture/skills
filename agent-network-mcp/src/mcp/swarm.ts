@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import { commitContract, contractDiff, contractPath, contractVersion, installCommand, isContractFile } from "../contract.js";
 import { checkAcceptance, missingEvidence, needsAcceptance, specScenarios, uncoveredScenarios } from "../acceptance.js";
 import { buildTools, DEFAULT_BUILD_TIMEOUT_MIN, parseBuildCommand, runBuild } from "../build.js";
 import { AppError, isAppError } from "../errors.js";
@@ -7,7 +8,7 @@ import { containsCommit, filesChangedSince, ownCommitsSince, readGitContext, res
 import { phaseEpoch } from "../handoff.js";
 import { WAKES } from "../park.js";
 import { changePath, readChange, validateChange, type ChangeInfo, type Exec } from "../openspec.js";
-import { normalizePath, ownersOf } from "../ownership.js";
+import { matches, normalizePath, ownersOf } from "../ownership.js";
 import { PLAN_READ_WHOLE, changeAccepted, inputViewed, planAround, planBrief, planOutline, planStatus, type PlanStage, type PlanStatus, type PlanVersion } from "../plan.js";
 import { changeHash, inputInWorkdir, readMarkdownTree } from "../specInput.js";
 import { checkCoverage, checkDepartures, checkDiagrams, renderChangePage, renderInputPage } from "../pageRender.js";
@@ -170,11 +171,12 @@ export interface SwarmOptions {
 const OPERATOR_POLL_MS = 30_000;
 
 /** The INTEGRATE hint's part about the acceptance table that goes with PASS. */
-function acceptanceHint(spec: string | null): string {
+function acceptanceHint(spec: string | null, contract?: string): string {
   return ` PASS carries acceptance — the operator accepts the task by it on a page the server builds (description, reviews, diff, deploy notes): ` +
     `acceptance: {criteria: [{requirement, status: "done"|"partial"|"not-done", tests: ["path#test name"], where: ["path"], note}], checks: [{step, command, expect}], risks: [{what, why}]} — ` +
     `one criterion per requirement of the task${spec ? ` (every scenario of ${spec}/specs: start the requirement with the scenario's name)` : ""}, the tests that prove it and the code, as they are at the merged commit (the server checks each one); ` +
     `name every test whole — its file, #, and its own name (the method, or the title of its it()/test()), e.g. "test/refunds.test.js#refuses a second refund": a file alone does not say which test proves the requirement, and the operator's page flags it; ` +
+    (contract ? `a file of the API contract is proof too, as contract:<path> (e.g. "contract:${contract}#operationId"), checked at the contract's branch — a requirement done in the contract is done, not partial; ` : "") +
     `a note on what is missing for partial / not-done; checks: 1-5 steps to see it work by hand (a curl, a command, a page) with what to expect; risks: what you are unsure of. Do not claim more than the tests show.`;
 }
 
@@ -273,10 +275,15 @@ export class Swarm {
    * Runs the build or tests in the agent's folder and answers with the outcome and what failed, not the whole output
    * (that goes to a log file the agent can grep). Default command: the task's verifyCommand.
    */
-  async build(input: { command?: string; timeoutMin?: number }, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  async build(input: { command?: string; timeoutMin?: number; in?: string }, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const task = await this.currentTask();
     const open = task && (task.status === "ACTIVE" || task.status === "BLOCKED") ? task : null;
-    const command = input.command?.trim() || open?.verifyCommand;
+    // in: "contract" — the contract's worktree of this task (its own build, recorded apart from the service's)
+    if (input.in !== undefined && input.in !== "contract") throw invalid('in: "contract" (the contract\'s worktree) or nothing (your folder)');
+    const inContract = input.in === "contract";
+    if (inContract && !open?.contract) throw invalid(`${open?.id ?? "This task"} has no contract project: build in your own folder`);
+    const cwd = inContract ? open!.contract!.worktree : this.workdir;
+    const command = input.command?.trim() || (inContract ? installCommand(cwd) : open?.verifyCommand);
     if (!command) {
       throw invalid("No command: the task has no verifyCommand. Pass the build or test command, e.g. build({command: \"./mvnw -q verify\"}) or build({command: \"npm test\"}).");
     }
@@ -284,12 +291,13 @@ export class Swarm {
     const minutes = input.timeoutMin ?? DEFAULT_BUILD_TIMEOUT_MIN;
     if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 180) throw invalid("timeoutMin must be 1..180");
     // what the build ran on: the integration accepts PASS only from a green run on the committed merged result
-    const tree = await workTreeState(this.workdir);
-    const run = await runBuild({ cwd: this.workdir, argv, timeoutMs: minutes * 60_000, ...(signal ? { signal } : {}) });
+    const tree = await workTreeState(cwd);
+    const run = await runBuild({ cwd, argv, timeoutMs: minutes * 60_000, ...(signal ? { signal } : {}) });
     await this.service
       .recordBuild(open?.id ?? null, {
         command: argv.join(" "), ok: run.ok, exitCode: run.exitCode, timedOut: run.timedOut, durationMs: run.durationMs, logPath: run.logPath, ...(run.tests ? { tests: run.tests } : {}),
         ...(tree ? { head: tree.head, dirty: tree.dirty } : {}), ...(open ? { phase: open.phase, round: open.syncRound } : {}),
+        ...(inContract ? { in: "contract" as const } : {}),
       })
       .catch((e: Error) => this.log(`build event not recorded: ${e.message}`));
     return {
@@ -542,8 +550,10 @@ export class Swarm {
         }
         // in its own branch, what it changed is what its commits changed: ownership is checked on that, not on its list
         const changed = await this.changedInBranch(task);
-        const unlisted = changed?.filter((f) => !(input.filesChanged ?? []).includes(f)) ?? [];
-        const filesChanged = changed ? [...new Set([...(input.filesChanged ?? []), ...changed])] : input.filesChanged;
+        const listed = (input.filesChanged ?? []).filter((f) => !isContractFile(f)); // the contract's are committed below, in its repository
+        const unlisted = changed?.filter((f) => !listed.includes(f)) ?? [];
+        const filesChanged = changed ? [...new Set([...listed, ...changed])] : listed;
+        const contractCommit = await this.commitContractWork(task);
         const done = await this.service.completeImplementation({ taskId: task.id, summary: input.result, filesChanged, commits, tasksDone: input.tasksDone }).catch((e: unknown) => {
           if (isAppError(e) && e.code === "DEPENDENCY_NOT_READY") this.parkedOnDependency.add(`${task.id}:${task.syncRound}`); // wait for them, do not retry
           throw e;
@@ -551,6 +561,7 @@ export class Swarm {
         warnings = [
           ...(done.warnings ?? []), ...(unreported ? [unreported.note] : []), ...(checked ? [checked] : []), ...this.ignoredFields(extra),
           ...(unlisted.length ? [`Your commits change files you did not list; they count as changed: ${unlisted.join(", ")}`] : []),
+          ...(contractCommit ? [`Your contract changes are committed in ${task.contract!.worktree} (${contractCommit.slice(0, 7)})`] : []),
         ];
         action = "IMPLEMENTATION_COMPLETED";
         break;
@@ -575,6 +586,7 @@ export class Swarm {
         warnings = [...(checked ? [checked] : []), ...this.ignoredFields(extra)];
         const merged = await this.realCommits(task, input.commits);
         if (input.status === "PASS") await this.requireJobsMerged(task, merged?.[0]);
+        if (input.status === "PASS") await this.commitContractWork(task);
         const withAcceptance = input.status === "PASS" && needsAcceptance(task);
         if (input.acceptance !== undefined && !withAcceptance) warnings.push(...this.ignoredFields(["acceptance"]));
         const res = await this.service.submitIntegration({
@@ -591,6 +603,39 @@ export class Swarm {
     const after = this.reply(await this.contextNow());
     const phaseChanged = (after.task as { phase: string } | null)?.phase !== task.phase ? { from: task.phase, to: (after.task as { phase: string }).phase } : undefined;
     return { ...after, ok: true, action, ...(phaseChanged ? { phaseChanged } : {}), ...(warnings?.length ? { warnings } : {}), ...(followUpsCreated ? { followUpsCreated } : {}) } as SwarmContext;
+  }
+
+  /**
+   * The lead's changes to the contract, committed by the server in the contract's worktree: only files the agreement gives
+   * it (contract:<path>). Another agent's complete() leaves the worktree alone (the lead may be in the middle of it).
+   */
+  private async commitContractWork(task: Task): Promise<string | null> {
+    if (!task.contract || this.service.phases.integrator(task) !== this.me) return null;
+    const mine = (await this.service.agreements.find(task.id))?.assignments.find((a) => a.agentId === this.me);
+    const owned = (mine?.files ?? []).filter(isContractFile).map(contractPath);
+    return commitContract(task.contract.worktree, owned, `${task.id}: ${task.title} (contract)`.slice(0, 200), matches);
+  }
+
+  /** The API contract of the task, read-only for every agent: its coordinates, the change so far, a file, the diff. */
+  async contract(input: { file?: string; diff?: boolean }): Promise<Record<string, unknown>> {
+    await this.begin(false);
+    const task = await this.requireTask();
+    const c = task.contract;
+    if (!c) throw invalid(`${task.id} changes no API contract: the operator names its project on the task card when the API must change`);
+    const change = await contractDiff(c.worktree, c.base);
+    const out: Record<string, unknown> = {
+      project: c.project, worktree: c.worktree, branch: c.branch, specs: c.specs, artifact: `${c.groupId}:${c.artifactId}`,
+      baseVersion: c.version, version: (await contractVersion(c.worktree)) ?? null, changedFiles: change.files, changedBy: this.service.phases.integrator(task),
+    };
+    if (input.file) {
+      const rel = normalizePath(input.file.replace(/^contract:/, ""));
+      if (isAbsolute(rel) || rel.split("/").includes("..")) throw invalid("file: a path inside the contract's repository, e.g. " + (c.specs[0] ?? "src/main/resources/openapi/api.yaml"));
+      const text = await readFile(join(c.worktree, rel), "utf8").catch(() => null);
+      if (text === null) throw invalid(`No ${rel} in the contract's worktree`);
+      out.file = { path: rel, text: text.slice(0, 60_000), truncated: text.length > 60_000 };
+    }
+    if (input.diff) out.diff = { text: change.diff, truncated: change.truncated };
+    return out;
   }
 
   /**
@@ -612,7 +657,9 @@ export class Swarm {
     }
     const commit = task.git ? merged ?? (await readGitContext(this.workdir).catch(() => null))?.commit : undefined;
     if (commit) {
-      const missing = await missingEvidence(this.workdir, commit, acceptance);
+      // the contract's files are proof too ("contract:<path>"), at its branch as the server committed it
+      const contract = task.contract ? { cwd: task.contract.worktree, commit: (await readGitContext(task.contract.worktree).catch(() => null))?.commit ?? task.contract.branch } : undefined;
+      const missing = await missingEvidence(this.workdir, commit, acceptance, contract);
       if (missing.length) {
         throw new AppError("ACCEPTANCE_EVIDENCE", `acceptance names proof the merged commit does not have: ${missing.join("; ")}. Name only tests and files that are in it (path#test name for a test), as git shows them, then complete again.`, { missing });
       }
@@ -1185,6 +1232,7 @@ export class Swarm {
       agent,
       ...(myAssignment ? { assignment: { responsibility: myAssignment.responsibility } } : {}),
       ...this.openspecView(snap, full),
+      ...(task.contract ? { contract: { project: task.contract.project, specs: task.contract.specs, artifact: `${task.contract.groupId}:${task.contract.artifactId}`, baseVersion: task.contract.version, changedBy: this.service.phases.integrator(task), ...(this.service.phases.integrator(task) === this.me ? { worktree: task.contract.worktree } : {}) } } : {}),
       ...(snap.spawnable ? { spawnable: snap.spawnable } : {}),
       ...(snap.delegable ? { delegable: snap.delegable } : {}),
       ...(snap.jobs ? { jobs: snap.jobs } : {}),
@@ -1263,6 +1311,41 @@ export class Swarm {
 
   /** The decision table: phase + my own progress -> nextAction / allowedActions. */
   decide(s: Snapshot): Decision {
+    const d = this.decideBase(s);
+    const extra = this.contractHint(s.task, d);
+    return extra ? { ...d, hint: `${d.hint} ${extra}` } : d;
+  }
+
+  /** What the step means for the API contract: the lead changes it (and its version), the others read and review it. */
+  private contractHint(task: Task, d: Decision): string {
+    const lead = this.service.phases.integrator(task) === this.me;
+    const c = task.contract;
+    if (!c) {
+      return d.nextAction === "propose" && lead && !task.proposes && !task.openspec
+        ? "If the design shows the API contract (an OpenAPI spec kept in another repository) must change, ask the operator to name that project — send_message({to: \"operator\", message}); it is set on the task card — and wait() for it before you propose; never hand-edit generated API classes."
+        : "";
+    }
+    const artifact = `${c.groupId}:${c.artifactId}`;
+    switch (d.nextAction) {
+      case "propose":
+        return lead
+          ? `The task changes the API contract too (swarm_context.contract: ${artifact} ${c.version}, ${c.project}): give yourself its files as contract:<path> — the spec (${c.specs.join(", ")}) and contract:pom.xml for its version; only the lead changes the contract. Read it with contract({file}).`
+          : "";
+      case "implement":
+      case "fix":
+        return lead
+          ? `The contract: edit it in ${c.worktree} (your session may write there). Bump <version> in its pom.xml from ${c.version} to the next release (breaking: major; new operations or fields: minor), install it — build({command: "${installCommand(c.worktree)}", in: "contract"}) — and move the service's dependency on ${artifact} to that version before you build the service. complete() commits your contract changes; contract({diff: true}) shows them.`
+          : `The lead changes the API contract (${artifact}); read it with contract({file}) or contract({diff: true}). Your build needs the version the lead installs into ~/.m2: if it is not there yet, ask the lead (send_message).`;
+      case "sync":
+        return "The API contract changed too: review it with contract({diff: true}) — the spec, and a version bump that fits it (breaking: major, additions: minor) — and that the service depends on that version.";
+      case "integrate":
+        return lead ? `The contract: complete() commits what is left in ${c.worktree}; its build — build({command: "${installCommand(c.worktree)}", in: "contract"}) — must be green and the service on its new version. The operator merges the contract first, then the service.` : "";
+      default:
+        return "";
+    }
+  }
+
+  private decideBase(s: Snapshot): Decision {
     if (s.handoff) {
       return {
         nextAction: "done",
@@ -1648,7 +1731,7 @@ export class Swarm {
             (spec
               ? `tick [x] in ${spec}/tasks.md the tasks reported done ('openspec.tasks') and run \`openspec validate ${task.openspec!.change} --strict\` if the openspec CLI is installed, then complete({status: "PASS", result}) naming the tasks left open, `
               : `then complete({status: "PASS", result}) `) +
-            `or complete({status: "NEEDS_FIX", result, findings}) with an ERROR naming the agent.` + followUps + (needsAcceptance(task) ? acceptanceHint(spec) : ""),
+            `or complete({status: "NEEDS_FIX", result, findings}) with an ERROR naming the agent.` + followUps + (needsAcceptance(task) ? acceptanceHint(spec, task.contract?.specs[0]) : ""),
           [lead],
         );
       }

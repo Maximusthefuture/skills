@@ -40,6 +40,10 @@ export interface MergeCheck {
   error?: string;
   /** Started by «Принять и влить»: a green check also records the operator's acceptance. */
   accept?: true;
+  /** The task's API contract (contract.ts), merged into its own repository before the service. */
+  scope?: "contract";
+  /** The build it ran: the task's verifyCommand, or the contract project's own. */
+  command?: string;
   /** The follow-up task the operator handed it to. */
   followUp?: string;
   /** green: the commit now in the project. */
@@ -59,7 +63,7 @@ export function defaultMergeSetup(project: string): string[] {
   return [];
 }
 
-export const mergeRef = (taskId: string): string => `refs/agent-network/merge/${taskId}`;
+export const mergeRef = (taskId: string, scope?: "contract"): string => `refs/agent-network/merge/${taskId}${scope ? `-${scope}` : ""}`;
 
 export interface MergeCheckerOptions {
   /** Setup commands (build tools only, no shell) run in the worktree before the build; default: by the lockfile. */
@@ -69,27 +73,29 @@ export interface MergeCheckerOptions {
    * Records the landed merge on the task (the operator's mergeTask), calling `move` under the task's lock to move the
    * project's branch. Separate from the checker so it never writes task.json itself.
    */
-  land: (task: Task, input: { project: string; branch: string; strategy: MergeStrategy; verified: NonNullable<MergeCheck["build"]>; accept: boolean }, move: () => Promise<MergeResult>) => Promise<void>;
+  land: (task: Task, input: { project: string; branch: string; strategy: MergeStrategy; verified: NonNullable<MergeCheck["build"]>; accept: boolean; scope?: "contract" }, move: () => Promise<MergeResult>) => Promise<void>;
+  /** After a green check is over (its worktree gone): the contract's merge goes on with the service's. */
+  after?: (check: MergeCheck) => Promise<void>;
 }
 
 export class MergeChecker {
-  private running: { taskId: string; done: Promise<void> } | null = null;
+  private running: { taskId: string; scope?: "contract"; done: Promise<void> } | null = null;
 
   constructor(private readonly fs: FileStore, private readonly opts: MergeCheckerOptions) {}
 
-  private path(taskId: string): string[] {
-    return ["tasks", taskId, "merge-check.json"];
+  private path(taskId: string, scope?: "contract"): string[] {
+    return ["tasks", taskId, `merge-check${scope ? `-${scope}` : ""}.json`];
   }
 
-  async get(taskId: string): Promise<MergeCheck | null> {
-    const c = await this.fs.readJson<MergeCheck>(this.path(taskId));
+  async get(taskId: string, scope?: "contract"): Promise<MergeCheck | null> {
+    const c = await this.fs.readJson<MergeCheck>(this.path(taskId, scope));
     // a check this process is not running was cut off by a restart of the page
-    if (c?.status === "running" && this.running?.taskId !== taskId) return { ...c, status: "interrupted" };
+    if (c?.status === "running" && (this.running?.taskId !== taskId || this.running.scope !== scope)) return { ...c, status: "interrupted" };
     return c;
   }
 
   private async save(check: MergeCheck): Promise<MergeCheck> {
-    await this.fs.writeJson(this.path(check.taskId), check);
+    await this.fs.writeJson(this.path(check.taskId, check.scope), check);
     return check;
   }
 
@@ -102,15 +108,19 @@ export class MergeChecker {
    * Starts the check of a DONE task's merge and returns at once: running, or conflict when the merge cannot be built.
    * Its work already in the project: null (there is nothing to check; the caller records it as merged).
    */
-  async start(task: Task, input: { project: string; branch: string; strategy: MergeStrategy; accept?: boolean }): Promise<MergeCheck | null> {
-    if (!task.verifyCommand) throw new AppError("INVALID_INPUT", `${task.id} has no verifyCommand: there is nothing to check the merge with`);
+  async start(task: Task, input: { project: string; branch: string; strategy: MergeStrategy; accept?: boolean; verifyCommand?: string; scope?: "contract" }): Promise<MergeCheck | null> {
+    const command = input.verifyCommand ?? task.verifyCommand;
+    if (!command) throw new AppError("INVALID_INPUT", `${task.id} has no verifyCommand: there is nothing to check the merge with`);
     if (this.running) {
       // a check whose result is written may still be cleaning up its worktree: a new one waits for that, not the operator
-      const last = await this.fs.readJson<MergeCheck>(this.path(this.running.taskId));
+      const last = await this.fs.readJson<MergeCheck>(this.path(this.running.taskId, this.running.scope));
       if (last?.status === "running") throw new AppError("MERGE_CHECK_RUNNING", `The merge of ${this.running.taskId} is being checked; one check at a time — wait for it`);
       await this.running.done;
     }
-    const base: Omit<MergeCheck, "status" | "base" | "into"> = { taskId: task.id, branch: input.branch, strategy: input.strategy, startedAt: new Date().toISOString(), ...(input.accept ? { accept: true as const } : {}) };
+    const base: Omit<MergeCheck, "status" | "base" | "into"> = {
+      taskId: task.id, branch: input.branch, strategy: input.strategy, startedAt: new Date().toISOString(), command,
+      ...(input.accept ? { accept: true as const } : {}), ...(input.scope ? { scope: input.scope } : {}),
+    };
     let pre: Awaited<ReturnType<typeof mergePreflight>>;
     try {
       pre = await mergePreflight(input.project, input.branch);
@@ -124,14 +134,20 @@ export class MergeChecker {
     }
     if (pre.already) return null;
     const check = await this.save({ ...base, status: "running", step: "merge", base: pre.head, into: pre.into });
-    const done = this.run(task, input, check).finally(() => {
-      this.running = null;
-    });
-    this.running = { taskId: task.id, done };
+    const done = this.run(task, { ...input, command }, check)
+      .finally(() => {
+        this.running = null;
+      })
+      .then(async () => {
+        const last = await this.fs.readJson<MergeCheck>(this.path(task.id, input.scope));
+        if (last?.status === "green") await this.opts.after?.(last);
+      })
+      .catch(() => undefined);
+    this.running = { taskId: task.id, ...(input.scope ? { scope: input.scope } : {}), done };
     return check;
   }
 
-  private async run(task: Task, input: { project: string; branch: string; strategy: MergeStrategy }, check: MergeCheck): Promise<void> {
+  private async run(task: Task, input: { project: string; branch: string; strategy: MergeStrategy; command: string; scope?: "contract" }, check: MergeCheck): Promise<void> {
     const dir = `${input.project}-merge-${task.id}`;
     const finish = (patch: Partial<MergeCheck>) => this.save({ ...check, ...patch, step: undefined, finishedAt: new Date().toISOString() } as MergeCheck);
     try {
@@ -140,7 +156,7 @@ export class MergeChecker {
       if (!add.ok) throw new AppError("INVALID_INPUT", `Cannot create the worktree ${dir}: ${add.err.trim().slice(0, 300)}`);
       await commitMerge(dir, input.branch, mergeMessage(task, input.branch, input.strategy), input.strategy);
       check.candidate = (await git(dir, ["rev-parse", "HEAD"])).out.trim();
-      await git(input.project, ["update-ref", mergeRef(task.id), check.candidate]);
+      await git(input.project, ["update-ref", mergeRef(task.id, input.scope), check.candidate]);
 
       const timeoutMs = this.opts.timeoutMs ?? DEFAULT_BUILD_TIMEOUT_MIN * 60_000;
       check.setup = [];
@@ -155,8 +171,8 @@ export class MergeChecker {
       }
 
       await this.save({ ...check, step: "build" });
-      const run = await runBuild({ cwd: dir, argv: parseBuildCommand(task.verifyCommand!, buildTools()).argv, timeoutMs });
-      check.build = await this.keepLog(task.id, dir, task.verifyCommand!, run);
+      const run = await runBuild({ cwd: dir, argv: parseBuildCommand(input.command, buildTools()).argv, timeoutMs });
+      check.build = await this.keepLog(task.id, dir, input.command, run, input.scope);
       if (!run.ok) {
         await finish({ status: "red" });
         return;
@@ -164,7 +180,7 @@ export class MergeChecker {
 
       await this.save({ ...check, step: "land" });
       try {
-        await this.opts.land(task, { project: input.project, branch: input.branch, strategy: input.strategy, verified: check.build, accept: !!check.accept }, () => fastForward(input.project, check));
+        await this.opts.land(task, { project: input.project, branch: input.branch, strategy: input.strategy, verified: check.build, accept: !!check.accept, ...(input.scope ? { scope: input.scope } : {}) }, () => fastForward(input.project, check));
       } catch (e) {
         if (isAppError(e) && e.code === "MERGE_STALE") {
           await finish({ status: "stale", error: e.message });
@@ -181,12 +197,13 @@ export class MergeChecker {
   }
 
   /** The build's log goes with the task: the worktree it was written in is removed. */
-  private async keepLog(taskId: string, dir: string, command: string, run: BuildRun): Promise<NonNullable<MergeCheck["build"]>> {
+  private async keepLog(taskId: string, dir: string, command: string, run: BuildRun, scope?: "contract"): Promise<NonNullable<MergeCheck["build"]>> {
     const into = join(this.fs.root, "tasks", taskId, "merge-check");
     await mkdir(into, { recursive: true });
-    const log = join(into, "build.log");
+    const name = `build${scope ? `-${scope}` : ""}.log`;
+    const log = join(into, name);
     const kept = await copyFile(join(dir, run.logPath), log).then(() => true, () => false);
-    const keptAt = `tasks/${taskId}/merge-check/build.log`;
+    const keptAt = `tasks/${taskId}/merge-check/${name}`;
     // the summary names the log where the build wrote it: in the worktree that is about to go
     const summary = run.summary.split(run.logPath).join(kept ? `.agent-network/${keptAt} (in the project)` : "(not kept)");
     return {
@@ -196,8 +213,8 @@ export class MergeChecker {
   }
 
   /** The operator handed a red or conflicting merge to a follow-up task. */
-  async handedTo(taskId: string, followUp: string): Promise<void> {
-    const c = await this.fs.readJson<MergeCheck>(this.path(taskId));
+  async handedTo(taskId: string, followUp: string, scope?: "contract"): Promise<void> {
+    const c = await this.fs.readJson<MergeCheck>(this.path(taskId, scope));
     if (c) await this.save({ ...c, followUp });
   }
 }

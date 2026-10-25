@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { splitRef } from "./acceptance.js";
+import { bumpKind, diffSpec, type ApiChange, type BumpKind } from "./apiDiff.js";
+import { dependencyVersion, m2Origin, nextVersion, pomCoords, versionAtLeast } from "./contract.js";
 import { deployNotes, type DeployNotes } from "./deploy/notes.js";
 import type { DeployEnvironment } from "./deploy/settings.js";
 import type { MergeCheck } from "./mergeCheck.js";
@@ -51,11 +53,72 @@ export interface AcceptanceData {
   notesError?: string;
   followUps: { id: string; title: string }[];
   dropped: { agent: string; title: string; note?: string }[];
+  /** The task changed the API contract too: what changed in the spec, the versions, whether the version is released. */
+  contract?: ContractView | null;
   /** «Влить в проект» with a check: how the merge on the project's HEAD built (mergeCheck.ts). */
   mergeCheck?: Pick<MergeCheck, "status" | "into" | "build" | "files" | "error" | "followUp"> | null;
 }
 
 export interface Alert { level: "bad" | "warn"; text: string }
+
+export interface ContractView {
+  project: string;
+  artifact: string;
+  fromVersion: string;
+  toVersion: string | null;
+  kind: BumpKind;
+  changes: ApiChange[];
+  files: string[];
+  /** The version the service's pom asks for, at the task's head. */
+  dependency: { version: string; property?: string } | null;
+  /** Where ~/.m2 has the new version from: remote (released), local (installed here only), missing. */
+  origin: "remote" | "local" | "missing" | null;
+  build: { command: string; ok: boolean } | null;
+  merged?: { into: string; commit: string; verified?: { command: string }; unverified?: true; reverted?: unknown };
+}
+
+const gitOut = (cwd: string, args: string[]): Promise<string | null> =>
+  new Promise((done) => execFile("git", args, { cwd, timeout: 15_000, maxBuffer: 16 * 1024 * 1024 }, (e, out) => done(e ? null : String(out))));
+
+/** The contract's change in a task: its spec files' diff by kind, the pom versions, the service's dependency and ~/.m2. */
+async function contractView(task: Task, fs: FileStore, range: AcceptanceRange | null): Promise<ContractView> {
+  const c = task.contract!;
+  const head = c.merged?.commit ?? c.branch;
+  const files = ((await gitOut(c.project, ["diff", "--name-only", c.base, head])) ?? "").split("\n").filter(Boolean);
+  const changes: ApiChange[] = [];
+  for (const f of files.filter((x) => /\.ya?ml$/.test(x))) {
+    changes.push(...diffSpec(f, await gitOut(c.project, ["show", `${c.base}:${f}`]), await gitOut(c.project, ["show", `${head}:${f}`])));
+  }
+  const toVersion = pomCoords((await gitOut(c.project, ["show", `${head}:pom.xml`])) ?? "").version ?? null;
+  const servicePom = range ? await gitOut(range.project, ["show", `${range.head}:pom.xml`]) : null;
+  const build = await fs.readJson<{ command: string; ok: boolean }>(["tasks", task.id, "builds", `${task.agents[0]}-contract.json`]);
+  return {
+    project: c.project, artifact: `${c.groupId}:${c.artifactId}`, fromVersion: c.version, toVersion, kind: bumpKind(changes), changes, files,
+    dependency: servicePom ? dependencyVersion(servicePom, c.groupId, c.artifactId) : null,
+    origin: toVersion ? await m2Origin(c.groupId, c.artifactId, toVersion) : null,
+    build: build ? { command: build.command, ok: build.ok } : null,
+    ...(c.merged ? { merged: c.merged } : {}),
+  };
+}
+
+/** What a contract change needs from a human: the version against the change, the service on it, the release. */
+function contractAlerts(v: ContractView): Alert[] {
+  const out: Alert[] = [];
+  const to = v.toVersion;
+  const breaking = v.changes.filter((c) => c.kind === "breaking");
+  if (breaking.length) out.push({ level: "warn", text: `Ломающие изменения API (${breaking.length}): ${breaking.slice(0, 3).map((c) => `${c.where} — ${c.what}`).join("; ")}${breaking.length > 3 ? " …" : ""}` });
+  if (v.kind !== "none" && to === v.fromVersion) out.push({ level: "bad", text: `Спецификация изменилась, а версия контракта не поднята (${v.fromVersion})` });
+  else if (to && v.kind !== "none" && v.kind !== "patch") {
+    const need = nextVersion(v.fromVersion, v.kind);
+    if (need && versionAtLeast(to, need) === false) out.push({ level: "bad", text: `${v.kind === "breaking" ? "Ломающие изменения" : "Новые операции или поля"}, а версия ${v.fromVersion} → ${to}: нужна хотя бы ${need}` });
+  }
+  if (to && v.dependency?.version !== to) out.push({ level: "bad", text: `Сервис зависит от ${v.artifact} ${v.dependency?.version ?? "(зависимость не найдена в pom.xml)"}, а контракт теперь ${to}` });
+  if (to && v.origin === "local") out.push({ level: "warn", text: `Контракт ${to} есть только локально в ~/.m2, в Nexus его нет: выпустите контракт до пуша сервиса` });
+  if (to && v.origin === "missing") out.push({ level: "bad", text: `Версии ${to} нет в ~/.m2: сервис с ней не собирался` });
+  if (!v.build) out.push({ level: "warn", text: "Сборка контракта (install) не запускалась" });
+  else if (!v.build.ok) out.push({ level: "bad", text: `Последняя сборка контракта красная: ${v.build.command}` });
+  return out;
+}
 
 const TEST_FILE = /(^|\/)(src\/test|tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|Tests?\.(java|kt)$|_test\.(go|py)$|(^|\/)test_[^/]+\.py$/;
 export const isTestFile = (path: string): boolean => TEST_FILE.test(path);
@@ -120,6 +183,7 @@ export async function collectAcceptance(fs: FileStore, taskId: string, range: Ac
     files, undeclared: declared.length === 0, notes, ...(notesError ? { notesError } : {}),
     followUps, dropped,
     mergeCheck: await fs.readJson<MergeCheck>(["tasks", task.id, "merge-check.json"]),
+    contract: task.contract ? await contractView(task, fs, range).catch(() => null) : null,
   };
 }
 
@@ -132,6 +196,7 @@ export function acceptanceAlerts(d: AcceptanceData): Alert[] {
     else if (!c.tests.length) out.push({ level: "warn", text: `Без теста: ${c.requirement}` });
     else if (fileOnly(c)) out.push({ level: "warn", text: `Тест назван только файлом, без имени: ${c.requirement} (${c.tests.join(", ")}) — какой тест это доказывает, не видно` });
   }
+  if (d.contract) out.push(...contractAlerts(d.contract));
   const mc = d.mergeCheck;
   if (d.task.merged?.unverified) out.push({ level: "warn", text: `Влито без проверки сборки на результате вливания${mc?.status === "red" ? " — она была красной" : ""}` });
   else if (!d.task.merged && mc?.status === "red") out.push({ level: "bad", text: `Сборка после вливания в ${mc.into} красная${mc.build?.tests ? `: упало ${mc.build.tests.failed} из ${mc.build.tests.total}` : ""}${mc.followUp ? ` — отдано в ${mc.followUp}` : ""}` });
@@ -166,6 +231,17 @@ ul.alerts{list-style:none;padding:0}ul.alerts li{padding:6px 10px;border-radius:
 .facts{display:flex;flex-wrap:wrap;gap:6px 18px;margin:8px 0}.facts span{white-space:nowrap}
 td{overflow-wrap:anywhere}td.num{text-align:right;font-family:ui-monospace,monospace;white-space:nowrap}
 </style>`;
+
+const KIND_RU: Record<ApiChange["kind"], string> = { breaking: "ломающее", additive: "добавление", changed: "правка" };
+const BUMP_RU: Record<BumpKind, string> = { breaking: "major", additive: "minor", patch: "patch", none: "не нужен" };
+
+function renderContract(v: ContractView): string {
+  const head = `<p><code>${esc(v.artifact)}</code> ${esc(v.fromVersion)} → <b>${esc(v.toVersion ?? "?")}</b> · нужен подъём: ${BUMP_RU[v.kind]} · в ~/.m2: ${v.origin === "remote" ? "из Nexus" : v.origin === "local" ? "только локально" : v.origin === "missing" ? "нет" : "—"} · сервис зависит от ${esc(v.dependency?.version ?? "—")}${v.merged ? ` · контракт влит в ${esc(v.merged.into)} ${esc(v.merged.commit.slice(0, 7))}` : ""}</p><p class="muted">репозиторий ${esc(v.project)} · файлы: ${v.files.map((f) => `<code>${esc(f)}</code>`).join(", ") || "—"}</p>`;
+  const rows = v.changes.length
+    ? `<table><tr><th>Где</th><th>Что</th><th>Вид</th></tr>${[...v.changes].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "breaking" ? -1 : b.kind === "breaking" ? 1 : a.kind === "additive" ? -1 : 1)).map((c) => `<tr class="${c.kind === "breaking" ? "bad" : c.kind === "additive" ? "ok" : ""}"><td><code>${esc(c.where)}</code></td><td>${esc(c.what)}</td><td>${KIND_RU[c.kind]}</td></tr>`).join("")}</table>`
+    : `<p class="muted">Спецификация не менялась.</p>`;
+  return head + rows;
+}
 
 /** The header's word on the build of the merge itself, not of the lead's branch. */
 function mergeFact(d: AcceptanceData): string {
@@ -253,6 +329,7 @@ ${section("Требования → доказательства", criteria)}
 ${section("Как проверить руками", checks)}
 ${section("Что просили", `${markdown(t.description, 2)}<h3>Вопросы и ответы</h3>${asked}`)}
 ${section("Ревью", reviews + comments)}
+${d.contract ? section("Изменения API", renderContract(d.contract)) : ""}
 ${section("Что изменилось", changed)}
 ${section("Для раскатки", deploy)}
 ${section("Риски и что осталось", rest)}`,

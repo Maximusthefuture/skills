@@ -250,6 +250,8 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
         <label class="inline" title="Lead пишет план HTML-страницей: кто что делает, файлы, контракты, риски, вопросы к вам. Вы оставляете замечания к блокам, правите текст прямо в плане и утверждаете; соглашение и код — только после утверждения"><input type="checkbox" name="planReview"> План на утверждение: lead пишет план страницей, вы правите и утверждаете его</label>
         </details></div>
         <div class="prep"><label class="inline" title="Lead может добавить агентов из шаблонов spawn (runners.json), если решит, что работы больше, чем людей в команде. Каждый добавленный агент — отдельная сессия, примерно как ещё один участник по стоимости. Без галочки lead делит работу между выбранными агентами."><input type="checkbox" name="allowSpawn"> Lead может добавлять агентов</label></div>
+        <div class="prep"><label>Проект контракта OpenAPI <span class="muted">(если задача меняет API: абсолютный путь к Maven-проекту со спекой; lead поменяет её в своём worktree и поднимет версию)</span>
+          <input name="contract" placeholder="/Users/me/projects/orders-api" autocomplete="off"></label><div class="muted small" id="contractnote"></div></div>
         <div class="checks"><button type="submit">Создать задачу</button><span class="note" id="formnote"></span></div>
       </form>
       <div class="panel" id="schedules" hidden></div>
@@ -307,6 +309,8 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
       <h2>Скиллы агентов</h2><div class="lead">Какие скиллы агент может загружать. Выключенный скилл runner называет агенту в промпте, а хук pre-skill отклоняет его загрузку (Skill или чтение SKILL.md). Действует со следующей сессии и пишется в runners.json (disabledSkills). «без: change» и «без: код» — скилл выключен только в задачах этого типа (disabledSkillsByTask в runners.json). Claude Code выключенных скиллов не видит вовсе: их описания не тратят токены.</div><div id="skills"></div>
       <h2>Роли проекта</h2><div class="lead">Что делают агенты, которых lead добавляет сам: роль по имени из библиотеки (.agent-network/roles) или своя, написанная под задачу. На чём агент работает (CLI, модель, права), решает шаблон в runners.json.</div><div class="grid" id="roles"></div>
       <h2>Агенты в сети</h2><div class="grid" id="agents"></div>
+      <h2>Worktree проекта</h2><div class="lead">Убрать разом все worktree проекта: агентов (если у них нет открытых задач), контрактов API закрытых и удалённых задач, брошенные проверками вливания. Без --force: папка с незакоммиченными правками и невлитая ветка остаются, ответ скажет почему. Нужные worktree создадутся заново перед следующей задачей.</div>
+      <div class="checks"><button type="button" class="ghost" id="wt-clean">Убрать все worktree проекта</button></div><pre class="log" id="wt-out" hidden></pre>
     </section>
 
     <section data-panel="projects" hidden>
@@ -655,7 +659,9 @@ function deployForm(r){const f=depForm;const box=el("div","card");const row=el("
   const go2=el("button","",f.busy?"Отправляю…":"Отправить в Bitbucket и раскатить на "+f.env);go2.type="button";go2.disabled=!f.notes||!!f.busy;
   go2.onclick=async()=>{const miss=(f.notes.missing||[]).filter(m=>m.env===f.env);
     if(!await ask("Отправить "+r.id+" в Bitbucket (remote "+DEP.settings.bitbucket.remote+") и раскатить на "+f.env+"?"+(miss.length?" В "+f.env+" не задано: "+miss.map(m=>m.envVar).join(", ")+" — сервис может не стартовать.":"")))return;
-    f.busy=true;renderDeployReady();try{const res=await post("/api/tasks/"+encodeURIComponent(r.id)+"/deploy",{env:f.env});depOpen.add(res.run.id);depForm=null;DEP=await getJSON(q("/api/deploys"));renderDeploy()}catch(e){f.busy=false;f.err=e.message;renderDeployReady()}};
+    f.busy=true;renderDeployReady();try{let res;try{res=await post("/api/tasks/"+encodeURIComponent(r.id)+"/deploy",{env:f.env})}catch(e){
+      // the service depends on a contract version that is not released yet: only on the operator's explicit yes
+      if(!/контракт|contract/i.test(e.message)||!await ask(e.message+"\n\nВсё равно отправить сервис?"))throw e;res=await post("/api/tasks/"+encodeURIComponent(r.id)+"/deploy",{env:f.env,contractUnreleased:true})}depOpen.add(res.run.id);depForm=null;DEP=await getJSON(q("/api/deploys"));renderDeploy()}catch(e){f.busy=false;f.err=e.message;renderDeployReady()}};
   box.append(go2);return box}
 function renderDeployRuns(){const box=$("druns");if(!box)return;const sig=JSON.stringify([DEP.runs,[...depOpen],DEP.control]);if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.replaceChildren();
   const running=DEP.runs.filter(r=>r.status==="running").length;const c=$("c-deploy");if(c)c.textContent=running?String(running):"";
@@ -760,7 +766,13 @@ async function checkSpecFolders(){const box=$("specfolders");const f=$("newtask"
       try{const r=await post("/api/openspec/sync",{change,agents:j.missing.map(m=>m.id)});const bad=r.result.filter(x=>!x.ok);
         if(bad.length){box.replaceChildren(...bad.map(x=>el("div","",x.id+": "+x.text)))}else await checkSpecFolders()}catch(e){box.replaceChildren(e.message)}};
     box.append(b)}catch(e){box.hidden=true}}
-$("others").addEventListener("change",checkSpecFolders);$("lead").addEventListener("change",()=>setTimeout(checkSpecFolders,0));
+$("newtask").elements.namedItem("contract").addEventListener("change",checkContract);
+$("wt-clean").onclick=async()=>{const out=$("wt-out");if(!S||!S.control){out.hidden=false;out.textContent="Страница только для просмотра: запустите ui с runner'ами.";return}
+  if(!await ask("Убрать все worktree проекта: агентов, контрактов закрытых задач и брошенные проверками вливания? Невлитые ветки и папки с незакоммиченными правками останутся."))return;
+  const b=$("wt-clean");b.disabled=true;out.hidden=false;out.textContent="убираю…";
+  const KIND={agent:"агент",contract:"контракт","merge-check":"проверка вливания"};
+  try{const r=await post("/api/worktrees/clean-all",{});out.textContent=r.result.length?r.result.map(x=>(x.removed?"✓ ":"· ")+KIND[x.kind]+" "+x.id+": "+(x.removed?"убран":"оставлен")+(x.branchDeleted?", ветка удалена":"")+(x.note?" — "+x.note:"")+"\n   "+x.path).join("\n"):"Убирать нечего."}
+  catch(e){out.textContent=e.message}finally{b.disabled=false}};$("others").addEventListener("change",checkSpecFolders);$("lead").addEventListener("change",()=>setTimeout(checkSpecFolders,0));
 async function implementChange(name){const f=$("newtask");f.hidden=false;taskDefaults(f);await loadChanges();const sel=$("openspec");sel.value=name;sel.dispatchEvent(new Event("change"));
   f.elements.namedItem("title").value="";f.elements.namedItem("description").value="";f.scrollIntoView({behavior:"smooth",block:"start"});f.elements.namedItem("description").focus({preventScroll:true})}
 // after DONE: the lead's branch into the project, then the agents' worktrees away (they come back from HEAD for the next task)
@@ -779,10 +791,12 @@ function renderBranch(t){
     try{const res=await post(url,body);branchState.set(key,{output:done(res)})}catch(e){branchState.set(key,{error:e.message})}await tick()};
   if(m&&!m.already&&!m.reverted){const rv=el("button","ghost",st.pending?"…":"Откатить");rv.type="button";rv.disabled=!!st.pending;rv.title="git revert "+m.commit.slice(0,7)+": новый коммит, который отменяет изменения задачи; при конфликте ничего не меняется";
     rv.onclick=()=>run("/api/tasks/"+encodeURIComponent(t.id)+"/revert",{},"Откатить изменения задачи "+t.id+" в "+m.into+"? Будет новый коммит «Revert "+t.id+"», история не переписывается.",res=>"откачено: "+res.task.merged.reverted.commit.slice(0,7));r.append(rv)}
-  const mc=!m&&t.mergeCheck;const checking=mc&&mc.status==="running";
+  const cmc=t.contract&&!t.contract.merged&&t.contractMergeCheck;
+  if(cmc)box.append(renderMergeCheck(t,cmc,run,"contract"));
+  const mc=!m&&t.mergeCheck;const checking=(mc&&mc.status==="running")||(cmc&&cmc.status==="running");
   if(mc)box.append(renderMergeCheck(t,mc,run));
-  const done2=res=>res.check?(res.check.status==="conflict"?"конфликт: "+(res.check.files||[]).join(", "):"проверяю вливание: собираю его на HEAD проекта и запускаю "+t.verifyCommand):"влито: "+res.task.merged.branch+" → "+res.task.merged.into+" ("+res.task.merged.commit.slice(0,7)+")"+(t.verifyCommand?"":" без проверки сборки");
-  if(!m&&!mc){const b=el("button","",st.pending?"…":"Влить в проект");b.type="button";b.disabled=!!st.pending;
+  const done2=res=>res.check?(res.check.status==="conflict"?"конфликт"+(res.check.scope?" в контракте":"")+": "+(res.check.files||[]).join(", "):res.check.scope?"проверяю вливание контракта ("+res.check.command+"), потом сервиса":"проверяю вливание: собираю его на HEAD проекта и запускаю "+t.verifyCommand):"влито: "+res.task.merged.branch+" → "+res.task.merged.into+" ("+res.task.merged.commit.slice(0,7)+")"+(t.verifyCommand?"":" без проверки сборки");
+  if(!m&&!mc&&!(cmc&&cmc.status!=="green")){const b=el("button","",st.pending?"…":"Влить в проект");b.type="button";b.disabled=!!st.pending;
     b.onclick=()=>run("/api/tasks/"+encodeURIComponent(t.id)+"/merge",{},t.verifyCommand?"Влить ветку lead'а ("+lead+") в текущую ветку проекта? Сначала вливание соберётся отдельно от проекта на его текущем HEAD и пройдёт «"+t.verifyCommand+"»: в проект попадёт только зелёное, одним коммитом «"+t.id+": …».":"Влить ветку lead'а ("+lead+") в текущую ветку проекта одним коммитом «"+t.id+": …»? У задачи нет verifyCommand: вливание не проверяется сборкой. При конфликте ничего не изменится.",done2);r.append(b)}
   if(checking)r.append(el("span","muted"," вливание проверяется…"));
   const c=el("button","ghost",st.pending?"…":"Убрать worktree агентов");c.type="button";c.disabled=!!st.pending;
@@ -795,6 +809,14 @@ function renderBranch(t){
   appendDiff(box,t,key);
   return box;
 }
+// the API contract the task changes too: its repository and this task's worktree; named while the task is designed
+function renderContract(t,control){const c=t.contract;const box=el("div","openspec");box.append(el("b","","Контракт API "));
+  if(c){box.append(el("span","mono",c.groupId+":"+c.artifactId+" "+c.version),el("div","muted","репозиторий "+c.project+" · worktree задачи "+c.worktree+" (ветка "+c.branch+") · меняет lead "+t.agents[0]+(c.merged?" · влит в "+c.merged.into+" "+c.merged.commit.slice(0,7)+(c.merged.reverted?" · откачен":""):"")));return box}
+  box.append(el("span","muted","задача его не меняет. Если на проектировании выяснилось, что API надо поменять, укажите проект со спекой: lead получит его worktree."));
+  const b=el("button","ghost small","Указать проект контракта");b.type="button";
+  b.onclick=async()=>{const path=await ask("Проект контракта OpenAPI для "+t.id+": абсолютный путь к Maven-проекту со спекой. Lead поменяет спеку в своём worktree, поднимет версию контракта, а сервис перейдёт на неё; «Принять и влить» вольёт сначала контракт, потом сервис.","/Users/me/projects/orders-api");if(!path)return;
+    b.disabled=true;try{const r=await post("/api/tasks/"+encodeURIComponent(t.id)+"/contract",{path});toast("ok","Контракт указан",r.task.contract.groupId+":"+r.task.contract.artifactId+" "+r.task.contract.version+" — lead начнёт новую сессию с ним",t.id)}catch(e){b.disabled=false;toast("bad","Не указан",e.message,t.id)}await tick()};
+  box.append(" ",b);return box}
 // a closed task off the page: its folder moves to deleted/<id>/ for the observer, the code in branches stays
 function renderDelete(t){const r=el("div","checks");const b=el("button","ghost danger small","Удалить задачу");b.type="button";
   b.onclick=async()=>{const reason=await ask("Удалить "+t.id+" «"+t.title+"» со страницы? Её папка (переписка, отчёты ревью, план, сборки, логи сессий) переедет в .agent-network/deleted/"+t.id+"/: там её прочитает наблюдатель, а расход уйдёт из статистики страницы. Код в ветках агентов и влитые коммиты останутся. Номер "+t.id+" новой задаче не достанется.","Почему удаляете? Необязательно — наблюдатель учтёт это (например: агент придумал задачу)");if(reason===false)return;
@@ -803,9 +825,9 @@ function renderDelete(t){const r=el("div","checks");const b=el("button","ghost d
 // the merge check of a DONE task: the merge built on the project's HEAD and its verifyCommand, apart from the project
 const MC_WORDS={running:"идёт",green:"зелёная",red:"красная",conflict:"конфликт",stale:"проект сдвинулся во время проверки",error:"не удалась",interrupted:"прервана перезапуском страницы"};
 const MC_STEP={merge:"собираю вливание",setup:"ставлю зависимости",build:"сборка",land:"вливаю в проект"};
-function renderMergeCheck(t,mc,run){const box=el("div","mcheck");const u="/api/tasks/"+encodeURIComponent(t.id)+"/merge/";
-  box.append(el("b","","Проверка вливания: "),el("span","badge "+(mc.status==="green"?"PASS":mc.status==="running"?"WAITING":mc.status==="red"||mc.status==="conflict"?"FAIL":"WARNING"),MC_WORDS[mc.status]||mc.status));
-  box.append(el("span","muted"," · в "+mc.into+" на "+mc.base.slice(0,7)+(mc.status==="running"&&mc.step?" · "+MC_STEP[mc.step]+(mc.step==="build"?" ("+t.verifyCommand+")":""):"")+" · "+time(mc.startedAt).slice(0,5)));
+function renderMergeCheck(t,mc,run,scope){const box=el("div","mcheck");const u="/api/tasks/"+encodeURIComponent(t.id)+"/merge/";const body=scope?{scope}:{};
+  box.append(el("b","",scope?"Проверка вливания контракта: ":"Проверка вливания: "),el("span","badge "+(mc.status==="green"?"PASS":mc.status==="running"?"WAITING":mc.status==="red"||mc.status==="conflict"?"FAIL":"WARNING"),MC_WORDS[mc.status]||mc.status));
+  box.append(el("span","muted"," · в "+mc.into+" на "+mc.base.slice(0,7)+(mc.status==="running"&&mc.step?" · "+MC_STEP[mc.step]+(mc.step==="build"?" ("+(mc.command||t.verifyCommand)+")":""):"")+" · "+time(mc.startedAt).slice(0,5)));
   if(mc.build&&!mc.build.ok){box.append(el("div","",mc.build.command+(mc.build.timedOut?": тайм-аут":mc.build.tests?": упало "+mc.build.tests.failed+" из "+mc.build.tests.total:": код "+mc.build.exitCode)+(mc.build.log?" · лог: .agent-network/"+mc.build.log:"")));
     const d=el("details","");d.append(el("summary","muted","что упало"),el("pre","log err",mc.build.summary));box.append(d)}
   if(mc.status==="conflict")box.append(el("div","","Конфликтующие файлы: "+(mc.files||[]).join(", ")));
@@ -814,10 +836,11 @@ function renderMergeCheck(t,mc,run){const box=el("div","mcheck");const u="/api/t
   if(mc.followUp)box.append(el("div","","Отдано команде: "+mc.followUp));
   if(mc.status==="running"||mc.status==="green")return box;
   const r=el("div","checks");
-  const btn=(label,cls,act,q,done)=>{const b=el("button",cls,label);b.type="button";b.onclick=()=>run(u+act,{},q,done);r.append(b)};
-  if((mc.status==="red"||mc.status==="conflict")&&!mc.followUp)btn("Отдать команде","","handoff","Создать follow-up задачу той же команде: "+(mc.status==="red"?"она начнёт с проверенного вливания и сделает «"+t.verifyCommand+"» зелёной":"она вольёт HEAD проекта в свои ветки и разрешит конфликты")+"?",res=>"follow-up "+res.followUp.id+": "+res.followUp.title);
-  btn("Проверить снова","ghost","retry","Проверить вливание ещё раз на текущем HEAD проекта?",res=>res.check?"проверяю снова":"влито");
-  if(mc.status!=="conflict")btn("Влить всё равно","ghost danger","force","Влить ветку lead'а в проект без зелёной сборки? Задача будет помечена «без проверки сборки», а пакет приёмки это покажет.",res=>"влито без проверки: "+res.task.merged.commit.slice(0,7));
+  const btn=(label,cls,act,q,done)=>{const b=el("button",cls,label);b.type="button";b.onclick=()=>run(u+act,body,q,done);r.append(b)};
+  if(scope&&(mc.status==="red"||mc.status==="conflict"))box.append(el("div","muted","Чинится в репозитории контракта ("+t.contract.project+"): поправьте там и «Проверить снова»."));
+  if(!scope&&(mc.status==="red"||mc.status==="conflict")&&!mc.followUp)btn("Отдать команде","","handoff","Создать follow-up задачу той же команде: "+(mc.status==="red"?"она начнёт с проверенного вливания и сделает «"+t.verifyCommand+"» зелёной":"она вольёт HEAD проекта в свои ветки и разрешит конфликты")+"?",res=>"follow-up "+res.followUp.id+": "+res.followUp.title);
+  btn("Проверить снова","ghost","retry","Проверить вливание ещё раз на текущем HEAD "+(scope?"репозитория контракта":"проекта")+"?",res=>res.check?"проверяю снова":"влито");
+  if(mc.status!=="conflict")btn("Влить всё равно","ghost danger","force",scope?"Влить контракт без зелёной сборки? Он будет помечен «без проверки», дальше пойдёт вливание сервиса.":"Влить ветку lead'а в проект без зелёной сборки? Задача будет помечена «без проверки сборки», а пакет приёмки это покажет.",res=>res.check?"контракт влит без проверки, проверяю сервис":"влито без проверки: "+res.task.merged.commit.slice(0,7));
   box.append(r);return box}
 const diffState=new Map();
 // the diff list of a task: the lead's branch (or ?agent=), after the merge what the merge brought
@@ -1183,6 +1206,7 @@ function renderTask(t){
   if(t.openspec)hd.append(renderOpenspec(t));
   if(t.proposes)hd.append(renderProposes(t));
   if(t.plan)hd.append(renderPlan(t));
+  if(t.contract||(controlMode&&t.status==="ACTIVE"&&t.phase==="DISCUSS"&&!t.proposes&&!t.openspec))hd.append(renderContract(t,controlMode));
   if(t.jobOf)hd.append(el("div","muted","Поручение от "+t.jobOf.taskId+" (lead "+t.jobOf.by+", его подзадача "+t.jobOf.subtask+"): один агент, без ревью; результат уходит lead'у."));
   {const jobs=(S.tasks||[]).filter(x=>x.jobOf&&x.jobOf.taskId===t.id);if(jobs.length){const box=el("div","openspec");box.append(el("b","","Поручения ("+jobs.length+")"));
     jobs.forEach(j=>{const r=el("div","srow2");r.append(badge(j.status==="COMPLETED"?"PASS":j.status==="CANCELLED"?"INFO":j.status==="BLOCKED"?"FAIL":"WAITING",j.status==="COMPLETED"?"готово":j.status==="CANCELLED"?"отменено":j.status==="BLOCKED"?"BLOCKED":"в работе"),el("span","mono"," "+j.id+" · "+j.agents[0]),el("span",""," "+j.title.replace(/^task-\d+ job: /,"")));
@@ -1336,6 +1360,11 @@ function renderTasks(){
     if(sv)b.scrollTop=sv.top;else{const cur=b.querySelector(".DOING");if(cur)b.scrollTop+=cur.getBoundingClientRect().top-b.getBoundingClientRect().top-b.clientHeight/3}}));
 }
 // the config's defaults for a new task: its cost limit and its build and test command
+// the contract project named in the form: checked at once — its specs and the version the service is on
+async function checkContract(){const f=$("newtask");const path=f.elements.namedItem("contract").value.trim();const n=$("contractnote");if(!path){n.textContent="";return}
+  n.className="muted small";n.textContent="проверяю…";
+  try{const r=await fetch(q("/api/contract/inspect?path="+encodeURIComponent(path)),{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message||r.status);n.className="muted small";n.textContent=j.groupId+":"+j.artifactId+" "+j.version+" · спецификации: "+j.specs.join(", ")}
+  catch(e){n.className="small err";n.textContent="не подходит: "+e.message}}
 function taskDefaults(f){const c=(S&&S.control)||{};f.elements.namedItem("maxCostUsd").value=c.maxTaskCostUsd?String(c.maxTaskCostUsd):"";f.elements.namedItem("verifyCommand").value=c.verifyCommand||""}
 $("newbtn").onclick=()=>{const f=$("newtask");f.hidden=!f.hidden;if(!f.hidden){loadChanges();taskDefaults(f);f.elements.namedItem("title").focus()}};
 let knownIds="";
@@ -1370,8 +1399,8 @@ $("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev
   const others=[...$("others").querySelectorAll("input:checked")].map(i=>i.value);const v=n=>f.elements.namedItem(n);
   if(!v("openspec").value&&(!v("title").value.trim()||!v("description").value.trim())){note.className="note err";note.textContent="Нужны название и описание (или выберите OpenSpec change).";return}
   btn.disabled=true;note.className="note";note.textContent="создаю…";
-  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,allowSpawn:v("allowSpawn").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value,from:v("from").value.split("\n").map(x=>x.trim()).filter(Boolean)}:{openspec:v("openspec").value})});
-    note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("openspec").value="";v("proposes").value="";v("from").value="";delete v("from").dataset.grilled;$("proposes-row").hidden=true;$("from-row").hidden=true;await tick()}
+  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,...(v("contract").value.trim()?{contract:v("contract").value.trim()}:{}),clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,allowSpawn:v("allowSpawn").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value,from:v("from").value.split("\n").map(x=>x.trim()).filter(Boolean)}:{openspec:v("openspec").value})});
+    note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("contract").value="";$("contractnote").textContent="";v("openspec").value="";v("proposes").value="";v("from").value="";delete v("from").dataset.grilled;$("proposes-row").hidden=true;$("from-row").hidden=true;await tick()}
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
 
 /* ---------- runs ---------- */

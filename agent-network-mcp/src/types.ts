@@ -1,3 +1,4 @@
+import type { TaskContract } from "./contract.js";
 export type AgentStatus = "ONLINE" | "WORKING" | "WAITING" | "OFFLINE";
 
 export interface Agent {
@@ -74,6 +75,8 @@ export interface Task {
     /** "Откатить": the revert commit that undid it. */
     reverted?: { at: string; commit: string };
   };
+  /** The task changes the API contract too: its repository, this task's worktree of it, the version it started from (contract.ts). */
+  contract?: TaskContract;
   /** After DONE: the operator's verdict on the acceptance page (returned: the follow-up task with its comments). */
   acceptance?: { status: "accepted" | "returned"; at: string; followUp?: string };
   /** Follow-up: the task whose integration created this one. */
@@ -354,6 +357,7 @@ export const EVENT_TYPES = [
   "TASK_MERGED",
   "TASK_REVERTED",
   "TASK_ACCEPTANCE",
+  "TASK_CONTRACT",
   "AGENT_SPAWNED",
   "REVIEW_COMMENTS",
   "REVIEW_RESOLVED",

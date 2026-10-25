@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { isHandedOver } from "./handoff.js";
 import { isParked, lastPark } from "./park.js";
 import { progressMark, uncommittedCount, workBrief } from "./progress.js";
@@ -99,6 +99,17 @@ export function renderPrompt(template: string, v: PromptVars): string {
 export function withInstructions(prompt: string, instructions: string | undefined, v: PromptVars): string {
   const text = instructions?.trim();
   return text ? `${prompt}\n\nInstructions from the operator for you (${v.agent}):\n${renderPrompt(text, v)}` : prompt;
+}
+
+/**
+ * One more folder the session may read and write (the contract's worktree): Claude Code's --add-dir, Qwen Code's
+ * --include-directories, put right after the CLI's name; another CLI is left as it is (added: false).
+ */
+export function withExtraDir(command: string[], dir: string): { command: string[]; added: boolean } {
+  const cli = basename(command[0] ?? "");
+  const flag = cli === "claude" ? "--add-dir" : cli === "qwen" ? "--include-directories" : null;
+  if (!flag) return { command, added: false };
+  return { command: [command[0]!, flag, dir, ...command.slice(1)], added: true };
 }
 
 /**
@@ -411,12 +422,16 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     // where the work stands on disk, so the session does not spend its first turns (and context) on git log and status
     const brief = await workBrief(opts.cwd).catch(() => "");
     const offSkills = [...(opts.disabledSkills?.(task) ?? [])];
-    const skillsOff = withSkillOverrides(opts.command, offSkills);
+    // the lead of a task that changes the API contract writes the contract's worktree too: the CLI is told so
+    const contractDir = task.contract && task.agents[0] === agent ? task.contract.worktree : undefined;
+    const dirs = contractDir ? withExtraDir(opts.command, contractDir) : { command: opts.command, added: false };
+    const skillsOff = withSkillOverrides(dirs.command, offSkills);
     const prompt =
       (urgent ? URGENT.replace("{message}", urgent) : "") +
       withInstructions(renderPrompt(template, vars), instructions, vars) +
       (skillsOff.hidden ? "" : disabledSkillsNote(offSkills)) +
-      (brief ? `\n\nYour folder right now (from the runner, no need to run git log or git status for this):\n${brief}` : "");
+      (brief ? `\n\nYour folder right now (from the runner, no need to run git log or git status for this):\n${brief}` : "") +
+      (contractDir ? `\n\nThe API contract's worktree of this task, yours to edit: ${contractDir}${dirs.added ? "" : " (your CLI may ask before writing outside your folder)"}.` : "");
     const env = {
       ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt), AGENT_NETWORK_RUNNER: "1",
       [DISABLED_SKILLS_ENV]: JSON.stringify(offSkills),

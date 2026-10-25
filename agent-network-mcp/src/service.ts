@@ -23,6 +23,7 @@ import { MessageStore } from "./stores/messageStore.js";
 import { SubtaskStore } from "./stores/subtaskStore.js";
 import { SyncStore } from "./stores/syncStore.js";
 import { TaskStore } from "./stores/taskStore.js";
+import { CONTRACT_PREFIX, contractPath, inspectContract, isContractFile, openContractWorktree, type TaskContract } from "./contract.js";
 import type {
   Agent,
   AgentIdentity,
@@ -106,6 +107,8 @@ export interface NewTaskInput {
   parentTaskId?: string;
   /** Where the agents start from: they merge this commit into their branch first. */
   baseCommit?: string;
+  /** The API contract's repository (absolute path), when the task changes the contract too (contract.ts). */
+  contract?: string;
   /** The lead may add agents from the spawn templates (spawn_agent); off by default. */
   allowSpawn?: boolean;
 }
@@ -361,6 +364,8 @@ export class NetworkService {
     const maxCostUsd = input.maxCostUsd === undefined ? undefined : checkCostLimit(input.maxCostUsd);
 
     const parent = input.parentTaskId ? await this.tasks.get(assertTaskId(input.parentTaskId)) : null;
+    const contract = input.contract?.trim() ? await inspectContract(input.contract.trim()) : undefined;
+    if (contract && (proposes || change)) throw new AppError("INVALID_INPUT", "A contract project goes with a task that changes code, not with an OpenSpec change task");
     const git = await readGitContext(this.projectDir);
     const description = change ? openspecDescription(change.name, input.description) : proposes ? proposeDescription(proposes, input.description) : input.description;
     const task = await this.tasks.create({
@@ -376,8 +381,9 @@ export class NetworkService {
       ...(input.baseCommit ? { baseCommit: assertCommit(input.baseCommit) } : {}),
     });
     if (inputFiles.length) await copyInput(inputFiles, join(this.fs.root, "tasks", task.id, "input"));
+    const created = contract ? await this.tasks.save({ ...task, contract: await this.contractFor(task.id, contract) }) : task;
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
-    return task;
+    return created;
   }
 
   /** The operator's review comments on the task's diff: tasks/<id>/review.json. */
@@ -961,12 +967,14 @@ export class NetworkService {
         const deps = [...new Set((dependsOn ?? []).map((d) => assertAgentId(String(d).trim())))];
         return {
           ...a,
-          ...(a.files ? { files: [...new Set(a.files.map((f) => normalizePath(assertRelativeFilePath(f))))] } : {}),
+          // contract:<path> — a file of the contract's repository (contract.ts), checked like any path inside it
+          ...(a.files ? { files: [...new Set(a.files.map((f) => (isContractFile(f) ? CONTRACT_PREFIX + normalizePath(assertRelativeFilePath(contractPath(f))) : normalizePath(assertRelativeFilePath(f)))))] } : {}),
           ...(task.openspec && tasks !== undefined ? { tasks } : {}), // task numbers mean something only for an OpenSpec task
           ...(deps.length ? { dependsOn: deps } : {}),
         };
       });
       assertDependencies(normalized);
+      this.checkContractFiles(task, normalized);
       const assignments = task.openspec ? await this.splitOpenspec(task, normalized) : task.proposes ? this.specOnly(task, normalized) : normalized;
       const overlaps = findOverlaps(assignments);
       if (overlaps.length) {
@@ -1000,6 +1008,20 @@ export class NetworkService {
       if (agreement.approvedBy.includes(this.me)) await this.emit({ type: "AGREEMENT_APPROVED", taskId: task.id, sourceAgent: this.me, payload: { approvedBy: this.me, version: agreement.version, byProposing: true } });
       return { agreement };
     });
+  }
+
+  /** contract:<path> files: only with a contract project named, and only the lead's — it changes the contract and bumps its version. */
+  private checkContractFiles(task: Task, assignments: Assignment[]): void {
+    const lead = this.phases.integrator(task);
+    const claims = assignments.flatMap((a) => (a.files ?? []).filter(isContractFile).map((f) => ({ agent: a.agentId, file: f })));
+    if (!claims.length) return;
+    if (!task.contract) {
+      throw new AppError("INVALID_INPUT", `${claims[0]!.file}: ${task.id} has no contract project. If the API contract must change, ask the operator to name its project (send_message({to: "operator"}); it is set on the task card) and wait() for it, then propose again.`);
+    }
+    const others = [...new Set(claims.filter((c) => c.agent !== lead).map((c) => c.agent))];
+    if (others.length) {
+      throw new AppError("CONTRACT_LEAD_ONLY", `The contract is changed by the lead (${lead}), who bumps its version and installs it: take the contract:… files out of the assignments of ${others.join(", ")}.`, { lead, agents: others });
+    }
   }
 
   /**
@@ -1283,10 +1305,11 @@ export class NetworkService {
   }
 
   /** The build tool finished a run: recorded for the page only (addressed to the agent itself, so it wakes nobody). */
-  async recordBuild(taskId: string | null, payload: { command: string; ok: boolean; exitCode: number | null; timedOut: boolean; durationMs: number; logPath: string; tests?: { total: number; failed: number }; head?: string; dirty?: number; phase?: string; round?: number }): Promise<void> {
+  async recordBuild(taskId: string | null, payload: { command: string; ok: boolean; exitCode: number | null; timedOut: boolean; durationMs: number; logPath: string; tests?: { total: number; failed: number }; head?: string; dirty?: number; phase?: string; round?: number; in?: "contract" }): Promise<void> {
     await this.emit({ type: "BUILD_RAN", ...(taskId ? { taskId } : {}), targetAgent: this.me, sourceAgent: this.me, payload: { agentId: this.me, ...payload } });
-    // the page shows the latest run per agent without reading every event of the task
-    if (taskId) await this.fs.writeJson(["tasks", taskId, "builds", `${this.me}.json`], { agentId: this.me, at: new Date().toISOString(), ...payload });
+    // the page shows the latest run per agent without reading every event of the task; the contract's build apart, so
+    // the agent's latest own build stays what the integration checks
+    if (taskId) await this.fs.writeJson(["tasks", taskId, "builds", `${this.me}${payload.in === "contract" ? "-contract" : ""}.json`], { agentId: this.me, at: new Date().toISOString(), ...payload });
   }
 
   private isDeliverable(event: NetworkEvent): boolean {
@@ -1421,6 +1444,32 @@ export class NetworkService {
     });
   }
 
+  /** The contract of a task: checked, its worktree made, the coordinates the service is on. */
+  private async contractFor(taskId: string, c: Awaited<ReturnType<typeof inspectContract>>): Promise<TaskContract> {
+    const wt = await openContractWorktree(c.project, taskId);
+    return { project: c.project, ...wt, specs: c.specs, groupId: c.groupId, artifactId: c.artifactId, version: c.version, setAt: new Date().toISOString() };
+  }
+
+  /**
+   * Operator: the task changes the API contract too — named while it is designed (DISCUSS, before the agreement), when
+   * the lead finds the API must change. The lead changes it; its next session can write the contract's worktree.
+   */
+  async setContract(taskId: string, path: string): Promise<Task> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator names the contract project");
+    const id = assertTaskId(taskId);
+    const c = await inspectContract(path.trim());
+    return this.fs.withLock(this.tasks.lockPath(id), async () => {
+      const task = await this.tasks.get(id);
+      if (task.status !== "ACTIVE" || task.phase !== "DISCUSS") throw new AppError("INVALID_PHASE", `The contract is named while the task is designed (DISCUSS); ${id} is ${task.phase} (${task.status})`);
+      if (task.proposes || task.openspec) throw new AppError("INVALID_INPUT", "A contract project goes with a task that changes code, not with an OpenSpec change task");
+      if (task.contract) throw new AppError("ALREADY_COMPLETED", `${id} changes the contract in ${task.contract.project} already`);
+      if (await this.agreements.find(id)) throw new AppError("INVALID_PHASE", `${id} has an agreement already: name the contract before the lead proposes, or cancel and create the task with it`);
+      const saved = await this.tasks.save({ ...task, contract: await this.contractFor(id, c) });
+      await this.emit({ type: "TASK_CONTRACT", taskId: id, sourceAgent: OPERATOR, payload: { project: c.project } });
+      return saved;
+    });
+  }
+
   /** Operator: the verdict on a DONE task's acceptance page — accepted, or returned with a follow-up task for the comments. */
   async recordAcceptance(input: { taskId: string; status: "accepted" | "returned"; followUp?: string }): Promise<Task> {
     if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator accepts a task");
@@ -1462,6 +1511,50 @@ export class NetworkService {
     const digest = await this.fs.readJson<Record<string, unknown>>(["observer", "digests", `${id}.json`]);
     if (digest) await this.fs.writeJson(["observer", "digests", `${id}.json`], { ...digest, deleted: mark });
     return { id, title: task.title, folder };
+  }
+
+  /**
+   * Operator: the task's API contract into its own repository — before the service, which depends on its new version.
+   * `merge` is the merge check's fast-forward to the checked commit, or a plain merge without a check.
+   */
+  async mergeContract(
+    input: { taskId: string; strategy?: MergeStrategy; verified?: { command: string }; unverified?: true },
+    merge: (project: string, branch: string, message: string, strategy?: MergeStrategy) => Promise<MergeResult> = mergeBranch,
+  ): Promise<Task> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator merges a task's contract");
+    const taskId = assertTaskId(input.taskId);
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      const c = task.contract;
+      if (!c) throw new AppError("INVALID_INPUT", `${taskId} changes no API contract`);
+      if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `Merge once the task is DONE; ${taskId} is ${task.phase} (${task.status})`);
+      if (c.merged) throw new AppError("ALREADY_COMPLETED", `The contract of ${taskId} was merged into ${c.merged.into} at ${c.merged.at} (${c.merged.commit.slice(0, 7)})`);
+      const strategy = input.strategy ?? "squash";
+      const r = await merge(c.project, c.branch, mergeMessage(task, c.branch, strategy), strategy);
+      const merged = {
+        at: new Date().toISOString(), into: r.into, commit: r.commit, already: r.already,
+        ...(input.verified && !r.already ? { verified: input.verified } : {}), ...(input.unverified && !r.already ? { unverified: true as const } : {}),
+      };
+      const saved = await this.tasks.save({ ...task, contract: { ...c, merged } });
+      await this.emit({ type: "TASK_MERGED", taskId, sourceAgent: OPERATOR, payload: { ...merged, scope: "contract", project: c.project } });
+      return saved;
+    });
+  }
+
+  /** Operator: the contract's merge undone with one revert commit in its repository (with the task's revert). */
+  async revertContract(input: { taskId: string }, revert: (project: string, commit: string, message: string) => Promise<{ commit: string }> = revertCommit): Promise<Task> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator reverts a task's contract");
+    const taskId = assertTaskId(input.taskId);
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      const c = task.contract;
+      if (!c?.merged || c.merged.already) throw new AppError("INVALID_INPUT", `The contract of ${taskId} was not merged by the page: nothing to revert`);
+      if (c.merged.reverted) throw new AppError("ALREADY_COMPLETED", `The contract of ${taskId} was reverted at ${c.merged.reverted.at}`);
+      const r = await revert(c.project, c.merged.commit, `Revert ${taskId}: ${task.title}`.slice(0, 200));
+      const saved = await this.tasks.save({ ...task, contract: { ...c, merged: { ...c.merged, reverted: { at: new Date().toISOString(), commit: r.commit } } } });
+      await this.emit({ type: "TASK_REVERTED", taskId, sourceAgent: OPERATOR, payload: { commit: r.commit, of: c.merged.commit, scope: "contract" } });
+      return saved;
+    });
   }
 
   /** Operator: undo a merged task with one revert commit (refused, with nothing changed, on conflicts). */

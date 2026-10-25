@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { AppError } from "./errors.js";
+import { CONTRACT_PREFIX } from "./contract.js";
 import { changePath } from "./openspec.js";
 import type { Acceptance, AcceptanceCriterion, CriterionStatus, Task } from "./types.js";
 
@@ -42,7 +43,7 @@ export function checkAcceptance(raw: unknown): Acceptance | undefined {
     const tests = strings(x.tests, `acceptance.criteria[${i}].tests`);
     const where = strings(x.where, `acceptance.criteria[${i}].where`);
     for (const p of [...tests, ...where]) {
-      const path = splitRef(p).path;
+      const path = splitRef(p.startsWith(CONTRACT_PREFIX) ? p.slice(CONTRACT_PREFIX.length) : p).path;
       if (!path || path.startsWith("/") || path.split("/").includes("..")) throw new AppError("INVALID_INPUT", `acceptance.criteria[${i}]: "${p}" must be a project-relative path (path, path#method or path:line)`);
     }
     return { requirement, status, tests, where, ...(note ? { note } : {}) };
@@ -82,19 +83,30 @@ function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }>
   return new Promise((done) => execFile("git", args, { cwd, timeout: 15_000, maxBuffer: 16 * 1024 * 1024 }, (e, out) => done({ ok: !e, out: String(out) })));
 }
 
-/** References the merged commit does not have: a file that is not there, or a method name its file does not contain. */
-export async function missingEvidence(cwd: string, commit: string, acceptance: Acceptance): Promise<string[]> {
+/**
+ * References the merged commit does not have: a file that is not there, or a method name its file does not contain.
+ * "contract:<path>" names a file of the task's API contract: checked at the contract's branch (`contract`), or missing
+ * when the task has none.
+ */
+export async function missingEvidence(cwd: string, commit: string, acceptance: Acceptance, contract?: { cwd: string; commit: string }): Promise<string[]> {
   const refs = new Set(acceptance.criteria.flatMap((c) => [...c.tests, ...c.where]));
   const missing: string[] = [];
   const files = new Map<string, string | null>();
   for (const ref of refs) {
-    const { path, method } = splitRef(ref);
-    if (!files.has(path)) {
-      const r = await git(cwd, ["show", `${commit}:${path}`]);
-      files.set(path, r.ok ? r.out : null);
+    const inContract = ref.startsWith(CONTRACT_PREFIX);
+    const { path, method } = splitRef(inContract ? ref.slice(CONTRACT_PREFIX.length) : ref);
+    if (inContract && !contract) {
+      missing.push(`${ref} (this task changes no API contract)`);
+      continue;
     }
-    const text = files.get(path);
-    if (text === null) missing.push(`${ref} (no such file at ${commit.slice(0, 7)})`);
+    const where = inContract ? contract! : { cwd, commit };
+    const key = `${inContract ? CONTRACT_PREFIX : ""}${path}`;
+    if (!files.has(key)) {
+      const r = await git(where.cwd, ["show", `${where.commit}:${path}`]);
+      files.set(key, r.ok ? r.out : null);
+    }
+    const text = files.get(key);
+    if (text === null) missing.push(`${ref} (no such file at ${inContract ? "the contract's " : ""}${where.commit.slice(0, 7)})`);
     else if (method && !text!.includes(method)) missing.push(`${ref} (${path} has no "${method}")`);
   }
   return missing;

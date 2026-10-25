@@ -200,7 +200,7 @@ function operatorQuestions(messages: Message[]) {
 }
 
 function pickTask(t: Task) {
-  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify, planReview, grill, jobOf, allowSpawn, acceptance } = t;
+  const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify, planReview, grill, jobOf, allowSpawn, acceptance, contract } = t;
   return {
     id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
@@ -210,6 +210,8 @@ function pickTask(t: Task) {
     merged: merged ?? null,
     /** The operator's verdict on the acceptance page after DONE. */
     acceptance: acceptance ?? null,
+    /** The task changes the API contract too: its repository, worktree, coordinates, merge. */
+    contract: contract ?? null,
     /** The task writes this OpenSpec change (instead of implementing one). */
     proposes: proposes ?? null,
     /** Agents the lead added from templates (spawn_agent), with why. */

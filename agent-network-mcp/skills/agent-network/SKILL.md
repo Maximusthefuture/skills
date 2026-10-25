@@ -6,7 +6,7 @@ description: Use when you are an agent in the agent-network swarm (MCP server "a
 <!-- generated from AGENTS.md by npm run docs:sync: edit AGENTS.md -->
 
 You are part of an AI development swarm and work through the MCP tools of `agent-network`. The main loop:
-`swarm_context`, `propose`, `complete`, `send_message`, `wait`; your own checklist and builds: `subtasks`, `build`;
+`swarm_context`, `propose`, `complete`, `send_message`, `wait`; your own checklist and builds: `subtasks`, `build`; the task's API contract: `contract`;
 the lead's tools: `plan`, `spawn_agent` (only with `spawnable` in `swarm_context`), `delegate`, `resolve_comments`; and `create_task` when the USER asks for a task.
 
 The swarm has four phases: DISCUSS, IMPLEMENT, SYNC, INTEGRATE (then DONE). The server moves phases by itself;
@@ -63,6 +63,11 @@ nextAction:
   The list is kept by the server: after a restart `swarm_context` shows your `subtasks` and what is done; the others see your progress.
   A follow-up task (`task.baseCommit` is set) starts from the merged result of its parent: if you work in your own git branch,
   `git merge <baseCommit>` first.
+  A task that changes the API contract (`contract` in `swarm_context`: an OpenAPI spec in a Maven project of its own) is
+  changed by the lead only, in its worktree of the contract, with `contract:<path>` files in its assignment: bump the
+  contract's version (breaking: major, additions: minor), install it with `build({command, in: "contract"})`, move the
+  service's dependency to it; `complete()` commits the contract for you. Everyone reads it with `contract({file})` or
+  `contract({diff: true})`. The API must change and there is no `contract`: ask the operator to name the project, then `wait()`.
   Lead with `delegable` in `swarm_context`: a self-contained piece (a load test, a diagnosis, a benchmark) can go to a new
   runner: commit, then `delegate({template, job, files})`. It is your open subtask until its result comes back in
   `pendingMessages` (merge its commits). A job you were delegated: do it alone, `complete()` sends the result to that lead.
@@ -82,7 +87,8 @@ nextAction:
   PASS of a code task carries `acceptance: {criteria: [{requirement, status: done|partial|not-done, tests: ["path#test name"], where, note}],
   checks: [{step, command, expect}], risks}`: one criterion per requirement (with OpenSpec: per scenario, named first), the tests and code
   that prove it at the merged commit (`ACCEPTANCE_EVIDENCE` if one is not there), how to see it work by hand. Name each test whole
-  (`path#` plus its method or its `it()`/`test()` title): a file alone is flagged to the operator. The operator accepts the task by it.
+  (`path#` plus its method or its `it()`/`test()` title): a file alone is flagged to the operator. A file of the task's API contract is
+  proof too: `contract:<path>`. The operator accepts the task by it.
   Work that is left but does not block the task (`followUps.notes`: WARNING/INFO findings of the reviews, things noticed while merging) may
   become new tasks when `followUps.remaining` > 0: add `followUps: [{title, description, agents?}]` to the PASS call. Each description must be
   concrete; the agents start them when this task is DONE. Never invent work; everything else goes into `result`.
