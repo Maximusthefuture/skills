@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { costGuard } from "./costLimit.js";
 import { AppError } from "./errors.js";
 import { parseFreshPhases } from "./handoff.js";
 import { runHookCli } from "./hook.js";
@@ -11,16 +10,13 @@ import { isValidModel, runRunner, usesModel } from "./runner.js";
 import { collectStats } from "./stats.js";
 import { FileStore } from "./storage/fileStore.js";
 import { NetworkService, depthFlags } from "./service.js";
-import { installedTemplates, loadRunnersConfig, projectConfigFile, projectRunnersConfig, RunnerPool, TEMPLATES, watchPrices, type RunnersConfig, type TemplateName } from "./ui/runners.js";
+import { installedTemplates, loadRunnersConfig, projectConfigFile, projectRunnersConfig, TEMPLATES, watchPrices, type RunnersConfig, type TemplateName } from "./ui/runners.js";
 import type { ProjectStack } from "./stack.js";
 import { startUiServer } from "./ui/server.js";
+import { assembleProject, openProjectAt } from "./ui/assemble.js";
+import { listProjects, registryFile } from "./registry.js";
 import { Journal, type JournalEntry } from "./supervisor/journal.js";
 import { formatSessionLog, listSessionLogs, readSessionLog } from "./supervisor/sessionLog.js";
-import { Supervisor } from "./supervisor/supervisor.js";
-import { Scheduler } from "./schedule/scheduler.js";
-import { Spawner, writeSpawnFile } from "./spawner.js";
-import { Observer } from "./observer/observer.js";
-import { PlanCritic } from "./planCritic.js";
 import { ensureWorktrees, gitRoot } from "./worktrees.js";
 
 const USAGE = `Usage:
@@ -204,13 +200,6 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
   }
 }
 
-const operators = new Map<string, Promise<NetworkService>>();
-/** One operator service per network, made when first needed. */
-const operatorOf = (networkDir: string): Promise<NetworkService> => {
-  if (!operators.has(networkDir)) operators.set(networkDir, NetworkService.create(networkDir, { id: "operator", type: "ui" }));
-  return operators.get(networkDir)!;
-};
-
 /**
  * The template of a project's first config when --template is not given: the agent CLI that is installed. With both,
  * the operator picks on the terminal; Qwen when nobody can answer or neither is found (the default before).
@@ -250,6 +239,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
   }
   try {
     let files = values.runners ?? [];
+    let lastDir: string | undefined;
     // plain `ui` inside a project: the project's own config, copied from the template the first time
     if (!files.length && !values["read-only"] && !values["network-dir"] && !env.NETWORK_DIR) {
       const root = await gitRoot(cwd);
@@ -259,10 +249,20 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         out(own.created ? `config: ${own.path} (new, from the ${template} template: edit models and build commands there)` : `config: ${own.path}${values.template ? ` (exists; --template ${template} not applied)` : ""}`);
         if (own.created) out(stackLine(own.stack));
         files = [own.path];
+      } else {
+        // outside any project: the page of all projects, with the one opened last that no other page runs
+        const last = (await listProjects(registryFile(env))).find((r) => !r.servedBy && existsSync(r.dir));
+        if (!last) {
+          out(`error: ${cwd} is not in a git repository, and no project is on the list yet (${registryFile(env)}): run \`agent-network-mcp ui\` once inside a project, then the page lists them all`);
+          return 2;
+        }
+        out(`project: ${last.dir} (opened last; the others are on the Проекты tab)`);
+        files = [last.config ?? (await projectRunnersConfig(last.dir)).path];
+        lastDir = last.dir;
       }
     }
     // one config: the project is the git repository ui is started in, unless the config names it ("project")
-    const here = files.length === 1 ? await gitRoot(cwd) : null;
+    const here = files.length === 1 ? (lastDir ?? (await gitRoot(cwd))) : null;
     for (const file of files) configs.push(await loadRunnersConfig(file, here ? { projectDir: here } : {}));
     // agents that work in their own worktree get it now, before their runners start
     for (const config of configs) for (const line of await ensureWorktrees(config.agents)) out(`worktree created: ${line}`);
@@ -302,90 +302,24 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
     }
   }
   try {
-    const specs = projects.map(({ dir, config }) => {
-      const prices = config?.path ? watchPrices(config.path) : undefined;
-      // after every agent session: a task over its cost limit (maxCostUsd) is BLOCKED for the operator
-      const onSessionEnd = config ? costGuard({ networkDir: dir, ...(prices ? { prices } : {}), log: (line) => out(line) }) : undefined;
-      // a runner that gave up blocks its task: the others would wait for it forever
-      const onGiveUp = async (agentId: string, taskId: string, reason: string) => {
-        const blocked = await (await operatorOf(dir)).blockForRunner(taskId, agentId, reason);
-        if (blocked) out(`[runner] ${taskId}: BLOCKED, ${agentId}'s runner gave up (${reason})`);
-      };
-      const runners = config ? new RunnerPool(dir, config.agents, { ...(config.path ? { configPath: config.path } : {}), ...(onSessionEnd ? { onSessionEnd } : {}), onGiveUp }) : undefined;
-      // the supervisor watches this project's runners; it acts through the page, so it is attached once the page is up
-      const supervisor =
-        runners && config?.supervisor
-          ? new Supervisor({ networkDir: dir, config: config.supervisor, pool: runners, ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(prices ? { prices } : {}) })
-          : undefined;
-      // always with runners: schedules can be added on the page, and they apply without a restart
-      const scheduler =
-        runners && config
-          ? new Scheduler({ networkDir: dir, schedules: config.schedules ?? [], ...(config.path ? { configPath: config.path } : {}), ...(config.project ? { projectDir: config.project } : {}), ...(config.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}), ...(config.verifyCommand ? { verifyCommand: config.verifyCommand } : {}), log: (line) => out(line) })
-          : undefined;
-      // looks back over closed tasks; its calls show in the activity feed like the supervisor's
-      const observer =
-        runners && config?.observer
-          ? new Observer({ networkDir: dir, config: config.observer, ...(prices ? { prices } : {}), log: (line) => out(line), onActivity: (e) => runners.recordActivity("observer", e) })
-          : undefined;
-      // reads each version of a plan the lead writes, for what breaks in production
-      const planCritic =
-        runners && config?.planCritic
-          ? new PlanCritic({ networkDir: dir, projectDir: config.project ?? dirname(dir), config: config.planCritic, folderOf: (id) => runners.agentFolder(id)?.cwd, ...(prices ? { prices } : {}), log: (line) => out(line), onActivity: (e) => runners.recordActivity("plan-critic", e) })
-          : undefined;
-      return {
-        networkDir: dir, ...(runners ? { runners } : {}), ...(prices ? { prices } : {}), ...(supervisor ? { supervisor } : {}), ...(scheduler ? { scheduler } : {}), ...(observer ? { observer } : {}), ...(planCritic ? { planCritic } : {}),
-        ...(config?.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}),
-        ...(config?.verifyCommand ? { verifyCommand: config.verifyCommand } : {}),
-        ...(config?.mergeStrategy ? { mergeStrategy: config.mergeStrategy } : {}),
-        ...(config?.mergeCheck?.setup ? { mergeSetup: config.mergeCheck.setup } : {}),
-        ...(config?.notify ? { notify: config.notify } : {}),
-        ...(runners && config?.drafter ? { drafter: config.drafter } : {}),
-      };
+    // the same agents' runners on two pages would take the same tasks twice
+    const elsewhere = (await listProjects(registryFile(env))).filter((r) => r.servedBy && r.servedBy.pid !== process.pid && projects.some((p) => p.config && resolve(dirname(p.dir)) === r.dir));
+    for (const r of elsewhere) out(`warning: ${r.name} is open on another page too (${r.servedBy!.url}): its agents' runners would run twice; stop that page or close the project there`);
+    const specs = projects.map(({ dir, config }) => assembleProject(dir, config, out));
+    const control = specs.some((s) => s.runners);
+    const ui = await startUiServer(specs, {
+      port, log: out,
+      // the list of all projects, and opening one from it, belong to a page that controls agents
+      ...(control ? { registry: registryFile(env), openProject: (dir: string, config?: string) => openProjectAt(dir, { ...(config ? { config } : {}), env }, out) } : {}),
     });
-    const ui = await startUiServer(specs, { port });
     out(`Agent Network UI: ${ui.url}  (${projects.length === 1 ? `network: ${projects[0]!.dir}` : `projects: ${projects.map((p) => basename(dirname(p.dir))).join(", ")}`})  Ctrl+C to stop`);
-    const pools = specs.flatMap((s, i) => (s.runners ? [{ pool: s.runners, config: projects[i]!.config!, name: basename(dirname(s.networkDir)), supervisor: s.supervisor, scheduler: s.scheduler, projectId: ui.projects[i]!.id, networkDir: s.networkDir, spawner: undefined as Spawner | undefined, observer: s.observer, planCritic: s.planCritic }] : []));
-    for (const entry of pools) {
-      const { pool, config, name, supervisor, scheduler, projectId, networkDir } = entry;
-      // the templates leads may spawn from, for their MCP servers; and the loop that starts the spawned runners
-      await writeSpawnFile(networkDir, config.spawn);
-      if (config.spawn) {
-        entry.spawner = new Spawner({ networkDir, spawn: config.spawn, pool, log: (line) => out(line) });
-        entry.spawner.start();
-      }
-      const auto = config.agents.filter((a) => a.autostart !== false).map((a) => a.id);
-      for (const id of auto) pool.start(id);
-      const where = pools.length > 1 ? ` (${name})` : "";
-      out(`runners${where}: ${config.agents.map((a) => a.id).join(", ")}${auto.length ? `; started: ${auto.join(", ")}` : "; none started (autostart: false)"}`);
-      if (entry.observer) {
-        entry.observer.start();
-        out(`observer${pools.length > 1 ? ` (${name})` : ""}: ${config.observer!.cron ? `runs on ${config.observer!.cron}` : "runs from the button on its tab"}; digests of closed tasks are collected as they close`);
-      }
-      if (entry.planCritic) {
-        entry.planCritic.start();
-        out(`plan critic${pools.length > 1 ? ` (${name})` : ""}: reads every plan version a lead writes for a task with a plan to approve`);
-      }
-      if (config.spawn) out(`spawn${pools.length > 1 ? ` (${name})` : ""}: leads may add ${config.spawn.templates.map((t) => t.name).join(", ")} (up to ${config.spawn.maxPerTask} per task)`);
-      if (scheduler) {
-        scheduler.start();
-        const list = config.schedules ?? [];
-        out(`schedules${where}: ${list.length ? list.map((s) => `${s.id} (${s.cron}${s.enabled ? "" : ", off"})`).join(", ") : "none yet (add them on the Tasks tab)"}`);
-      }
-      if (supervisor) {
-        supervisor.attach(ui.url, projectId);
-        if (config.supervisor!.autostart) supervisor.start();
-        out(`supervisor${where}: ${config.supervisor!.command[0]}${config.supervisor!.model ? ` (${config.supervisor!.model})` : ""}; ${config.supervisor!.autostart ? "watching" : "off (autostart: false), switch it on on the page"}`);
-      }
-    }
-    if (pools.length) {
+    if (control) {
       let stopping = false;
       const shutdown = (): void => {
         if (stopping) process.exit(130); // second Ctrl+C: leave now
         stopping = true;
         out("stopping the runners...");
-        void Promise.all(pools.map(({ pool, supervisor, scheduler, spawner, observer, planCritic }) => Promise.all([spawner?.stop(), observer?.stop(), planCritic?.stop(), pool.stopAll(), supervisor?.stop(), scheduler?.stop()])))
-          .then(() => ui.close())
-          .then(() => process.exit(0));
+        void ui.close().then(() => process.exit(0));
       };
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);

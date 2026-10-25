@@ -4,7 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { AppError, isAppError } from "../errors.js";
 import { readGitContext } from "../git.js";
 import { assertChangeName, changePath, hasChange, listChanges, type Exec } from "../openspec.js";
@@ -16,6 +16,7 @@ import { MessageStore } from "../stores/messageStore.js";
 import { TaskStore } from "../stores/taskStore.js";
 import type { GitContext, Task } from "../types.js";
 import { acceptanceAlerts, collectAcceptance, renderAcceptancePage, type AcceptanceRange } from "../acceptancePage.js";
+import { forgetProject, listProjects, peekProject, registerProject, releaseProjects } from "../registry.js";
 import { attentionItems, linuxSender, Notifier, type AttentionItem, type NotifyConfig, type Sender } from "../attention.js";
 import { inspectContract, m2Origin, pomCoords } from "../contract.js";
 import { Drafter, type DraftContext, type DrafterOptions } from "../drafter.js";
@@ -77,6 +78,12 @@ export interface UiProject {
   notify?: NotifyConfig;
   /** «Составить черновик» in the task form (runners.json "drafter"). */
   drafter?: ObserverConfig;
+  /** Its runners config file (for the list of all projects). */
+  configPath?: string;
+  /** Begins what the project runs once the page is up (runners, supervisor, schedules…; src/ui/assemble.ts). */
+  start?: (url: string, projectId: string, many: boolean) => Promise<void>;
+  /** Ends it: «Закрыть» on the page, or the page stopping. */
+  stop?: () => Promise<void>;
 }
 
 export interface UiOptions {
@@ -102,6 +109,12 @@ export interface UiOptions {
   deployGit?: Git;
   /** Tests: kubectl of the rollout check, and its poll interval. */
   deployKube?: { kubectl?: Kubectl; intervalMs?: number; jenkins?: OpenJenkins; jenkinsIntervalMs?: number };
+  /** The list of all projects (~/.agent-network/projects.json, src/registry.ts); absent: only the projects of this page. */
+  registry?: string;
+  /** «Открыть» / «+ Добавить проект»: loads a project from its folder as `ui` would (src/ui/assemble.ts); absent: refused. */
+  openProject?: (dir: string, config?: string) => Promise<UiProject>;
+  /** Where opening and closing a project write their lines (the terminal of `ui`). */
+  log?: (line: string) => void;
 }
 
 interface Project {
@@ -132,6 +145,8 @@ interface Project {
   notifier?: Notifier;
   /** «Составить черновик»: a read-only session drafts a task from the operator's idea. */
   drafter?: Drafter;
+  configPath?: string;
+  stop?: () => Promise<void>;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -305,7 +320,9 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     typeof target === "string" ? [{ networkDir: target, ...(opts.runners ? { runners: opts.runners } : {}), ...(opts.prices ? { prices: opts.prices } : {}) }] : target;
   if (!specs.length) throw new AppError("INVALID_CONFIG", "No project to show");
   const projects: Project[] = [];
-  for (const spec of specs) {
+  const sender = opts.notifySend !== undefined ? opts.notifySend : await linuxSender();
+  /** A project joins the page: at the start, or opened from the list while the page runs. */
+  async function addProject(spec: UiProject): Promise<Project> {
     const networkDir = resolve(spec.networkDir);
     if (projects.some((p) => p.networkDir === networkDir)) throw new AppError("INVALID_CONFIG", `Two projects use the same network ${networkDir}`);
     const projectDir = dirname(networkDir);
@@ -313,7 +330,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const base = slug(basename(projectDir));
     let id = base;
     for (let n = 2; projects.some((p) => p.id === id); n++) id = `${base}-${n}`;
-    projects.push({
+    const p: Project = {
       id,
       name: basename(projectDir),
       networkDir,
@@ -329,23 +346,25 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       ...(spec.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: spec.maxTaskCostUsd } : {}),
       ...(spec.verifyCommand ? { verifyCommand: spec.verifyCommand } : {}),
       ...(spec.mergeStrategy ? { mergeStrategy: spec.mergeStrategy } : {}),
+      ...(spec.configPath ? { configPath: spec.configPath } : {}),
+      ...(spec.stop ? { stop: spec.stop } : {}),
       deployer: new Deployer(await FileStore.open(networkDir), projectDir, opts.deployGit, opts.deployKube),
-    });
+    };
+    if (p.pool && spec.drafter) {
+      p.drafter = new Drafter({
+        networkDir: p.networkDir, fs: p.fs, config: spec.drafter, context: () => draftContext(p),
+        ...(p.prices ? { prices: async () => (await p.prices!()) ?? {} } : {}),
+        ...(opts.draftRun ? { run: opts.draftRun } : {}), ...(opts.draftInspect ? { inspect: opts.draftInspect } : {}),
+        onActivity: (e) => p.pool!.recordActivity("drafter", e),
+      });
+    }
+    if (p.pool) p.notifier = new Notifier(sender, spec.notify ?? {});
+    projects.push(p);
+    return p;
   }
-  for (const [i, p] of projects.entries()) {
-    const cfg = specs[i]!.drafter;
-    if (!p.pool || !cfg) continue;
-    p.drafter = new Drafter({
-      networkDir: p.networkDir, fs: p.fs, config: cfg, context: () => draftContext(p),
-      ...(p.prices ? { prices: async () => (await p.prices!()) ?? {} } : {}),
-      ...(opts.draftRun ? { run: opts.draftRun } : {}), ...(opts.draftInspect ? { inspect: opts.draftInspect } : {}),
-      onActivity: (e) => p.pool!.recordActivity("drafter", e),
-    });
-  }
+  for (const spec of specs) await addProject(spec);
 
   // what waits for the operator, every few seconds for every project: the page's inbox, and a notification of what is new
-  const sender = opts.notifySend !== undefined ? opts.notifySend : await linuxSender();
-  for (const [i, p] of projects.entries()) if (p.pool) p.notifier = new Notifier(sender, specs[i]!.notify ?? {});
   // one look at a time; closing the page waits for the one in flight (it writes attention.json)
   let looking: Promise<void> | null = null;
   let closing = false;
@@ -377,6 +396,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
   }
 
   const host = opts.host ?? "127.0.0.1";
+  let pageUrl = (): string => "";
 
   /** Agents in their own worktree see only committed work: the change must be in each runner's folder already. */
   /** The agents (of `agents`) whose folder lacks the change; an auto worktree not created yet will get it from HEAD. */
@@ -511,6 +531,63 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     );
   });
 
+  /** The projects of the list that are not on this page: from their folder alone, with the page that runs them if any. */
+  async function knownProjects() {
+    if (!opts.registry) return [];
+    const here = new Set(projects.map((p) => p.projectDir));
+    const list = (await listProjects(opts.registry)).filter((r) => !here.has(r.dir));
+    return Promise.all(list.map(async (r) => ({ dir: r.dir, path: tilde(r.dir), name: r.name, openedAt: r.openedAt, servedBy: r.servedBy && r.servedBy.pid !== process.pid ? r.servedBy.url : null, ...(await peekProject(r.dir)) })));
+  }
+
+  /** «Открыть», «+ Добавить проект», «Закрыть», «Убрать из списка». */
+  async function projectAction(what: string, body: Record<string, unknown>): Promise<Reply> {
+    const dirOf = (): string => {
+      const raw = typeof body.dir === "string" ? body.dir.trim().replace(/^~(?=\/|$)/, homedir()) : "";
+      if (!raw || !isAbsolute(raw)) throw new AppError("INVALID_INPUT", "dir: the absolute path of the project's git repository");
+      return resolve(raw);
+    };
+    if (what === "open") {
+      if (!opts.openProject) throw new AppError("INVALID_INPUT", "This page cannot open projects (started read-only, or with --network-dir): start `agent-network-mcp ui` in the project");
+      const asked = dirOf();
+      const root = (await gitRoot(asked)) ?? asked;
+      const there = projects.find((x) => x.projectDir === root);
+      if (there) return json(200, { project: { id: there.id }, already: true });
+      const known = opts.registry ? (await listProjects(opts.registry)).find((r) => r.dir === root) : undefined;
+      // two pages must not run two sets of runners for the same agents
+      if (known?.servedBy && known.servedBy.pid !== process.pid) {
+        throw new AppError("INVALID_INPUT", `${known.name} is open on another page: ${known.servedBy.url}. Close it there first, or go there`, { url: known.servedBy.url });
+      }
+      const spec = await opts.openProject(root, known?.config);
+      const added = await addProject(spec).catch(async (e: unknown) => {
+        await spec.stop?.();
+        throw e;
+      });
+      if (opts.registry) await registerProject(added.projectDir, { ...(spec.configPath ? { config: spec.configPath } : {}), served: { pid: process.pid, url: pageUrl() } }, opts.registry);
+      await spec.start?.(pageUrl(), added.id, projects.length > 1);
+      opts.log?.(`project opened: ${added.name} (${added.projectDir})`);
+      return json(200, { project: { id: added.id } });
+    }
+    if (what === "close") {
+      const id = String(body.id ?? "");
+      const at = projects.findIndex((x) => x.id === id);
+      if (at < 0) throw new AppError("INVALID_INPUT", `No project '${id}' on this page`);
+      if (projects.length === 1) throw new AppError("INVALID_INPUT", "It is the page's only project: open another one first, or stop `ui`");
+      const [gone] = projects.splice(at, 1);
+      await gone!.stop?.();
+      gone!.operator?.close();
+      if (opts.registry) await releaseProjects([gone!.projectDir], process.pid, opts.registry);
+      opts.log?.(`project closed: ${gone!.name} (its runners stopped; it stays on the list)`);
+      return json(200, { closed: id });
+    }
+    if (what === "forget") {
+      const dir = dirOf();
+      if (projects.some((x) => x.projectDir === dir)) throw new AppError("INVALID_INPUT", "The project is open on this page: close it first");
+      if (!opts.registry) throw new AppError("INVALID_INPUT", "This page has no list of projects");
+      return json(200, { forgotten: await forgetProject(dir, opts.registry) });
+    }
+    return text(404, "not found");
+  }
+
   async function handle(req: IncomingMessage): Promise<Reply> {
     const hostHeader = req.headers.host ?? "";
     if (!/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(hostHeader)) return text(403, "forbidden host");
@@ -523,7 +600,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
 
     if (method === "GET") {
       if (path === "/") return { status: 200, type: "text/html; charset=utf-8", body: PAGE_HTML };
-      if (path === "/api/projects") return json(200, { projects: await Promise.all(projects.map(summary)) });
+      if (path === "/api/projects") return json(200, { projects: await Promise.all(projects.map(summary)), known: await knownProjects(), canOpen: !!opts.openProject && !!opts.registry });
       if (path === "/api/openspec/folders") {
         // before a task implements a change: which of its agents do not have it in their folder yet
         const change = assertChangeName(url.searchParams.get("change") ?? "");
@@ -686,15 +763,18 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       if (log && p.pool) return json(200, { id: log[1], lines: p.pool.log(decodeURIComponent(log[1]!)) });
       return text(404, "not found");
     }
+    if (method === "POST" && path.startsWith("/api/projects/")) {
+      const refused = crossSite(req, hostHeader);
+      if (refused) return refused;
+      if (req.headers["x-agent-network-actor"] === "supervisor") throw new AppError("FORBIDDEN", "Opening and closing projects is the operator's");
+      return projectAction(path.slice("/api/projects/".length), (await readJson(req)) as Record<string, unknown>);
+    }
     const pool = p.pool;
     const operator = p.operator;
     if (method !== "POST" || !pool || !operator) return text(405, pool ? "method not allowed" : "read-only (start the UI with --runners to control agents)");
 
-    // a cross-site page can send a "simple" POST to localhost; require same-origin JSON
-    const origin = req.headers.origin;
-    const site = req.headers["sec-fetch-site"];
-    if ((origin && origin !== `http://${hostHeader}`) || (site && site !== "same-origin" && site !== "none")) return text(403, "cross-origin request refused");
-    if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) return text(415, "application/json expected");
+    const refused = crossSite(req, hostHeader);
+    if (refused) return refused;
     const body = await readJson(req);
 
     if (path === "/api/deploy/settings") return json(200, { settings: await saveSettings(p.fs, (body as { settings?: unknown }).settings) });
@@ -1204,20 +1284,39 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     server.listen(opts.port ?? 4777, host, resolve);
   });
   const { port } = server.address() as AddressInfo;
+  pageUrl = () => `http://${host === "::1" ? "[::1]" : host}:${port}`;
+  for (const [i, spec] of specs.entries()) {
+    const p = projects[i]!;
+    if (opts.registry) await registerProject(p.projectDir, { ...(spec.configPath ? { config: spec.configPath } : {}), ...(p.pool ? { served: { pid: process.pid, url: pageUrl() } } : {}) }, opts.registry);
+    await spec.start?.(pageUrl(), p.id, specs.length > 1);
+  }
   return {
     server,
-    url: `http://${host === "::1" ? "[::1]" : host}:${port}`,
-    projects: projects.map((p) => ({ id: p.id, networkDir: p.networkDir })),
+    url: pageUrl(),
+    get projects() {
+      return projects.map((p) => ({ id: p.id, networkDir: p.networkDir }));
+    },
     close: () =>
       new Promise(async (resolve) => {
         closing = true;
         clearInterval(attentionTimer);
         await looking?.catch(() => undefined);
+        await Promise.all(projects.map((p) => p.stop?.().catch(() => undefined)));
+        if (opts.registry) await releaseProjects(projects.map((p) => p.projectDir), process.pid, opts.registry).catch(() => undefined);
         for (const p of projects) p.operator?.close();
         server.closeAllConnections();
         server.close(() => resolve());
       }),
   };
+}
+
+/** A cross-site page can send a "simple" POST to localhost: only same-origin JSON changes anything. */
+function crossSite(req: IncomingMessage, hostHeader: string): Reply | null {
+  const origin = req.headers.origin;
+  const site = req.headers["sec-fetch-site"];
+  if ((origin && origin !== `http://${hostHeader}`) || (site && site !== "same-origin" && site !== "none")) return text(403, "cross-origin request refused");
+  if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) return text(415, "application/json expected");
+  return null;
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {

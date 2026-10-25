@@ -180,7 +180,7 @@ details.more{margin:0}details.more>summary{list-style:none;cursor:pointer;color:
 details.more>summary .tg::after{content:"ещё ▾";color:var(--accent);font-size:12px;white-space:nowrap}details.more[open]>summary .tg::after{content:"свернуть ▴"}details.more[open]>summary .pv{display:none}
 @media (max-width:820px){.acard .ag{grid-template-columns:1fr}.acard .stats2{margin-left:0}}
 tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;padding:4px 0 6px 18px}
-[hidden]{display:none!important}.nw{white-space:nowrap}.path{max-width:420px;overflow-wrap:anywhere}
+[hidden]{display:none!important}.nw{white-space:nowrap}.path{max-width:420px;overflow-wrap:anywhere}td .path{min-width:160px;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .app>div{min-width:0}
 @media (max-width:820px){.app{grid-template-columns:minmax(0,1fr)}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}nav{display:flex;overflow-x:auto}.grp,.foot{display:none}nav a{border-left:0;border-bottom:2px solid transparent;white-space:nowrap;padding:8px 12px}nav a.on{border-bottom-color:var(--accent)}.cols{grid-template-columns:1fr}.top{position:static;padding:8px 16px}main{padding:16px}.kpi{border-right:0;border-bottom:1px solid var(--line)}}
 </style>
@@ -324,9 +324,12 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     </section>
 
     <section data-panel="projects" hidden>
-      <h1>Проекты</h1><div class="lead">Репозитории на этой странице. Нажмите на строку, чтобы перейти к проекту.</div>
+      <h1>Проекты</h1><div class="lead">Открытые на этой странице и все остальные, где вы запускали ui. Нажмите на строку открытого, чтобы перейти к нему. «Открыть» загружает проект в эту страницу без перезапуска — с его runner'ами, надзором и расписаниями; «Закрыть» останавливает их, проект остаётся в списке.</div>
       <div class="panel"><table id="projects"></table></div>
-      <div class="total">Добавить проект: ещё один --runners при запуске, например <span class="mono">ui --runners shop.json --runners blog.json</span>.</div>
+      <h2 id="known-h" hidden>Остальные проекты</h2><div class="panel" id="known-p" hidden><table id="known"></table></div>
+      <div class="checks" id="addproj" hidden><input id="addproj-dir" placeholder="/Users/me/projects/shop — путь к git-репозиторию" autocomplete="off" style="flex:1;min-width:260px"><button type="button" id="addproj-go">+ Добавить проект</button></div>
+      <pre class="log err" id="proj-err" hidden></pre>
+      <div class="total" id="proj-note">Список всех проектов ведёт страница, запущенная с runner'ами: ~/.agent-network/projects.json.</div>
     </section>
 
     <section data-panel="events" hidden>
@@ -383,20 +386,23 @@ let win=WIN[store("an.win")]?store("an.win"):"24h";
 document.querySelectorAll("#win button").forEach(b=>b.onclick=()=>{win=b.dataset.w;store("an.win",win);render()});
 function inWin(iso,w){return !!iso&&Date.now()-Date.parse(iso)<=WIN[w||win]}
 
-let S=null,RUNS=[],PROJ=[],controlMode=false,n=0;
+let S=null,RUNS=[],PROJ=[],PROJK=[],PROJ_CAN=false,controlMode=false,n=0;
 async function tick(){
   try{
     const s=await getJSON(q("/api/state"));S=s;controlMode=!!s.control;watchTransitions(s);watchSupervisor(s);watchNotes(s);
     if(!route.project)route.project=s.project.id;
     if(["overview","runs","runners"].includes(route.tab)||!n)RUNS=(await getJSON(q("/api/runs"))).runs;
-    if(route.tab==="projects"||n%3===0)PROJ=(await getJSON("/api/projects")).projects;
+    if(route.tab==="projects"||n%3===0){const pj=await getJSON("/api/projects");PROJ=pj.projects;PROJK=pj.known||[];PROJ_CAN=!!pj.canOpen}
     if(["activity","runners","tasks","overview"].includes(route.tab))await fetchActivity();
     if(route.tab==="supervisor")SUP=await getJSON(q("/api/supervisor"+(supAll?"?all=1":"")));
     if(route.tab==="observer")OBS=await getJSON(q("/api/observer"));
     if(route.tab==="deploy")DEP=await getJSON(q("/api/deploys"));
     ATT=await getJSON("/api/attention").catch(()=>ATT);watchAttention(ATT);
     n++;render();planSync();
-  }catch(e){$("topbar").textContent="нет связи с сервером"}
+  }catch(e){
+    // the project on screen was closed (here or on another tab): back to the page's first one
+    if(e.message==="404"&&route.project){route.project=null;resetProject();location.hash="#/projects";return}
+    $("topbar").textContent="нет связи с сервером"}
 }
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
@@ -407,7 +413,7 @@ function current(){return PROJ.find(p=>p.id===route.project)}
 function renderChrome(){
   const s=S,p=current(),tasks=s.tasks,rs=s.control?s.control.runners:[];
   $("projname").textContent=s.project.name;
-  $("projsub").textContent=[p&&p.git?p.git.branch+" · "+p.git.head:"не git",s.project.count+" "+plural(s.project.count,"проект","проекта","проектов")].join(" · ");
+  $("projsub").textContent=[p&&p.git?p.git.branch+" · "+p.git.head:"не git",s.project.count+" "+plural(s.project.count,"проект","проекта","проектов")+(PROJK.length?", ещё "+PROJK.length+" в списке":"")].join(" · ");
   const otherQ=PROJ.filter(x=>x.id!==route.project).reduce((a,x)=>a+x.openQuestions,0);
   $("projdot").className="dot "+((s.openQuestions||[]).length||otherQ?"warn":rs.some(r=>r.session)?"ok":"");
   $("dir").textContent=s.project.networkDir;$("dir").title=s.networkDir;
@@ -1608,15 +1614,39 @@ function renderAgents(s){
 
 /* ---------- projects ---------- */
 function renderProjects(){
-  const t=$("projects");t.replaceChildren(head(["Проект","Ветка","HEAD","Задачи","Runner'ы","OpenSpec","Вопросы","Расход 24ч","Активность"]));
-  PROJ.forEach(p=>{const r=el("tr","click"+(p.id===route.project?" sel":""));r.onclick=()=>go("overview",p.id);
+  const t=$("projects");const sig=JSON.stringify([PROJ,route.project,controlMode,projBusy]);
+  if(t.dataset.sig!==sig){t.dataset.sig=sig;t.replaceChildren(head(["Проект","Ветка","HEAD","Задачи","Runner'ы","OpenSpec","Вопросы","Расход 24ч","Активность"]));
+  PROJ.forEach(p=>{const r=el("tr","click"+(p.id===route.project?" sel":""));r.onclick=e=>{if(e.target.closest("button"))return;go("overview",p.id)};
     const c1=el("td");const path=el("div","muted mono path",p.projectDir);path.title=p.projectDir;c1.append(el("b","",p.name),path);
     const k=p.tasks;const tasks=[k.running?k.running+" идёт":"",k.queued?k.queued+" в очереди":"",k.blocked?k.blocked+" BLOCKED":"",k.done?k.done+" готово":"",k.cancelled?k.cancelled+" отменено":""].filter(Boolean).join(" · ")||"нет задач";
     const c5=el("td","nw");if(p.runners){c5.append(dot(p.runners.working?"ok":p.runners.running?"warn":""),el("span","mono",p.runners.running+"/"+p.runners.total))}else c5.append(el("span","muted","только чтение"));
     const c7=el("td","mono",String(p.openQuestions));if(p.openQuestions)c7.style.color="var(--warn)";
+    const c10=c1;
+    if(PROJ_CAN&&PROJ.length>1&&p.control){const b=el("button","ghost","Закрыть");b.type="button";b.disabled=!!projBusy;b.title="остановить runner'ы, надзор и расписания проекта и убрать его со страницы; в списке он останется";b.style.display="block";b.style.padding="2px 0";
+      b.onclick=async()=>{if(!await ask(p.name+": закрыть? Его runner'ы, надзор и расписания остановятся (идущие сессии агентов тоже), проект останется в списке."))return;
+        await projAct("close",{id:p.id},()=>{if(route.project===p.id){const other=PROJ.find(x=>x.id!==p.id);route.project=other?other.id:null;resetProject();go("projects",route.project)}})};c10.append(b)}
     const sp=p.spend24h;r.append(c1,td(p.git?p.git.branch:"—","mono"),td(p.git?p.git.head:"не git",p.git?"mono":"muted"),td(tasks,"mono"),c5,td(p.openspec?p.openspec+" change":"—",p.openspec?"mono":"muted"),c7,
-      td(sp.usd!==null?fmtUsd(sp.usd,sp.estimated)+(sp.unpriced?" · без цены: "+sp.unpriced:""):sp.unpriced?"нет цены":"—",sp.usd!==null?"mono":"muted"),td(p.lastActivity?ago(p.lastActivity):"—","muted"));t.append(r)});
+      td(sp.usd!==null?fmtUsd(sp.usd,sp.estimated)+(sp.unpriced?" · без цены: "+sp.unpriced:""):sp.unpriced?"нет цены":"—",sp.usd!==null?"mono":"muted"),td(p.lastActivity?ago(p.lastActivity):"—","muted"));t.append(r)});}
+  // the list's other projects: what their folder shows without loading them
+  const kt=$("known");const ksig=JSON.stringify([PROJK,PROJ_CAN,projBusy]);$("known-h").hidden=$("known-p").hidden=!PROJK.length;$("addproj").hidden=!PROJ_CAN;
+  $("proj-note").hidden=PROJ_CAN;
+  if(kt.dataset.sig!==ksig){kt.dataset.sig=ksig;kt.replaceChildren(head(["Проект","Открытые задачи","Активность","Где открыт"]));
+  PROJK.forEach(k=>{const r=el("tr");const c1=el("td");const path=el("div","muted mono path",k.path);path.title=k.dir;c1.append(el("b","",k.name),path);
+    const open=!k.exists?"папки нет":k.open?k.open+(k.blocked?" · "+k.blocked+" BLOCKED":""):"нет";
+    const where=el("td");if(k.servedBy){const a=el("a","",k.servedBy);a.href=k.servedBy;a.target="_blank";a.rel="noopener";where.append(el("span","muted","на другой странице: "),a)}else where.append(el("span","muted","нигде"));
+    const c5=el("div","checks");c5.style.marginTop="4px";c1.append(c5);
+    if(PROJ_CAN&&k.exists&&!k.servedBy){const b=el("button","","Открыть");b.type="button";b.disabled=!!projBusy;b.title="загрузить проект в эту страницу: его runner'ы, надзор, расписания — как ui в его папке";
+      b.onclick=()=>projAct("open",{dir:k.dir},j=>go("overview",j.project.id));c5.append(b)}
+    if(PROJ_CAN&&!k.servedBy){const f=el("button","ghost","Убрать из списка");f.type="button";f.disabled=!!projBusy;f.title="только из списка: в проекте ничего не меняется; появится снова после ui в нём";
+      f.onclick=()=>projAct("forget",{dir:k.dir});c5.append(f)}
+    r.append(c1,td(open,k.open?"mono":"muted"),td(k.lastActivity?ago(k.lastActivity):"—","muted"),where);kt.append(r)});}
 }
+let projBusy=null;
+async function projAct(what,body,after){projBusy=what;$("proj-err").hidden=true;renderProjects();
+  try{const j=await post("/api/projects/"+what,body);if(after)after(j)}catch(e){$("proj-err").textContent=e.message;$("proj-err").hidden=false}
+  projBusy=null;await tick()}
+$("addproj-go").onclick=()=>{const dir=$("addproj-dir").value.trim();if(!dir)return;projAct("open",{dir},j=>{$("addproj-dir").value="";go("overview",j.project.id)})};
+$("addproj-dir").onkeydown=e=>{if(e.key==="Enter")$("addproj-go").click()};
 
 /* ---------- events ---------- */
 function renderEvents(){
