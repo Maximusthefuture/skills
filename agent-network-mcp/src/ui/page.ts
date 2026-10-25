@@ -197,12 +197,13 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     <a href="#/tasks" data-tab="tasks"><span class="n">02</span>Задачи<span class="c" id="c-tasks"></span></a>
     <a href="#/runs" data-tab="runs"><span class="n">03</span>Запуски<span class="c" id="c-runs"></span></a>
     <a href="#/activity" data-tab="activity"><span class="n">04</span>Активность<span class="c" id="c-activity"></span></a>
+    <a href="#/deploy" data-tab="deploy"><span class="n">05</span>Раскатка<span class="c" id="c-deploy"></span></a>
     <div class="grp">Инфраструктура</div>
-    <a href="#/supervisor" data-tab="supervisor"><span class="n">05</span>Надзор<span class="c" id="c-supervisor"></span></a>
-    <a href="#/observer" data-tab="observer"><span class="n">06</span>Наблюдатель<span class="c" id="c-observer"></span></a>
-    <a href="#/runners" data-tab="runners"><span class="n">07</span>Runner'ы<span class="c" id="c-runners"></span></a>
-    <a href="#/projects" data-tab="projects"><span class="n">08</span>Проекты<span class="c" id="c-projects"></span></a>
-    <a href="#/events" data-tab="events"><span class="n">09</span>События</a>
+    <a href="#/supervisor" data-tab="supervisor"><span class="n">06</span>Надзор<span class="c" id="c-supervisor"></span></a>
+    <a href="#/observer" data-tab="observer"><span class="n">07</span>Наблюдатель<span class="c" id="c-observer"></span></a>
+    <a href="#/runners" data-tab="runners"><span class="n">08</span>Runner'ы<span class="c" id="c-runners"></span></a>
+    <a href="#/projects" data-tab="projects"><span class="n">09</span>Проекты<span class="c" id="c-projects"></span></a>
+    <a href="#/events" data-tab="events"><span class="n">10</span>События</a>
   </nav>
   <div class="foot">сеть<br><span id="dir"></span></div>
 </aside>
@@ -269,6 +270,13 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
       <div class="total" id="a-total"></div>
     </section>
 
+    <section data-panel="deploy" hidden>
+      <h1>Раскатка</h1><div class="lead">Влитая задача → её ветка в Bitbucket (push по SSH вашим ключом) → job в Jenkins (через MCP) → проверка раскатки в Kubernetes. Перед push — «Для раскатки»: какие свойства нужны сервису и заданы ли они в окружении. Агенты ничего отсюда не запускают: только вы.</div>
+      <h2>Готово к раскатке</h2><div class="lead">Задачи, влитые в проект кнопкой «Влить в проект» и не откаченные.</div><div id="dready"></div>
+      <h2>Раскатки</h2><div id="druns"></div>
+      <h2>Настройки</h2><div class="lead">Хранятся в .agent-network/deploy/settings.json проекта. Секреты сюда не пишите: в переменных MCP пишите <span class="mono">&#36;{ИМЯ}</span> — значение возьмётся из окружения сервера страницы.</div><div id="dsettings"></div>
+    </section>
+
     <section data-panel="observer" hidden>
       <div class="hrow"><div><h1>Наблюдатель</h1><div class="lead">Смотрит на закрытые задачи и ищет проблемы самой системы: отказы протокола, лимиты ходов, сдавшиеся runner'ы, долгие ответы, дорогие фазы. Пишет отчёт с предложениями; принятое предложение становится задачей для роя.</div></div><button class="end" id="o-run" type="button" hidden>Запустить сейчас</button></div>
       <div class="card" id="o-none" hidden>Наблюдатель не настроен: добавьте секцию "observer" в runners.json (есть в примерах) и перезапустите ui.</div>
@@ -317,7 +325,7 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 </div>
 <script>
 const PHASES=["DISCUSS","IMPLEMENT","SYNC","INTEGRATE","DONE"];
-const TABS=["overview","tasks","runs","activity","supervisor","observer","runners","projects","events"];
+const TABS=["overview","tasks","runs","activity","deploy","supervisor","observer","runners","projects","events"];
 const WIN={"24h":864e5,"7d":7*864e5,"30d":30*864e5};
 const $=id=>document.getElementById(id);
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
@@ -366,12 +374,13 @@ async function tick(){
     if(["activity","runners","tasks","overview"].includes(route.tab))await fetchActivity();
     if(route.tab==="supervisor")SUP=await getJSON(q("/api/supervisor"+(supAll?"?all=1":"")));
     if(route.tab==="observer")OBS=await getJSON(q("/api/observer"));
+    if(route.tab==="deploy")DEP=await getJSON(q("/api/deploys"));
     n++;render();planSync();
   }catch(e){$("topbar").textContent="нет связи с сервером"}
 }
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
-  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderSkills();renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();
+  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderSkills();renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();if(route.tab==="deploy")renderDeploy();
   if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y)} // a refresh never moves the page
 
 function current(){return PROJ.find(p=>p.id===route.project)}
@@ -600,6 +609,95 @@ function renderReview(t){
   return box;
 }
 // the project's role library on the Runners tab: what leads can give spawned agents by name
+// «Раскатка»: merged tasks → Bitbucket → Jenkins → Kubernetes
+let DEP=null,depForm=null,depSetDirty=false;const depOpen=new Set();
+const STEP_RU={notes:"Для раскатки",push:"Push в Bitbucket",jenkins:"Job в Jenkins",kubernetes:"Kubernetes"};
+const RUN_RU={running:"идёт",ok:"готово",failed:"ошибка",cancelled:"отменена"};
+function depIcon(s){return s==="ok"?"✓":s==="failed"?"✗":s==="running"?"…":s==="skipped"?"–":"·"}
+function renderDeploy(){if(!DEP)return;renderDeployReady();renderDeployRuns();renderDeploySettings()}
+function linesToMap(t){const o={};for(const l of String(t||"").split("\n")){const i=l.indexOf("=");if(i>0)o[l.slice(0,i).trim()]=l.slice(i+1).trim()}return o}
+function mapToLines(m){return Object.entries(m||{}).map(([k,v])=>k+"="+v).join("\n")}
+function notesView(n){const box=el("div","");const envs=(DEP.settings.environments||[]).map(e=>e.name);
+  if(n.missing.length){const w=el("div","note err");w.textContent="Не задано в окружении: "+n.missing.map(m=>m.env+": "+m.envVar+" ("+m.key+")").join(", ")+". Без них сервис не стартует.";box.append(w)}
+  if(!n.properties.length)box.append(el("div","muted","Новых свойств нет ("+n.filesChanged+" файлов в diff)."));
+  else{const t=document.createElement("table");const hd=document.createElement("tr");for(const h of ["Свойство","Переменная окружения","По умолчанию","Обязательно","Секрет",...envs])hd.append(el("th","",h));t.append(hd);
+    for(const p of n.properties){const tr=document.createElement("tr");const k=el("td","");k.append(el("b","mono",p.key));k.append(el("div","muted small",p.source+(p.change==="changed"?" · изменено":"")));tr.append(k,el("td","mono",p.envVar),el("td","mono",p.defaultValue===undefined?"—":p.defaultValue),el("td","",p.required?"да":"нет"),el("td","",p.secret?"да":""));
+      for(const e of envs){const v=p.inEnv[e];const td=el("td","",v===true?"✓ задано":v===false?(p.required?"✗ нет":"нет"):"?");if(v===false&&p.required)td.style.color="var(--bad, #c0392b)";td.title=v===null?"нечего проверить: укажите values-файл или список заданных ключей окружения":"";tr.append(td)}
+      t.append(tr)}const pn=el("div","panel");pn.append(t);box.append(pn)}
+  const extra=[["Миграции",n.migrations],["Топики Kafka",n.topics.map(x=>x.key+" = "+x.value)],["Внешние адреса",n.endpoints.map(x=>x.key+" = "+x.value)]];
+  for(const[h,list]of extra)if(list.length){box.append(el("div","",""));const d=el("div","muted small",h+": ");d.append(el("span","mono",list.join(", ")));box.append(d)}
+  return box}
+function renderDeployReady(){const box=$("dready");if(!box)return;const sig=JSON.stringify([DEP.ready,DEP.control,DEP.settings.environments,depForm&&[depForm.taskId,depForm.env,!!depForm.notes,depForm.err,depForm.busy]]);if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.replaceChildren();
+  if(!DEP.ready.length){box.append(el("div","muted","Нет влитых задач: после DONE нажмите в карточке задачи «Посмотреть изменения» → «Влить в проект»."));return}
+  const pn=el("div","panel");const t=document.createElement("table");const hd=document.createElement("tr");for(const h of ["Задача","","Коммит","Влита в",""])hd.append(el("th","",h));t.append(hd);
+  for(const r of DEP.ready){const tr=document.createElement("tr");tr.append(el("td","mono",r.id),el("td","",r.title),el("td","mono",r.commit.slice(0,7)),el("td","",r.into+" · "+new Date(r.at).toLocaleString()));
+    const td=document.createElement("td");if(DEP.control){const b=el("button","small",depForm&&depForm.taskId===r.id?"Скрыть":"Раскатить…");b.type="button";b.onclick=()=>{depForm=depForm&&depForm.taskId===r.id?null:{taskId:r.id,env:(DEP.settings.environments[0]||{}).name};renderDeployReady();if(depForm)loadDeployNotes()};td.append(b)}tr.append(td);t.append(tr);
+    if(depForm&&depForm.taskId===r.id){const fr=document.createElement("tr");const fc=document.createElement("td");fc.colSpan=5;fc.append(deployForm(r));fr.append(fc);t.append(fr)}}
+  pn.append(t);box.append(pn)}
+async function loadDeployNotes(){const f=depForm;if(!f)return;f.notes=null;f.err=null;try{f.notes=(await getJSON(q("/api/tasks/"+encodeURIComponent(f.taskId)+"/deploy-notes"))).notes}catch(e){f.err="не удалось прочитать diff задачи"}if(depForm===f)renderDeployReady()}
+function deployForm(r){const f=depForm;const box=el("div","card");const row=el("div","checks");
+  const sel=document.createElement("select");for(const e of DEP.settings.environments){const o=document.createElement("option");o.value=e.name;o.textContent=e.name;sel.append(o)}sel.value=f.env;sel.onchange=()=>{f.env=sel.value;renderDeployReady()};
+  row.append(el("span","","Окружение"),sel);box.append(row);
+  box.append(el("div","muted small","Ветка: по шаблону "+DEP.settings.bitbucket.branch+" → remote "+DEP.settings.bitbucket.remote+". В неё уйдёт коммит "+r.commit.slice(0,7)+" и всё, чего ещё нет в Bitbucket."));
+  box.append(el("h3","","Для раскатки"));
+  if(f.err)box.append(el("div","note err",f.err));else if(!f.notes)box.append(el("div","muted","читаю diff…"));else box.append(notesView(f.notes));
+  const go2=el("button","",f.busy?"Отправляю…":"Отправить в Bitbucket и раскатить на "+f.env);go2.type="button";go2.disabled=!f.notes||!!f.busy;
+  go2.onclick=async()=>{const miss=(f.notes.missing||[]).filter(m=>m.env===f.env);
+    if(!await ask("Отправить "+r.id+" в Bitbucket (remote "+DEP.settings.bitbucket.remote+") и раскатить на "+f.env+"?"+(miss.length?" В "+f.env+" не задано: "+miss.map(m=>m.envVar).join(", ")+" — сервис может не стартовать.":"")))return;
+    f.busy=true;renderDeployReady();try{const res=await post("/api/tasks/"+encodeURIComponent(r.id)+"/deploy",{env:f.env});depOpen.add(res.run.id);depForm=null;DEP=await getJSON(q("/api/deploys"));renderDeploy()}catch(e){f.busy=false;f.err=e.message;renderDeployReady()}};
+  box.append(go2);return box}
+function renderDeployRuns(){const box=$("druns");if(!box)return;const sig=JSON.stringify([DEP.runs,[...depOpen],DEP.control]);if(box.dataset.sig===sig)return;box.dataset.sig=sig;box.replaceChildren();
+  const running=DEP.runs.filter(r=>r.status==="running").length;const c=$("c-deploy");if(c)c.textContent=running?String(running):"";
+  if(!DEP.runs.length){box.append(el("div","muted","Раскаток ещё не было."));return}
+  for(const r of DEP.runs){const card=el("div","card");const head=el("div","hrow");const t=el("div","");t.append(el("b","mono",r.id+" "),el("span","",r.taskId+" · "+r.taskTitle),el("div","muted small",r.env+" · "+r.branch+" · "+new Date(r.createdAt).toLocaleString()+(r.endedAt?" — "+time(r.endedAt):"")));
+    const st=el("span","badge "+(r.status==="ok"?"DONE":r.status==="running"?"IN_PROGRESS":"STOPPED"),RUN_RU[r.status]||r.status);const end=el("div","end");end.append(st);
+    if(r.status==="running"&&DEP.control){const x=el("button","ghost small","Отменить");x.type="button";x.onclick=async()=>{if(!await ask("Отменить "+r.id+"? Уже сделанный push не откатится."))return;try{await post("/api/deploys/"+r.id+"/cancel",{});DEP=await getJSON(q("/api/deploys"));renderDeploy()}catch(e){alert(e.message)}};end.append(" ",x)}
+    head.append(t,end);card.append(head);
+    for(const s of r.steps){const line=el("div","step"+(s.status==="running"?" now":s.status==="ok"?" past":""));line.append(el("span","mono",depIcon(s.status)+" "),el("b","",STEP_RU[s.name]||s.name),el("span","muted"," "+(s.summary||"")));
+      if(s.link){const a=document.createElement("a");a.href=s.link;a.target="_blank";a.rel="noopener";a.textContent=" открыть";line.append(a)}
+      if(s.status==="failed")line.style.color="var(--bad, #c0392b)";card.append(line)}
+    const open=depOpen.has(r.id);const more=el("button","ghost small",open?"Свернуть":"Подробнее");more.type="button";more.onclick=()=>{if(open)depOpen.delete(r.id);else depOpen.add(r.id);renderDeployRuns()};card.append(more);
+    if(open){if(r.notes){card.append(el("h3","","Для раскатки"));card.append(notesView(r.notes))}
+      if(r.push&&r.push.commits.length){card.append(el("h3","","Ушло в "+r.branch));const pre=el("pre","log",r.push.commits.map(c=>c.sha.slice(0,7)+" "+c.subject).join("\n"));card.append(pre)}
+      for(const s of r.steps)if(s.output){card.append(el("div","muted small",STEP_RU[s.name]+":"));card.append(el("pre","log"+(s.status==="failed"?" err":""),s.output))}}
+    box.append(card)}}
+function renderDeploySettings(){const box=$("dsettings");if(!box)return;const sig=JSON.stringify([DEP.settings,DEP.control]);if(box.dataset.sig===sig||depSetDirty)return;box.dataset.sig=sig;box.replaceChildren();
+  const S0=DEP.settings,ro=!DEP.control;const form=document.createElement("form");form.className="card";form.oninput=()=>{depSetDirty=true};
+  const field=(label,value,opts)=>{const l=el("label","",label);const i=opts&&opts.area?document.createElement("textarea"):document.createElement("input");i.value=value==null?"":String(value);if(opts&&opts.ph)i.placeholder=opts.ph;if(opts&&opts.area)i.rows=opts.rows||3;i.disabled=ro;l.append(i);form.append(l);return i};
+  form.append(el("h3","","Bitbucket"));
+  const fRemote=field("git remote (SSH-адрес репозитория в Bitbucket)",S0.bitbucket.remote,{ph:"origin"});
+  const fBranch=field("Шаблон ветки: {task} {change} {slug} {env}",S0.bitbucket.branch,{ph:"feature/{task}-{slug}"});
+  const fWeb=field("Ссылка на ветку ({branch}); пусто — для bitbucket.org сама",S0.bitbucket.webUrl||"",{ph:"https://bitbucket.example.com/projects/X/repos/svc/browse?at=refs/heads/{branch}"});
+  form.append(el("h3","","Jenkins (через MCP)"));
+  const fCmd=field("Команда MCP-сервера Jenkins, по аргументу на строку",(S0.jenkins.mcpCommand||[]).join("\n"),{area:true,ph:"npx\n-y\n<пакет MCP Jenkins>"});
+  const fEnv=field("Переменные MCP: ИМЯ=значение, по строке (значение \${ИМЯ} — из окружения сервера)",mapToLines(S0.jenkins.mcpEnv),{area:true,ph:"JENKINS_URL=https://jenkins.example.com\nJENKINS_TOKEN=\${JENKINS_TOKEN}"});
+  const fJob=field("Job",S0.jenkins.job,{ph:"orders-service/deploy"});
+  const fParams=field("Параметры job: ИМЯ=значение ({branch} {commit} {env} {task})",mapToLines(S0.jenkins.params),{area:true});
+  const fTrig=field("Инструмент MCP: запуск job",S0.jenkins.triggerTool,{});const fTrigA=field("…его аргументы (JSON, плейсхолдеры {job} {params} {branch} {env})",S0.jenkins.triggerArgs,{area:true,ph:'{"jobName": "{job}", "parameters": {params}}'});
+  const fStat=field("Инструмент MCP: статус сборки",S0.jenkins.statusTool,{});const fStatA=field("…его аргументы (JSON, {job} {build})",S0.jenkins.statusArgs,{area:true});
+  const fLog=field("Инструмент MCP: лог сборки",S0.jenkins.logTool,{});const fLogA=field("…его аргументы (JSON, {job} {build})",S0.jenkins.logArgs,{area:true});
+  const fTo=field("Сколько ждать job, минут",S0.jenkins.timeoutMin,{});
+  form.append(el("h3","","Kubernetes (только чтение)"));
+  const fKc=field("kubectl",S0.kubernetes.kubectl,{});const fCtx=field("Контекст kubeconfig",S0.kubernetes.context,{ph:"dev-cluster"});const fRt=field("Сколько ждать rollout, секунд",S0.kubernetes.rolloutTimeoutSec,{});
+  form.append(el("h3","","Окружения"));const envBox=el("div","");form.append(envBox);let envs=S0.environments.map(e=>Object.assign({},e));
+  const drawEnvs=()=>{envBox.replaceChildren();const t=document.createElement("table");const hd=document.createElement("tr");for(const h of ["Имя","Namespace","Deployment","Метки подов","Values-файл","Заданы там же (ключи или переменные)","Параметры job",""])hd.append(el("th","",h));t.append(hd);
+    envs.forEach((e,i)=>{const tr=document.createElement("tr");const cell=(k,ph,toS,fromS)=>{const td=document.createElement("td");const inp=document.createElement("input");inp.value=toS?toS(e[k]):(e[k]||"");inp.placeholder=ph||"";inp.disabled=ro;inp.oninput=()=>{e[k]=fromS?fromS(inp.value):inp.value;depSetDirty=true};td.append(inp);tr.append(td)};
+      cell("name","dev");cell("namespace","orders-dev");cell("deployment","orders-service");cell("selector","app=orders-service");cell("valuesFile","deploy/values-dev.yaml");
+      cell("provided","DB_PASSWORD, orders.topic",v=>(v||[]).join(", "),v=>v.split(",").map(x=>x.trim()).filter(Boolean));
+      cell("jobParams","CLUSTER=dev; REPLICAS=1",v=>Object.entries(v||{}).map(([k,x])=>k+"="+x).join("; "),v=>linesToMap(v.split(";").join("\n")));
+      const td=document.createElement("td");if(!ro){const x=el("button","ghost small","×");x.type="button";x.title="убрать окружение";x.onclick=()=>{envs.splice(i,1);depSetDirty=true;drawEnvs()};td.append(x)}tr.append(td);t.append(tr)});
+    const pn=el("div","panel");pn.append(t);envBox.append(pn);if(!ro){const a=el("button","ghost small","+ окружение");a.type="button";a.onclick=()=>{envs.push({name:""});depSetDirty=true;drawEnvs()};envBox.append(a)}};
+  drawEnvs();
+  const say=el("div","");form.append(say);
+  if(!ro){const save=el("button","","Сохранить настройки");save.type="submit";const reset=el("button","ghost","Отменить правки");reset.type="button";reset.onclick=()=>{depSetDirty=false;box.dataset.sig="";renderDeploySettings()};form.append(save," ",reset)}
+  else form.append(el("div","muted","Только просмотр: запустите страницу с --runners, чтобы менять настройки."));
+  form.onsubmit=async ev=>{ev.preventDefault();const num=v=>{const n=Number(v);return Number.isFinite(n)?n:undefined};
+    const settings={bitbucket:{remote:fRemote.value,branch:fBranch.value,webUrl:fWeb.value},
+      jenkins:{mcpCommand:fCmd.value.split("\n").map(x=>x.trim()).filter(Boolean),mcpEnv:linesToMap(fEnv.value),job:fJob.value,params:linesToMap(fParams.value),triggerTool:fTrig.value,triggerArgs:fTrigA.value,statusTool:fStat.value,statusArgs:fStatA.value,logTool:fLog.value,logArgs:fLogA.value,timeoutMin:num(fTo.value)},
+      kubernetes:{kubectl:fKc.value,context:fCtx.value,rolloutTimeoutSec:num(fRt.value)},environments:envs};
+    say.className="note";say.textContent="сохраняю…";
+    try{const r=await post("/api/deploy/settings",{settings});DEP.settings=r.settings;depSetDirty=false;box.dataset.sig="";renderDeploySettings();renderDeployReady();const n=$("dsettings").querySelector("form");const ok=el("div","note ok","Сохранено");if(n)n.append(ok)}catch(e){say.className="note err";say.textContent=e.message}};
+  box.append(form)}
 let ROLES=null,rolesAt=0;
 // skills × agents: a checkbox per agent (checked = it may load the skill); "всем" switches the row for every agent
 let SKILLS=null,skillsAt=0;

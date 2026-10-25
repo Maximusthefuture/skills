@@ -27,6 +27,9 @@ import { ObserverStore } from "../observer/store.js";
 import type { Observer } from "../observer/observer.js";
 import { readCritiques, type PlanCritic } from "../planCritic.js";
 import { PACKAGE_DIR } from "./runners.js";
+import { Deployer } from "../deploy/deployer.js";
+import { saveSettings } from "../deploy/settings.js";
+import type { Git } from "../deploy/push.js";
 
 export interface UiServer {
   server: Server;
@@ -72,6 +75,8 @@ export interface UiOptions {
   agentNetworkDir?: string;
   /** Tests: the git merge of "Влить в проект". */
   merge?: (project: string, branch: string, message: string) => Promise<MergeResult>;
+  /** Tests: the git of the «Раскатка» tab (push to Bitbucket). */
+  deployGit?: Git;
 }
 
 interface Project {
@@ -93,6 +98,8 @@ interface Project {
   verifyCommand?: string;
   mergeStrategy?: "squash" | "merge";
   git?: { at: number; value: Promise<GitContext | null> };
+  /** The «Раскатка» tab: deploys of merged tasks and their settings. */
+  deployer: Deployer;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -163,6 +170,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       ...(spec.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: spec.maxTaskCostUsd } : {}),
       ...(spec.verifyCommand ? { verifyCommand: spec.verifyCommand } : {}),
       ...(spec.mergeStrategy ? { mergeStrategy: spec.mergeStrategy } : {}),
+      deployer: new Deployer(await FileStore.open(networkDir), projectDir, opts.deployGit),
     });
   }
   const host = opts.host ?? "127.0.0.1";
@@ -435,6 +443,19 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         const log = await readSessionLog(p.networkDir, supSession[1]!);
         return json(200, { id: log.id, file: tilde(log.file), text: formatSessionLog(log.lines), lines: log.lines });
       }
+      if (path === "/api/deploys") {
+        // the «Раскатка» tab: merged tasks ready to deploy, the deploys so far, the settings
+        const tasks = await new TaskStore(p.fs).list();
+        const ready = tasks
+          .filter((t) => t.merged && !t.merged.reverted)
+          .map((t) => ({ id: t.id, title: t.title, commit: t.merged!.commit, into: t.merged!.into, at: t.merged!.at }))
+          .sort((a, b) => b.at.localeCompare(a.at));
+        return json(200, { control: !!p.pool, settings: await p.deployer.settings(), ready, runs: await p.deployer.list() });
+      }
+      const dep = /^\/api\/deploys\/(dep-\d+)$/.exec(path);
+      if (dep) return json(200, { run: await p.deployer.get(dep[1]!) });
+      const depNotes = /^\/api\/tasks\/([^/]+)\/deploy-notes$/.exec(path);
+      if (depNotes) return json(200, { notes: await p.deployer.notes(await new TaskStore(p.fs).get(decodeURIComponent(depNotes[1]!))) });
       const log = /^\/api\/runners\/([^/]+)\/log$/.exec(path);
       if (log && p.pool) return json(200, { id: log[1], lines: p.pool.log(decodeURIComponent(log[1]!)) });
       return text(404, "not found");
@@ -450,6 +471,16 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) return text(415, "application/json expected");
     const body = await readJson(req);
 
+    if (path === "/api/deploy/settings") return json(200, { settings: await saveSettings(p.fs, (body as { settings?: unknown }).settings) });
+    const depStart = /^\/api\/tasks\/([^/]+)\/deploy$/.exec(path);
+    if (depStart) {
+      const task = await operator.tasks.get(decodeURIComponent(depStart[1]!));
+      const run = await p.deployer.start(task, String((body as { env?: unknown }).env ?? ""));
+      await p.journal.add({ kind: "action", by: "operator", taskId: task.id, text: `раскатка ${run.id}: ${run.branch} → ${run.remote}, окружение ${run.env}` });
+      return json(201, { run });
+    }
+    const depCancel = /^\/api\/deploys\/(dep-\d+)\/cancel$/.exec(path);
+    if (depCancel) return json(200, { run: await p.deployer.cancel(depCancel[1]!) });
     if (path === "/api/tasks") {
       const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; from?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown; allowSpawn?: unknown };
       // a preset (fast / standard / thorough) sets the three; without one, each comes as it is

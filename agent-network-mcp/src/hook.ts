@@ -224,6 +224,8 @@ const denyHook = (reason: string) => ({ hookSpecificOutput: { hookEventName: "Pr
 export function gitWriteDecision(command: string): object | null {
   const cmd = command.trim();
   if (!/^git\s/.test(cmd)) return null;
+  // the work leaves the machine only from the «Раскатка» tab, by the operator: never an agent's push
+  if (/^git(\s+-[cC]\s+\S+)*\s+push(\s|$)/.test(cmd)) return denyHook("git push is refused for agents: the operator pushes the merged work from the «Раскатка» tab. Commit, and report the commit in complete().");
   const flag = /(^|\s)(--output(=|\s|$)|--output-directory|-o\s|--ext-diff|--textconv|--upload-pack|--receive-pack|--exec(=|\s))/.exec(cmd);
   return flag ? denyHook(`git ${flag[2]!.trim()} is refused here: it writes a file or runs a program. Read with git diff / git log / git show as they are, without it.`) : null;
 }

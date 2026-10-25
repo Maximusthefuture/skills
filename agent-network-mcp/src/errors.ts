@@ -40,6 +40,8 @@ export type ErrorCode =
   | "REVIEW_OPEN"
   | "OPENSPEC_INVALID"
   | "LOCK_TIMEOUT"
+  | "PUSH_FAILED"
+  | "DEPLOY_RUNNING"
   | "INTERNAL_ERROR";
 
 /** Error that is safe to show to an agent: stable code + human readable message, no stack. */
