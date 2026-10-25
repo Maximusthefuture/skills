@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -14,6 +15,7 @@ import { MessageStore } from "../stores/messageStore.js";
 import { TaskStore } from "../stores/taskStore.js";
 import type { GitContext, Task } from "../types.js";
 import { acceptanceAlerts, collectAcceptance, renderAcceptancePage, type AcceptanceRange } from "../acceptancePage.js";
+import { MergeChecker, mergeRef, type MergeCheck } from "../mergeCheck.js";
 import { PAGE_HTML } from "./page.js";
 import { listRuns, queueStates, taskState, type RunView } from "./runs.js";
 import type { RunnerPool } from "./runners.js";
@@ -63,6 +65,8 @@ export interface UiProject {
   verifyCommand?: string;
   /** "Влить в проект": squash (default) or merge. */
   mergeStrategy?: "squash" | "merge";
+  /** The merge check's setup commands (runners.json "mergeCheck.setup"); absent: by the lockfile. */
+  mergeSetup?: string[];
 }
 
 export interface UiOptions {
@@ -105,6 +109,8 @@ interface Project {
   git?: { at: number; value: Promise<GitContext | null> };
   /** The «Раскатка» tab: deploys of merged tasks and their settings. */
   deployer: Deployer;
+  /** «Влить в проект» of a task with verifyCommand: the merge built and checked before it reaches the project. */
+  mergeChecker?: MergeChecker;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -125,6 +131,18 @@ async function leadBranch(p: { pool?: RunnerPool; projectDir: string }, task: { 
     throw new AppError("INVALID_INPUT", `${lead} (the lead) has no branch of its own: it works in the project folder${folder?.cwd ? ` or on no branch in ${folder.cwd}` : ""}, so its commits are there already`);
   }
   return { project, branch };
+}
+
+/** The merge check of a project: a green merge is recorded by the operator, with the acceptance when «Принять и влить» started it. */
+function newMergeChecker(fs: FileStore, operator: NetworkService, setup: string[] | undefined): MergeChecker {
+  return new MergeChecker(fs, {
+    ...(setup ? { setup } : {}),
+    land: async (task, input, move) => {
+      const verified = { command: input.verified.command, ...(input.verified.tests ? { tests: input.verified.tests } : {}) };
+      await operator.mergeTask({ taskId: task.id, project: input.project, branch: input.branch, strategy: input.strategy, verified }, () => move());
+      if (input.accept) await operator.recordAcceptance({ taskId: task.id, status: "accepted" });
+    },
+  });
 }
 
 /**
@@ -175,6 +193,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const networkDir = resolve(spec.networkDir);
     if (projects.some((p) => p.networkDir === networkDir)) throw new AppError("INVALID_CONFIG", `Two projects use the same network ${networkDir}`);
     const projectDir = dirname(networkDir);
+    const operator = spec.runners ? await NetworkService.create(networkDir, { id: "operator", type: "ui" }) : undefined;
     const base = slug(basename(projectDir));
     let id = base;
     for (let n = 2; projects.some((p) => p.id === id); n++) id = `${base}-${n}`;
@@ -185,7 +204,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       projectDir,
       fs: await FileStore.open(networkDir),
       journal: new Journal(await FileStore.open(networkDir)),
-      ...(spec.runners ? { pool: spec.runners, operator: await NetworkService.create(networkDir, { id: "operator", type: "ui" }) } : {}),
+      ...(spec.runners && operator ? { pool: spec.runners, operator, mergeChecker: newMergeChecker(await FileStore.open(networkDir), operator, spec.mergeSetup) } : {}),
       ...(spec.prices ? { prices: spec.prices } : {}),
       ...(spec.runners && spec.supervisor ? { supervisor: spec.supervisor } : {}),
       ...(spec.runners && spec.observer ? { observer: spec.observer } : {}),
@@ -356,8 +375,13 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         // the page is open: a BLOCKED task whose deadline passed goes to its lead even with no runner around
         if (p.operator) for (const t of await p.operator.tasks.list()) if (t.status === "BLOCKED" && t.handover) await p.operator.escalateIfDue(t.id).catch(() => null);
         const pricing = (await p.prices?.()) ?? {};
+        const state = await buildUiState(p.fs, undefined, pricing);
+        // a DONE task's merge check: running, green, red (what failed), a conflict, handed to a follow-up
+        for (const t of state.tasks as { id: string; status: string; mergeCheck?: MergeCheck | null }[]) {
+          if (t.status === "COMPLETED") t.mergeCheck = p.mergeChecker ? await p.mergeChecker.get(t.id) : await p.fs.readJson<MergeCheck>(["tasks", t.id, "merge-check.json"]);
+        }
         return json(200, {
-          ...(await buildUiState(p.fs, undefined, pricing)),
+          ...state,
           project: { id: p.id, name: p.name, projectDir: tilde(p.projectDir), networkDir: tilde(p.networkDir), count: projects.length },
           control: p.pool
             ? {
@@ -389,7 +413,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         // the acceptance page of a DONE task: built from the task's data and the lead's table on every open
         const d = await acceptanceOf(p, decodeURIComponent(acc[1]!));
         if (acc[2]) return { status: 200, type: "text/html; charset=utf-8", body: injectSdk(renderAcceptancePage(d)), csp: PLAN_CSP };
-        return json(200, { alerts: acceptanceAlerts(d), table: !!d.acceptance, verdict: d.task.acceptance ?? null, ownBranch: !!d.branch && !d.task.merged });
+        const mergeCheck = p.mergeChecker ? await p.mergeChecker.get(d.task.id) : (d.mergeCheck ?? null);
+        return json(200, { alerts: acceptanceAlerts(d), table: !!d.acceptance, verdict: d.task.acceptance ?? null, ownBranch: !!d.branch && !d.task.merged, verify: d.task.verifyCommand ?? null, mergeCheck: d.task.merged ? null : mergeCheck });
       }
       const planOf = /^\/api\/tasks\/([^/]+)\/plan(?:\/(\d+)(\/view)?)?$/.exec(path);
       if (planOf) {
@@ -573,18 +598,92 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       await operator.addReviewComments(followUp.id, list);
       return followUp;
     };
+    // «Влить в проект»: a task with verifyCommand is checked first (the merge built and its build run apart from the
+    // project; only a green one lands); without one it merges as it is, marked unverified
+    const startMerge = async (task: Task, accept: boolean): Promise<{ check: MergeCheck } | { task: Task }> => {
+      const { project, branch } = await leadBranch(p, task);
+      const strategy = p.mergeStrategy ?? "squash";
+      if (task.verifyCommand && p.mergeChecker) {
+        const check = await p.mergeChecker.start(task, { project, branch, strategy, accept });
+        if (check) {
+          await acted(task.id, `${check.status === "conflict" ? "merge conflicts" : "merge check started"}: ${branch} into ${check.into}`);
+          return { check };
+        }
+      }
+      const merged = await operator.mergeTask({ taskId: task.id, project, branch, strategy, ...(task.verifyCommand ? {} : { unverified: true as const }) }, opts.merge);
+      await acted(task.id, `merged ${branch} into ${merged.merged!.into}`);
+      return { task: accept ? await operator.recordAcceptance({ taskId: task.id, status: "accepted" }) : merged };
+    };
+    const del = /^\/api\/tasks\/([^/]+)\/delete$/.exec(path);
+    if (del) {
+      // for good, so the operator's alone; a task still being merged or deployed is left alone
+      if (bySupervisor) return json(403, { error: "FORBIDDEN", message: "Deleting a task is the operator's decision" });
+      const id = decodeURIComponent(del[1]!);
+      if ((await p.mergeChecker?.get(id))?.status === "running") throw new AppError("MERGE_CHECK_RUNNING", `The merge of ${id} is being checked: delete it once the check is over`);
+      if ((await p.deployer.list()).some((r) => r.taskId === id && r.status === "running")) throw new AppError("DEPLOY_RUNNING", `${id} is being deployed: delete it once the deploy is over`);
+      const deleted = await operator.deleteTask(id);
+      await new Promise((done) => execFile("git", ["update-ref", "-d", mergeRef(id)], { cwd: p.projectDir, timeout: 15_000 }, () => done(null)));
+      return json(200, { deleted });
+    }
+    const mergeAction = /^\/api\/tasks\/([^/]+)\/merge\/(retry|handoff|force)$/.exec(path);
+    if (mergeAction) {
+      const id = decodeURIComponent(mergeAction[1]!);
+      const task = await operator.tasks.get(id);
+      if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `${id} is not DONE`);
+      if (task.merged) throw new AppError("ALREADY_COMPLETED", `${id} is merged already (${task.merged.commit.slice(0, 7)})`);
+      const check = await p.mergeChecker?.get(id);
+      if (!check) throw new AppError("INVALID_INPUT", `${id} has no merge check: «Влить в проект» first`);
+      if (check.status === "running") throw new AppError("MERGE_CHECK_RUNNING", `The merge of ${id} is being checked`);
+      if (mergeAction[2] === "retry") return json(202, await startMerge(task, !!check.accept));
+      if (mergeAction[2] === "force") {
+        // the operator's override of a red check: merged as it is, marked unverified; never the supervisor's call
+        if (bySupervisor) return json(403, { error: "FORBIDDEN", message: "Merging a red build anyway is the operator's decision: escalate it" });
+        if (check.status === "conflict") throw new AppError("MERGE_CONFLICT", `${id} conflicts with ${check.into}: it cannot be merged as it is — hand it to the team`);
+        const { project, branch } = await leadBranch(p, task);
+        const merged = await operator.mergeTask({ taskId: id, project, branch, strategy: p.mergeStrategy ?? "squash", unverified: true }, opts.merge);
+        const saved = check.accept ? await operator.recordAcceptance({ taskId: id, status: "accepted" }) : merged;
+        return json(200, { task: saved });
+      }
+      // handoff: a follow-up of the same team starts from what failed — the checked merge, or the project's HEAD to merge in
+      if (check.status !== "red" && check.status !== "conflict") throw new AppError("INVALID_INPUT", `Only a red or conflicting merge goes to the team; ${id}'s check is ${check.status}: check it again`);
+      if (check.followUp) throw new AppError("ALREADY_COMPLETED", `${id}'s merge went to ${check.followUp} already`);
+      const short = (c: string) => c.slice(0, 7);
+      const description =
+        check.status === "red"
+          ? `The operator merged the result of ${id} ("${task.title}") into ${check.into} on its current HEAD ${short(check.base)}, and \`${check.build!.command}\` failed on that merge${check.build!.tests ? ` (${check.build!.tests.failed} of ${check.build!.tests.total} tests failed)` : ""}:\n\n${check.build!.summary}\n\n` +
+            `That merge is your starting point (baseCommit ${short(check.candidate!)}): make \`${check.build!.command}\` green on it, changing only what the failure needs. Full log: .agent-network/${check.build!.log ?? "(not kept)"} in the project.`
+          : `Merging the result of ${id} ("${task.title}") into ${check.into} (HEAD ${short(check.base)}) conflicts in: ${(check.files ?? []).join(", ")}.\n\n` +
+            `Merge ${short(check.base)} into your branches (it is your baseCommit), resolve the conflicts keeping what both sides meant, and make \`${task.verifyCommand}\` green.`;
+      const followUp = await operator.createTaskAsOperator({
+        title: `Fix the merge of ${id} into ${check.into}: ${task.title}`.slice(0, 200),
+        description,
+        agents: task.agents.filter((a) => !task.spawned?.some((x) => x.id === a)).length >= 2 ? task.agents.filter((a) => !task.spawned?.some((x) => x.id === a)) : task.agents,
+        ...(task.verifyCommand ? { verifyCommand: task.verifyCommand } : {}),
+        ...(p.maxTaskCostUsd !== undefined ? { maxCostUsd: p.maxTaskCostUsd } : {}),
+        parentTaskId: id,
+        baseCommit: check.status === "red" ? check.candidate! : check.base,
+      });
+      await p.mergeChecker!.handedTo(id, followUp.id);
+      await acted(id, `handed the ${check.status} merge to ${followUp.id}`);
+      return json(201, { followUp });
+    }
     const accAction = /^\/api\/tasks\/([^/]+)\/acceptance\/(accept|return)$/.exec(path);
     if (accAction) {
       const id = decodeURIComponent(accAction[1]!);
       const task = await operator.tasks.get(id);
       if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `${id} is not DONE: accept it once it is`);
       if (accAction[2] === "accept") {
-        // accepting a task the page can merge merges it: the lead's branch into the project, as «Влить в проект»
-        const range = task.merged ? null : await leadBranch(p, task).catch(() => null);
-        const merged = range ? await operator.mergeTask({ taskId: id, project: range.project, branch: range.branch, strategy: p.mergeStrategy ?? "squash" }, opts.merge) : null;
-        const saved = await operator.recordAcceptance({ taskId: id, status: "accepted" });
-        await acted(id, `accepted${merged ? ` and merged ${merged.merged!.branch} into ${merged.merged!.into}` : ""}`);
-        return json(200, { task: saved, merged: merged?.merged ?? null });
+        // accepting a task the page can merge merges it, as «Влить в проект»: with verifyCommand the acceptance is recorded
+        // once the checked merge lands (202 with the running check), never on a red one
+        const own = task.merged ? null : await leadBranch(p, task).catch(() => null);
+        if (!own) {
+          const saved = await operator.recordAcceptance({ taskId: id, status: "accepted" });
+          await acted(id, "accepted");
+          return json(200, { task: saved, merged: null });
+        }
+        const r = await startMerge(task, true);
+        if ("check" in r) return json(202, { check: r.check });
+        return json(200, { task: r.task, merged: r.task.merged ?? null });
       }
       // comments on blocks of the acceptance page: what to change, for a follow-up task of the same team
       const comments = (Array.isArray((body as { comments?: unknown }).comments) ? ((body as { comments: unknown[] }).comments) : [])
@@ -630,10 +729,11 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         return json(201, { task: await reviewFollowUp(task, lines, list, where), sent: "task" });
       }
       if (taskAction[2] === "merge") {
-        const { project, branch } = await leadBranch(p, await operator.tasks.get(id));
-        const merged = await operator.mergeTask({ taskId: id, project, branch, strategy: p.mergeStrategy ?? "squash" }, opts.merge);
-        await acted(id, `merged ${branch} into ${merged.merged!.into}`);
-        return json(200, { task: merged });
+        const task = await operator.tasks.get(id);
+        if (task.status !== "COMPLETED") throw new AppError("INVALID_PHASE", `Merge once the task is DONE; ${id} is ${task.phase} (${task.status})`);
+        if (task.merged) throw new AppError("ALREADY_COMPLETED", `${task.merged.branch} was merged into ${task.merged.into} at ${task.merged.at} (${task.merged.commit.slice(0, 7)})`);
+        const r = await startMerge(task, false);
+        return "check" in r ? json(202, { check: r.check }) : json(200, { task: r.task });
       }
       if (taskAction[2] === "message") {
         // always to the task's lead, who passes it on: the operator does not give the agents orders past the lead

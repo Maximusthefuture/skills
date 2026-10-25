@@ -61,6 +61,11 @@ export const MAX_SUBTASKS = 50;
 /** The human behind the network (UI, CLI). Agents ask it with send_message(to: "operator"); it is never a task agent. */
 export const OPERATOR = "operator";
 
+/** The commit message of a task merged into the project: one commit per task with squash, "task-001: <title>". */
+export function mergeMessage(task: Pick<Task, "id" | "title">, branch: string, strategy: MergeStrategy): string {
+  return (strategy === "squash" ? `${task.id}: ${task.title}` : `Merge ${branch}: ${task.id} ${task.title}`).slice(0, 200);
+}
+
 export interface ServiceOptions {
   hub?: EventHub;
   log?: (msg: string) => void;
@@ -97,6 +102,10 @@ export interface NewTaskInput {
   planReview?: boolean;
   /** Clarify by a grilling: rounds of questions, then the operator confirms the lead's summary (implies clarify). */
   grill?: boolean;
+  /** A follow-up the operator starts from another task (e.g. a merge that failed its check): the chain it belongs to. */
+  parentTaskId?: string;
+  /** Where the agents start from: they merge this commit into their branch first. */
+  baseCommit?: string;
   /** The lead may add agents from the spawn templates (spawn_agent); off by default. */
   allowSpawn?: boolean;
 }
@@ -351,6 +360,7 @@ export class NetworkService {
     if (!Number.isInteger(maxFollowUps) || maxFollowUps < 0 || maxFollowUps > 20) throw new AppError("INVALID_INPUT", "maxFollowUps must be an integer 0..20");
     const maxCostUsd = input.maxCostUsd === undefined ? undefined : checkCostLimit(input.maxCostUsd);
 
+    const parent = input.parentTaskId ? await this.tasks.get(assertTaskId(input.parentTaskId)) : null;
     const git = await readGitContext(this.projectDir);
     const description = change ? openspecDescription(change.name, input.description) : proposes ? proposeDescription(proposes, input.description) : input.description;
     const task = await this.tasks.create({
@@ -362,6 +372,8 @@ export class NetworkService {
       // analysts' input is grilled by default: their spec is a question list as much as an answer
       ...(input.grill || (inputFiles.length && input.grill === undefined) ? { grill: true } : {}),
       ...(input.allowSpawn ? { allowSpawn: true } : {}),
+      ...(parent ? { parentTaskId: parent.id, rootTaskId: parent.rootTaskId ?? parent.id } : {}),
+      ...(input.baseCommit ? { baseCommit: assertCommit(input.baseCommit) } : {}),
     });
     if (inputFiles.length) await copyInput(inputFiles, join(this.fs.root, "tasks", task.id, "input"));
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
@@ -1383,7 +1395,11 @@ export class NetworkService {
    * Refused, with nothing changed, on conflicts or uncommitted changes in the project (see worktrees.mergeBranch).
    */
   async mergeTask(
-    input: { taskId: string; project: string; branch: string; strategy?: MergeStrategy },
+    input: {
+      taskId: string; project: string; branch: string; strategy?: MergeStrategy;
+      /** The merge was built and verifyCommand ran green on that very commit first (mergeCheck.ts); unverified: it was not. */
+      verified?: { command: string; tests?: { total: number; failed: number } }; unverified?: true;
+    },
     merge: (project: string, branch: string, message: string, strategy?: MergeStrategy) => Promise<MergeResult> = mergeBranch,
   ): Promise<Task> {
     if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator merges a task's branch into the project");
@@ -1394,9 +1410,11 @@ export class NetworkService {
       if (task.merged) throw new AppError("ALREADY_COMPLETED", `${task.merged.branch} was merged into ${task.merged.into} at ${task.merged.at} (${task.merged.commit.slice(0, 7)})`);
       const strategy = input.strategy ?? "squash";
       // one commit per task by default: "task-001: <title>" — the history reads by task, and one revert undoes one
-      const message = (strategy === "squash" ? `${taskId}: ${task.title}` : `Merge ${input.branch}: ${taskId} ${task.title}`).slice(0, 200);
-      const r = await merge(input.project, input.branch, message, strategy);
-      const merged = { at: new Date().toISOString(), branch: input.branch, into: r.into, commit: r.commit, already: r.already, ...(r.already ? {} : { strategy }) };
+      const r = await merge(input.project, input.branch, mergeMessage(task, input.branch, strategy), strategy);
+      const merged = {
+        at: new Date().toISOString(), branch: input.branch, into: r.into, commit: r.commit, already: r.already, ...(r.already ? {} : { strategy }),
+        ...(input.verified && !r.already ? { verified: input.verified } : {}), ...(input.unverified && !r.already ? { unverified: true as const } : {}),
+      };
       const saved = await this.tasks.save({ ...task, merged });
       await this.emit({ type: "TASK_MERGED", taskId, sourceAgent: OPERATOR, payload: merged });
       return saved;
@@ -1415,6 +1433,28 @@ export class NetworkService {
       await this.emit({ type: "TASK_ACCEPTANCE", taskId, sourceAgent: OPERATOR, payload: acceptance });
       return saved;
     });
+  }
+
+  /**
+   * Operator: a closed task (DONE or cancelled) goes for good — its folder: messages, reports, sessions and their cost,
+   * plans, builds; and its observer digest. Code in branches and merged commits stay. Its folder keeps a tombstone
+   * (deleted.json) so the number is never given to a new task: digests, deploys and journals name tasks by it. Refused
+   * while a task of its chain (a follow-up, a delegated job) is open: those read it.
+   */
+  async deleteTask(taskId: string): Promise<{ id: string; title: string }> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator deletes a task");
+    const id = assertTaskId(taskId);
+    const task = await this.tasks.get(id);
+    if (task.status !== "COMPLETED" && task.status !== "CANCELLED") {
+      throw new AppError("INVALID_PHASE", `${id} is ${task.status}: cancel it first, then delete it`);
+    }
+    const open = (await this.tasks.list()).filter((t) => (t.status === "ACTIVE" || t.status === "BLOCKED") && (t.parentTaskId === id || t.rootTaskId === id || t.jobOf?.taskId === id));
+    if (open.length) throw new AppError("INVALID_INPUT", `${id} has open tasks of its chain that read it: ${open.map((t) => t.id).join(", ")}. Finish or cancel them first`, { open: open.map((t) => t.id) });
+    const dir = join(this.fs.root, "tasks", id);
+    await rm(dir, { recursive: true, force: true });
+    await this.fs.writeJson(["tasks", id, "deleted.json"], { id, title: task.title, status: task.status, deletedAt: new Date().toISOString() });
+    await rm(join(this.fs.root, "observer", "digests", `${id}.json`), { force: true });
+    return { id, title: task.title };
   }
 
   /** Operator: undo a merged task with one revert commit (refused, with nothing changed, on conflicts). */

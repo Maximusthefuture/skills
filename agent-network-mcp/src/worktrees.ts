@@ -81,37 +81,51 @@ async function contentMerged(project: string, branch: string): Promise<boolean> 
  * merge: a merge commit that keeps the agents' commits.
  */
 export async function mergeBranch(project: string, branch: string, message: string, strategy: MergeStrategy = "squash"): Promise<MergeResult> {
+  const pre = await mergePreflight(project, branch);
+  if (pre.already) return { commit: pre.already, already: true, into: pre.into };
+  await commitMerge(project, branch, message, strategy);
+  return { commit: (await git(project, ["rev-parse", "HEAD"])).out.trim(), already: false, into: pre.into, strategy };
+}
+
+/**
+ * What every merge into the project checks first: the branch exists, the project is on a branch and clean, the merge
+ * would not conflict (git merge-tree touches neither the index nor the files). already: the branch's work is in HEAD.
+ */
+export async function mergePreflight(project: string, branch: string): Promise<{ into: string; head: string; already?: string }> {
   if (!(await git(project, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).ok) throw new AppError("INVALID_INPUT", `No branch ${branch} in ${project}`);
   const into = (await git(project, ["symbolic-ref", "--short", "-q", "HEAD"])).out.trim();
   if (!into) throw new AppError("INVALID_INPUT", `${project} is on no branch (detached HEAD): check out the branch to merge into first`);
   const dirty = (await git(project, ["status", "--porcelain", "--untracked-files=no"])).out.trim();
   if (dirty) throw new AppError("INVALID_INPUT", `${project} has uncommitted changes; commit or stash them first:\n${dirty.split("\n").slice(0, 10).join("\n")}`);
-  if ((await git(project, ["merge-base", "--is-ancestor", branch, "HEAD"])).ok || (await contentMerged(project, branch))) {
-    return { commit: (await git(project, ["rev-parse", "HEAD"])).out.trim(), already: true, into };
-  }
+  const head = (await git(project, ["rev-parse", "HEAD"])).out.trim();
+  if ((await git(project, ["merge-base", "--is-ancestor", branch, "HEAD"])).ok || (await contentMerged(project, branch))) return { into, head, already: head };
   const probe = await git(project, ["merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", branch]);
   if (!probe.ok) {
     const files = probe.out.trim().split("\n").slice(1).filter(Boolean);
     if (files.length) throw new AppError("MERGE_CONFLICT", `${branch} conflicts with ${into} in: ${files.join(", ")}. Nothing was changed; merge by hand (git merge ${branch}) or let the lead merge ${into} into its branch first.`, { files });
     throw new AppError("INVALID_INPUT", `Cannot check the merge of ${branch}: ${probe.err.trim().slice(0, 300)}`);
   }
+  return { into, head };
+}
+
+/** Makes the merge commit of `branch` on what `cwd` has checked out: the project itself, or a merge check's own worktree. */
+export async function commitMerge(cwd: string, branch: string, message: string, strategy: MergeStrategy): Promise<void> {
   if (strategy === "merge") {
-    const r = await git(project, ["merge", "--no-ff", "--no-edit", "-m", message, branch]);
+    const r = await git(cwd, ["merge", "--no-ff", "--no-edit", "-m", message, branch]);
     if (!r.ok) {
-      await git(project, ["merge", "--abort"]);
+      await git(cwd, ["merge", "--abort"]);
       throw new AppError("INVALID_INPUT", `git merge ${branch} failed: ${(r.err || r.out).trim().slice(0, 400)}`);
     }
-  } else {
-    // the commits of the branch, listed in the one commit: what went in, without their history in the project
-    const log = (await git(project, ["log", "--format=%h %s", `HEAD..${branch}`])).out.trim();
-    const sq = await git(project, ["merge", "--squash", branch]);
-    const c = sq.ok ? await git(project, ["commit", "-m", message, "-m", `Squashed from ${branch}:\n${log}`]) : sq;
-    if (!c.ok) {
-      await git(project, ["reset", "--merge"]);
-      throw new AppError("INVALID_INPUT", `git merge --squash ${branch} failed: ${(c.err || c.out).trim().slice(0, 400)}`);
-    }
+    return;
   }
-  return { commit: (await git(project, ["rev-parse", "HEAD"])).out.trim(), already: false, into, strategy };
+  // the commits of the branch, listed in the one commit: what went in, without their history in the project
+  const log = (await git(cwd, ["log", "--format=%h %s", `HEAD..${branch}`])).out.trim();
+  const sq = await git(cwd, ["merge", "--squash", branch]);
+  const c = sq.ok ? await git(cwd, ["commit", "-m", message, "-m", `Squashed from ${branch}:\n${log}`]) : sq;
+  if (!c.ok) {
+    await git(cwd, ["reset", "--merge"]);
+    throw new AppError("INVALID_INPUT", `git merge --squash ${branch} failed: ${(c.err || c.out).trim().slice(0, 400)}`);
+  }
 }
 
 /**

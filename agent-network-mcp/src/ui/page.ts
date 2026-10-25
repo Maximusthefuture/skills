@@ -58,7 +58,7 @@ button{font:inherit;border:1px solid var(--accent);background:var(--accent);colo
 button.ghost{background:transparent;color:var(--accent)}button:disabled{opacity:.5;cursor:default}
 .note{font-size:13px}.note.err{color:var(--bad)}.note.ok{color:var(--ok)}
 .banner{padding:10px 14px;margin-bottom:14px;border:1px solid var(--line);border-left:3px solid var(--bad);background:var(--card)}
-.openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}
+.openspec{margin-top:6px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--bg)}.mcheck{margin:6px 0;overflow-wrap:anywhere}button.danger{color:var(--bad);border-color:var(--bad)}
 .toasts{position:fixed;top:12px;right:12px;z-index:50;display:flex;flex-direction:column;gap:8px;width:min(340px,calc(100vw - 24px));pointer-events:none}
 .toast{pointer-events:auto;cursor:pointer;position:relative;background:var(--card);color:var(--text);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:9px 30px 9px 12px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:13px;animation:tin .18s ease-out}
 .planov{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;flex-direction:column}.planov[hidden]{display:none}body.noscroll{overflow:hidden}
@@ -769,15 +769,19 @@ function renderBranch(t){
   if(!done){ // while the task runs: only the diff (any agent's branch) and comments to the lead
     box.append(el("div","muted","Что агенты уже закоммитили в своих ветках. Клик по строке — замечание; замечания уходят lead'у одним сообщением."));
     const r=el("div","checks");r.append(diffButton(t,key));box.append(r);appendDiff(box,t,key);return box}
-  if(m)box.append(el("div","muted",(m.already?"уже была в ":"влита в ")+m.into+(m.strategy==="squash"?" одним коммитом ":m.strategy==="merge"?" коммитом слияния ":" · ")+m.commit.slice(0,7)+" · "+time(m.at)+(m.reverted?" · откачена "+m.reverted.commit.slice(0,7)+" "+time(m.reverted.at):"")));
+  if(m)box.append(el("div","muted",(m.already?"уже была в ":"влита в ")+m.into+(m.strategy==="squash"?" одним коммитом ":m.strategy==="merge"?" коммитом слияния ":" · ")+m.commit.slice(0,7)+" · "+time(m.at)+(m.reverted?" · откачена "+m.reverted.commit.slice(0,7)+" "+time(m.reverted.at):"")+(m.verified?" · сборка после вливания зелёная ("+m.verified.command+(m.verified.tests?", тестов "+m.verified.tests.total:"")+")":m.unverified?" · без проверки сборки":"")));
   else box.append(el("div","muted","Итог задачи — в ветке "+(wts.includes(lead)?"swarm-"+lead:lead)+". Влить её в текущую ветку проекта (без push)."));
   const r=el("div","checks");
   const run=async(url,body,question,done)=>{if(!await ask(question))return;branchState.set(key,{pending:true});render();
     try{const res=await post(url,body);branchState.set(key,{output:done(res)})}catch(e){branchState.set(key,{error:e.message})}await tick()};
   if(m&&!m.already&&!m.reverted){const rv=el("button","ghost",st.pending?"…":"Откатить");rv.type="button";rv.disabled=!!st.pending;rv.title="git revert "+m.commit.slice(0,7)+": новый коммит, который отменяет изменения задачи; при конфликте ничего не меняется";
     rv.onclick=()=>run("/api/tasks/"+encodeURIComponent(t.id)+"/revert",{},"Откатить изменения задачи "+t.id+" в "+m.into+"? Будет новый коммит «Revert "+t.id+"», история не переписывается.",res=>"откачено: "+res.task.merged.reverted.commit.slice(0,7));r.append(rv)}
-  if(!m){const b=el("button","",st.pending?"…":"Влить в проект");b.type="button";b.disabled=!!st.pending;
-    b.onclick=()=>run("/api/tasks/"+encodeURIComponent(t.id)+"/merge",{},"Влить ветку lead'а ("+lead+") в текущую ветку проекта одним коммитом «"+t.id+": …»? Сначала проверю конфликты: при конфликте ничего не изменится.",res=>"влито: "+res.task.merged.branch+" → "+res.task.merged.into+" ("+res.task.merged.commit.slice(0,7)+")");r.append(b)}
+  const mc=!m&&t.mergeCheck;const checking=mc&&mc.status==="running";
+  if(mc)box.append(renderMergeCheck(t,mc,run));
+  const done2=res=>res.check?(res.check.status==="conflict"?"конфликт: "+(res.check.files||[]).join(", "):"проверяю вливание: собираю его на HEAD проекта и запускаю "+t.verifyCommand):"влито: "+res.task.merged.branch+" → "+res.task.merged.into+" ("+res.task.merged.commit.slice(0,7)+")"+(t.verifyCommand?"":" без проверки сборки");
+  if(!m&&!mc){const b=el("button","",st.pending?"…":"Влить в проект");b.type="button";b.disabled=!!st.pending;
+    b.onclick=()=>run("/api/tasks/"+encodeURIComponent(t.id)+"/merge",{},t.verifyCommand?"Влить ветку lead'а ("+lead+") в текущую ветку проекта? Сначала вливание соберётся отдельно от проекта на его текущем HEAD и пройдёт «"+t.verifyCommand+"»: в проект попадёт только зелёное, одним коммитом «"+t.id+": …».":"Влить ветку lead'а ("+lead+") в текущую ветку проекта одним коммитом «"+t.id+": …»? У задачи нет verifyCommand: вливание не проверяется сборкой. При конфликте ничего не изменится.",done2);r.append(b)}
+  if(checking)r.append(el("span","muted"," вливание проверяется…"));
   const c=el("button","ghost",st.pending?"…":"Убрать worktree агентов");c.type="button";c.disabled=!!st.pending;
   c.title="git worktree remove и git branch -d для "+wts.join(", ")+": без --force, невлитая ветка и папка с изменениями останутся. Перед следующей задачей worktree создадутся заново от HEAD проекта.";
   c.onclick=()=>run("/api/worktrees/clean",{},"Убрать worktree и ветки агентов ("+wts.join(", ")+")?"+(m?"":" Ветка lead'а ещё не влита: git её не удалит.")+" Перед следующей задачей они создадутся заново от текущего HEAD проекта.",
@@ -788,6 +792,30 @@ function renderBranch(t){
   appendDiff(box,t,key);
   return box;
 }
+// a closed task, for good: its folder goes (messages, reports, sessions and their cost), the code in branches stays
+function renderDelete(t){const r=el("div","checks");const b=el("button","ghost danger small","Удалить задачу");b.type="button";
+  b.onclick=async()=>{if(!await ask("Удалить "+t.id+" «"+t.title+"» навсегда? Пропадут её переписка, отчёты ревью, план, сборки, логи сессий и их расход в статистике. Код в ветках агентов и влитые коммиты останутся. Номер "+t.id+" новой задаче не достанется."))return;
+    b.disabled=true;try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/delete",{});toast("ok","Задача удалена",t.id+": "+t.title)}catch(e){b.disabled=false;toast("bad","Не удалено",e.message,t.id)}await tick()};
+  r.append(b);return r}
+// the merge check of a DONE task: the merge built on the project's HEAD and its verifyCommand, apart from the project
+const MC_WORDS={running:"идёт",green:"зелёная",red:"красная",conflict:"конфликт",stale:"проект сдвинулся во время проверки",error:"не удалась",interrupted:"прервана перезапуском страницы"};
+const MC_STEP={merge:"собираю вливание",setup:"ставлю зависимости",build:"сборка",land:"вливаю в проект"};
+function renderMergeCheck(t,mc,run){const box=el("div","mcheck");const u="/api/tasks/"+encodeURIComponent(t.id)+"/merge/";
+  box.append(el("b","","Проверка вливания: "),el("span","badge "+(mc.status==="green"?"PASS":mc.status==="running"?"WAITING":mc.status==="red"||mc.status==="conflict"?"FAIL":"WARNING"),MC_WORDS[mc.status]||mc.status));
+  box.append(el("span","muted"," · в "+mc.into+" на "+mc.base.slice(0,7)+(mc.status==="running"&&mc.step?" · "+MC_STEP[mc.step]+(mc.step==="build"?" ("+t.verifyCommand+")":""):"")+" · "+time(mc.startedAt).slice(0,5)));
+  if(mc.build&&!mc.build.ok){box.append(el("div","",mc.build.command+(mc.build.timedOut?": тайм-аут":mc.build.tests?": упало "+mc.build.tests.failed+" из "+mc.build.tests.total:": код "+mc.build.exitCode)+(mc.build.log?" · лог: .agent-network/"+mc.build.log:"")));
+    const d=el("details","");d.append(el("summary","muted","что упало"),el("pre","log err",mc.build.summary));box.append(d)}
+  if(mc.status==="conflict")box.append(el("div","","Конфликтующие файлы: "+(mc.files||[]).join(", ")));
+  if(mc.error)box.append(el("div","muted",mc.error));
+  (mc.setup||[]).filter(x=>!x.ok).forEach(x=>{const d=el("details","");d.append(el("summary","muted",x.command+" не прошла"),el("pre","log err",x.summary||""));box.append(d)});
+  if(mc.followUp)box.append(el("div","","Отдано команде: "+mc.followUp));
+  if(mc.status==="running"||mc.status==="green")return box;
+  const r=el("div","checks");
+  const btn=(label,cls,act,q,done)=>{const b=el("button",cls,label);b.type="button";b.onclick=()=>run(u+act,{},q,done);r.append(b)};
+  if((mc.status==="red"||mc.status==="conflict")&&!mc.followUp)btn("Отдать команде","","handoff","Создать follow-up задачу той же команде: "+(mc.status==="red"?"она начнёт с проверенного вливания и сделает «"+t.verifyCommand+"» зелёной":"она вольёт HEAD проекта в свои ветки и разрешит конфликты")+"?",res=>"follow-up "+res.followUp.id+": "+res.followUp.title);
+  btn("Проверить снова","ghost","retry","Проверить вливание ещё раз на текущем HEAD проекта?",res=>res.check?"проверяю снова":"влито");
+  if(mc.status!=="conflict")btn("Влить всё равно","ghost danger","force","Влить ветку lead'а в проект без зелёной сборки? Задача будет помечена «без проверки сборки», а пакет приёмки это покажет.",res=>"влито без проверки: "+res.task.merged.commit.slice(0,7));
+  box.append(r);return box}
 const diffState=new Map();
 // the diff list of a task: the lead's branch (or ?agent=), after the merge what the merge brought
 async function loadDiff(t,key,agent){const prev=diffState.get(key)||{};diffState.set(key,{...prev,loading:true,open:true,agent});render();
@@ -883,7 +911,7 @@ function accFrame(){const fr=document.createElement("iframe");fr.title="приё
 async function accInfo(){try{AV.info=await getJSON(q("/api/tasks/"+encodeURIComponent(AV.taskId)+"/acceptance"))}catch(e){AV.error="Не удалось загрузить: "+e.message}}
 async function openAcceptance(taskId){const e=accEl();AV={taskId,mode:"view",comments:[],pick:null,confirm:null,pending:false,error:null,info:null,el:e};
   e.o.hidden=false;document.body.classList.add("noscroll");accFrame();renderAccSide();await accInfo();renderAccSide()}
-function closeAcceptance(force){if(!AV)return;if(!force&&AV.comments.length&&!AV.closeArmed){AV.closeArmed=true;AV.error="Есть неотправленные замечания: «Закрыть» ещё раз — и они пропадут.";renderAccSide();return}
+function closeAcceptance(force){if(!AV)return;clearTimeout(AV.poll);if(!force&&AV.comments.length&&!AV.closeArmed){AV.closeArmed=true;AV.error="Есть неотправленные замечания: «Закрыть» ещё раз — и они пропадут.";renderAccSide();return}
   AV.el.o.hidden=true;AV.el.fr.src="about:blank";document.body.classList.remove("noscroll");AV=null}
 function accSay(m){if(AV&&AV.el.fr.contentWindow)AV.el.fr.contentWindow.postMessage(m,"*")}
 addEventListener("message",ev=>{if(!AV||ev.source!==AV.el.fr.contentWindow)return;const m=ev.data||{};if(!m.an)return;
@@ -892,13 +920,18 @@ addEventListener("message",ev=>{if(!AV||ev.source!==AV.el.fr.contentWindow)retur
 addEventListener("keydown",e=>{if(e.key!=="Escape"||!AV||AV.el.o.hidden||(document.activeElement&&document.activeElement.tagName==="TEXTAREA"))return;if(AV.confirm){AV.confirm=null;renderAccSide()}else closeAcceptance()});
 async function accSend(kind){AV.confirm=null;AV.error=null;AV.pending=true;renderAccSide();
   try{const r=await post("/api/tasks/"+encodeURIComponent(AV.taskId)+"/acceptance/"+kind,kind==="return"?{comments:AV.comments}:{});
-    toast("ok",kind==="accept"?"Задача принята":"Задача возвращена",kind==="accept"?(r.merged?"влита: "+r.merged.branch+" → "+r.merged.into+" ("+r.merged.commit.slice(0,7)+")":"без вливания"):"follow-up "+r.followUp.id+" с вашими замечаниями",AV.taskId);
+    if(r.check)toast("ok",r.check.status==="conflict"?"Вливание конфликтует":"Проверяю вливание",r.check.status==="conflict"?"не принято: "+(r.check.files||[]).join(", "):"задача примется, когда сборка вливания позеленеет",AV.taskId);
+    else toast("ok",kind==="accept"?"Задача принята":"Задача возвращена",kind==="accept"?(r.merged?"влита: "+r.merged.branch+" → "+r.merged.into+" ("+r.merged.commit.slice(0,7)+")":"без вливания"):"follow-up "+r.followUp.id+" с вашими замечаниями",AV.taskId);
     AV.comments=[];AV.pick=null;AV.mode="view";AV.pending=false;await accInfo();accFrame();await tick()}
   catch(e){AV.pending=false;AV.error="Не получилось: "+e.message}renderAccSide()}
 function renderAccSide(){if(!AV)return;const e=AV.el;const t=S&&S.tasks.find(x=>x.id===AV.taskId);e.title.textContent="Приёмка "+AV.taskId+(t?" · "+t.title:"");
   const side=e.side;side.replaceChildren();const i=AV.info;const foot=el("div","pfoot");
   if(!i){side.append(el("div","muted",AV.error||"загружаю…"));return}
-  const can=!!(S&&S.control)&&!i.verdict;
+  const mc=i.mergeCheck;const checking=mc&&mc.status==="running";
+  const can=!!(S&&S.control)&&!i.verdict&&!checking;
+  if(checking){side.append(el("div","note","Проверяю вливание: "+(MC_STEP[mc.step]||"")+(mc.step==="build"?" ("+i.verify+")":"")+". Задача примется, когда сборка позеленеет."));
+    clearTimeout(AV.poll);AV.poll=setTimeout(async()=>{if(!AV)return;await accInfo();if(AV&&!(AV.info.mergeCheck&&AV.info.mergeCheck.status==="running"))accFrame();renderAccSide()},3000)}
+  else if(mc&&(mc.status==="red"||mc.status==="conflict"))side.append(el("div","note bad",(mc.status==="red"?"Сборка вливания красная":"Вливание конфликтует")+(mc.followUp?": отдано в "+mc.followUp:": в карточке задачи — «Отдать команде» или «Проверить снова»")+"."));
   const bad=i.alerts.filter(a=>a.level==="bad").length;
   side.append(el("div","note"+(bad?" bad":""),i.alerts.length?"На что посмотреть: "+i.alerts.length+(bad?" (серьёзных "+bad+")":"")+" — первый раздел страницы.":"Ничего, что требует вас: можно принимать."));
   if(!i.table)side.append(el("div","muted small","Lead не прислал таблицу «требование → доказательство» (задача старше пакета приёмки)."));
@@ -916,8 +949,8 @@ function renderAccSide(){if(!AV)return;const e=AV.el;const t=S&&S.tasks.find(x=>
       const x=el("button","ghost small","×");x.type="button";x.title="убрать";x.onclick=()=>{AV.comments=AV.comments.filter(y=>y!==c);renderAccSide()};r.append(x);l.append(r)});side.append(l)}
   if(AV.error)side.append(el("div","note bad",AV.error));
   if(AV.pending)side.append(el("div","muted small","Отправляю…"));
-  if(can){const acceptLabel=i.ownBranch?"Принять и влить":"Принять";
-    if(AV.confirm){const c=el("div","pconfirm");c.append(el("div","",AV.confirm==="accept"?(i.ownBranch?"Принять задачу и влить ветку lead'а в текущую ветку проекта одним коммитом? При конфликте ничего не изменится.":"Принять задачу?"):"Вернуть задачу? "+AV.comments.length+" замеч. уйдут команде новой follow-up задачей."));
+  if(can){const acceptLabel=i.ownBranch?(mc&&(mc.status==="red"||mc.status==="conflict")?"Проверить вливание снова":"Принять и влить"):"Принять";
+    if(AV.confirm){const c=el("div","pconfirm");c.append(el("div","",AV.confirm==="accept"?(i.ownBranch?(i.verify?"Принять задачу и влить ветку lead'а? Вливание сначала соберётся на HEAD проекта и пройдёт «"+i.verify+"»: задача примется и вольётся, только если сборка зелёная.":"Принять задачу и влить ветку lead'а в текущую ветку проекта одним коммитом? У задачи нет verifyCommand: вливание сборкой не проверяется."):"Принять задачу?"):"Вернуть задачу? "+AV.comments.length+" замеч. уйдут команде новой follow-up задачей."));
       const yes=el("button","small",AV.confirm==="accept"?"Да, "+acceptLabel.toLowerCase():"Да, вернуть");yes.type="button";yes.onclick=()=>accSend(AV.confirm);
       const no=el("button","ghost small","Отмена");no.type="button";no.onclick=()=>{AV.confirm=null;renderAccSide()};c.append(yes," ",no);foot.append(c)}
     else{const r=el("div","pactions");const ok=el("button","",acceptLabel);ok.type="button";ok.disabled=AV.pending||AV.comments.length>0;ok.title=AV.comments.length?"Есть замечания: верните задачу или уберите их":"";ok.onclick=()=>{AV.confirm="accept";renderAccSide()};
@@ -1154,6 +1187,7 @@ function renderTask(t){
   if(t.status==="COMPLETED"&&!t.jobOf&&!t.proposes)hd.append(renderAcceptance(t));
   if(t.status!=="CANCELLED"&&controlMode&&S.control.worktrees&&S.control.worktrees.length)hd.append(renderBranch(t));
   hd.append(renderStats(t));
+  if(controlMode&&(t.status==="COMPLETED"||t.status==="CANCELLED"))hd.append(renderDelete(t));
   if(t.status==="BLOCKED")hd.append(renderBlocked(t));
   if(t.takeover&&t.status!=="BLOCKED")hd.append(el("div","muted","Lead взял исправление "+t.takeover.from.join(", ")+" в раунде "+t.takeover.round+" ("+(t.takeover.by==="timeout"?"оператор не ответил вовремя":"передал оператор")+")."));
   c.append(hd);

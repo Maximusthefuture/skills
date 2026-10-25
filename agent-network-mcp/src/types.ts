@@ -67,6 +67,10 @@ export interface Task {
     at: string; branch: string; into: string; commit: string; already: boolean;
     /** squash: the task is one commit; merge: a merge commit. */
     strategy?: "squash" | "merge";
+    /** verifyCommand ran green on this very commit before it reached the project (the merge check). */
+    verified?: { command: string; tests?: { total: number; failed: number } };
+    /** Merged without that check: no verifyCommand, or the operator merged a red one anyway. */
+    unverified?: true;
     /** "Откатить": the revert commit that undid it. */
     reverted?: { at: string; commit: string };
   };

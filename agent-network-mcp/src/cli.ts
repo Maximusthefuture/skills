@@ -337,6 +337,7 @@ async function runUi(args: string[], env: NodeJS.ProcessEnv, out: (s: string) =>
         ...(config?.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: config.maxTaskCostUsd } : {}),
         ...(config?.verifyCommand ? { verifyCommand: config.verifyCommand } : {}),
         ...(config?.mergeStrategy ? { mergeStrategy: config.mergeStrategy } : {}),
+        ...(config?.mergeCheck?.setup ? { mergeSetup: config.mergeCheck.setup } : {}),
       };
     });
     const ui = await startUiServer(specs, { port });

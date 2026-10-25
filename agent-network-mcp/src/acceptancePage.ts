@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { splitRef } from "./acceptance.js";
 import { deployNotes, type DeployNotes } from "./deploy/notes.js";
 import type { DeployEnvironment } from "./deploy/settings.js";
+import type { MergeCheck } from "./mergeCheck.js";
 import { creditedSessions } from "./observer/digest.js";
 import { matches, normalizePath } from "./ownership.js";
 import { esc, inline, markdown, page } from "./pageRender.js";
@@ -50,6 +51,8 @@ export interface AcceptanceData {
   notesError?: string;
   followUps: { id: string; title: string }[];
   dropped: { agent: string; title: string; note?: string }[];
+  /** «Влить в проект» with a check: how the merge on the project's HEAD built (mergeCheck.ts). */
+  mergeCheck?: Pick<MergeCheck, "status" | "into" | "build" | "files" | "error" | "followUp"> | null;
 }
 
 export interface Alert { level: "bad" | "warn"; text: string }
@@ -116,6 +119,7 @@ export async function collectAcceptance(fs: FileStore, taskId: string, range: Ac
     questions, findings, lastRound: task.syncRound, reviewComments,
     files, undeclared: declared.length === 0, notes, ...(notesError ? { notesError } : {}),
     followUps, dropped,
+    mergeCheck: await fs.readJson<MergeCheck>(["tasks", task.id, "merge-check.json"]),
   };
 }
 
@@ -128,6 +132,11 @@ export function acceptanceAlerts(d: AcceptanceData): Alert[] {
     else if (!c.tests.length) out.push({ level: "warn", text: `Без теста: ${c.requirement}` });
     else if (fileOnly(c)) out.push({ level: "warn", text: `Тест назван только файлом, без имени: ${c.requirement} (${c.tests.join(", ")}) — какой тест это доказывает, не видно` });
   }
+  const mc = d.mergeCheck;
+  if (d.task.merged?.unverified) out.push({ level: "warn", text: `Влито без проверки сборки на результате вливания${mc?.status === "red" ? " — она была красной" : ""}` });
+  else if (!d.task.merged && mc?.status === "red") out.push({ level: "bad", text: `Сборка после вливания в ${mc.into} красная${mc.build?.tests ? `: упало ${mc.build.tests.failed} из ${mc.build.tests.total}` : ""}${mc.followUp ? ` — отдано в ${mc.followUp}` : ""}` });
+  else if (!d.task.merged && mc?.status === "conflict") out.push({ level: "bad", text: `Вливание в ${mc.into} конфликтует: ${(mc.files ?? []).join(", ")}${mc.followUp ? ` — отдано в ${mc.followUp}` : ""}` });
+  else if (!d.task.merged && (mc?.status === "error" || mc?.status === "stale" || mc?.status === "interrupted")) out.push({ level: "warn", text: `Проверка вливания не закончилась (${mc.status}): ${mc.error ?? "проверьте снова"}` });
   if (d.task.verifyCommand && !d.build?.ok) out.push({ level: "bad", text: `Последняя сборка lead'а не зелёная: ${d.build?.command ?? "не запускалась"}` });
   const outside = d.files.filter((f) => f.outside);
   if (outside.length) out.push({ level: "bad", text: `Файлы вне соглашения (${outside.length}): ${outside.slice(0, 5).map((f) => f.path).join(", ")}${outside.length > 5 ? " …" : ""}` });
@@ -158,6 +167,18 @@ ul.alerts{list-style:none;padding:0}ul.alerts li{padding:6px 10px;border-radius:
 td{overflow-wrap:anywhere}td.num{text-align:right;font-family:ui-monospace,monospace;white-space:nowrap}
 </style>`;
 
+/** The header's word on the build of the merge itself, not of the lead's branch. */
+function mergeFact(d: AcceptanceData): string {
+  const v = d.task.merged?.verified;
+  if (v) return `<span class="ok">сборка после вливания зелёная${v.tests ? `: тестов ${v.tests.total}` : ""}</span>`;
+  if (d.task.merged?.unverified) return `<span class="warn">влита без проверки сборки</span>`;
+  const mc = d.mergeCheck;
+  if (!d.task.merged && mc?.status === "running") return "идёт проверка вливания";
+  if (!d.task.merged && mc?.status === "red") return `<span class="bad">сборка после вливания красная</span>`;
+  if (!d.task.merged && mc?.status === "conflict") return `<span class="bad">вливание конфликтует</span>`;
+  return "";
+}
+
 function section(title: string, body: string): string {
   return `<section><h2>${esc(title)}</h2>${body}</section>`;
 }
@@ -174,6 +195,7 @@ export function renderAcceptancePage(d: AcceptanceData, alerts = acceptanceAlert
     d.elapsedMin !== null ? `${d.elapsedMin} мин` : "",
     d.costUsd !== null ? `$${d.costUsd.toFixed(2)}` : "",
     t.merged ? (t.merged.reverted ? "влита и откачена" : `влита в ${esc(t.merged.into)}`) : "не влита",
+    mergeFact(d),
   ].filter(Boolean).map((f) => `<span>${f}</span>`).join("");
 
   const look = alerts.length

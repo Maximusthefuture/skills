@@ -142,6 +142,8 @@ export interface RunnersConfig {
   planCritic?: PlanCriticConfig;
   /** "Влить в проект": squash (default, one commit per task) or merge (a merge commit keeping the agents' commits). */
   mergeStrategy?: "squash" | "merge";
+  /** The merge check (src/mergeCheck.ts): setup commands for its worktree before verifyCommand; [] = none; absent = by the lockfile. */
+  mergeCheck?: { setup?: string[] };
 }
 
 export interface ObserverConfig {
@@ -313,7 +315,7 @@ function costLimit(value: unknown, what: string): number {
 
 export async function loadRunnersConfig(path: string, opts: { projectDir?: string } = {}): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; verifyCommand?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown };
+  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; verifyCommand?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown; mergeCheck?: unknown };
   try {
     // {agentNetworkMcp} anywhere in the file is this package's folder
     raw = JSON.parse((await readFile(file, "utf8")).replaceAll("{agentNetworkMcp}", PACKAGE_DIR.replaceAll("\\", "/")));
@@ -463,6 +465,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
   const observer = raw.observer === undefined ? undefined : await parseObserver(raw.observer);
   const planCritic = raw.planCritic === undefined ? undefined : { ...(await parseObserver({ ...(raw.planCritic as object), cron: undefined }, "planCritic")), ...parseSkillSets((raw.planCritic as { skillSets?: unknown }).skillSets) };
   if (raw.mergeStrategy !== undefined && raw.mergeStrategy !== "squash" && raw.mergeStrategy !== "merge") throw new AppError("INVALID_CONFIG", `${file}: "mergeStrategy" is "squash" (one commit per task) or "merge"`);
+  const mergeCheck = raw.mergeCheck === undefined ? undefined : parseMergeCheck(raw.mergeCheck, file);
   const prices = parsePrices(raw.prices, file);
   const maxTaskCostUsd = raw.maxTaskCostUsd === undefined || raw.maxTaskCostUsd === null ? undefined : costLimit(raw.maxTaskCostUsd, `${file}: "maxTaskCostUsd"`);
   const verifyCommand = raw.verifyCommand === undefined || raw.verifyCommand === null ? undefined : parseVerifyCommand(raw.verifyCommand, `${file}: "verifyCommand"`);
@@ -478,7 +481,24 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     ...(observer ? { observer } : {}),
     ...(planCritic ? { planCritic } : {}),
     ...(raw.mergeStrategy ? { mergeStrategy: raw.mergeStrategy as "squash" | "merge" } : {}),
+    ...(mergeCheck ? { mergeCheck } : {}),
   };
+}
+
+/** "mergeCheck": {"setup": ["npm ci"]} — each a plain build-tool command, as the build tool runs it. */
+function parseMergeCheck(raw: unknown, file: string): { setup?: string[] } {
+  const o = (raw ?? {}) as { setup?: unknown };
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new AppError("INVALID_CONFIG", `${file}: "mergeCheck" is {"setup": ["npm ci"]}`);
+  if (o.setup === undefined) return {};
+  if (!Array.isArray(o.setup) || !o.setup.every((c) => typeof c === "string" && c.trim())) throw new AppError("INVALID_CONFIG", `${file}: "mergeCheck.setup" is a list of commands, e.g. ["npm ci"]; [] for none`);
+  for (const c of o.setup as string[]) {
+    try {
+      parseBuildCommand(c, buildTools());
+    } catch (e) {
+      throw new AppError("INVALID_CONFIG", `${file}: "mergeCheck.setup": ${(e as Error).message}`);
+    }
+  }
+  return { setup: (o.setup as string[]).map((c) => c.trim()) };
 }
 
 function parseSchedules(raw: unknown, file: string, agentIds: string[]): ScheduleConfig[] {
