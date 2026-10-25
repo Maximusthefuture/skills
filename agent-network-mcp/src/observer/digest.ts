@@ -30,6 +30,11 @@ export interface TaskDigest {
   protocolErrors: Record<string, number>;
   builds: { runs: number; red: number };
   supervisor: { incidents: Record<string, number>; needsYou: number };
+  /**
+   * The operator deleted the task from the page: its folder moved to <network>/<folder> (still readable), reason is
+   * the operator's word on why — a run not worth keeping is a finding in itself.
+   */
+  deleted?: { at: string; reason?: string; folder: string };
   /** Own-folder sessions plus ones credited via another task's alsoFinished: lets collectDigests notice a later one and rebuild. */
   countedSessions: number;
   /**
@@ -195,6 +200,19 @@ export async function collectDigests(networkDir: string, prices?: Prices): Promi
     written.push(task.id);
   }
   return written;
+}
+
+/**
+ * The digests no report has read yet: not covered, or deleted after the last report that covered them (the deletion and
+ * its reason are news about a task the observer has seen).
+ */
+export function unreported(digests: TaskDigest[], reports: { at: string; covers: string[] }[]): TaskDigest[] {
+  const last = new Map<string, string>();
+  for (const r of reports) for (const id of r.covers) if ((last.get(id) ?? "") < r.at) last.set(id, r.at);
+  return digests.filter((d) => {
+    const at = last.get(d.taskId);
+    return at === undefined || (!!d.deleted && d.deleted.at > at);
+  });
 }
 
 /** All digests, oldest first. */

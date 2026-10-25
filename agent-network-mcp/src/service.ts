@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { buildTools, parseBuildCommand } from "./build.js";
 import { AppError } from "./errors.js";
@@ -1436,12 +1436,13 @@ export class NetworkService {
   }
 
   /**
-   * Operator: a closed task (DONE or cancelled) goes for good — its folder: messages, reports, sessions and their cost,
-   * plans, builds; and its observer digest. Code in branches and merged commits stay. Its folder keeps a tombstone
-   * (deleted.json) so the number is never given to a new task: digests, deploys and journals name tasks by it. Refused
-   * while a task of its chain (a follow-up, a delegated job) is open: those read it.
+   * Operator: a closed task (DONE or cancelled) leaves the page. Its folder — messages, reports, sessions and their cost,
+   * plans, builds — moves to <network>/deleted/<id>/, where the observer can still read it, and its digest is marked
+   * deleted (with the operator's reason): what the operator throws away says as much about the swarm as what it keeps.
+   * Code in branches and merged commits stay. tasks/<id>/deleted.json keeps the number from a new task: digests,
+   * deploys and journals name tasks by it. Refused while a task of its chain (a follow-up, a delegated job) is open.
    */
-  async deleteTask(taskId: string): Promise<{ id: string; title: string }> {
+  async deleteTask(taskId: string, reason?: string): Promise<{ id: string; title: string; folder: string }> {
     if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator deletes a task");
     const id = assertTaskId(taskId);
     const task = await this.tasks.get(id);
@@ -1450,11 +1451,17 @@ export class NetworkService {
     }
     const open = (await this.tasks.list()).filter((t) => (t.status === "ACTIVE" || t.status === "BLOCKED") && (t.parentTaskId === id || t.rootTaskId === id || t.jobOf?.taskId === id));
     if (open.length) throw new AppError("INVALID_INPUT", `${id} has open tasks of its chain that read it: ${open.map((t) => t.id).join(", ")}. Finish or cancel them first`, { open: open.map((t) => t.id) });
-    const dir = join(this.fs.root, "tasks", id);
-    await rm(dir, { recursive: true, force: true });
-    await this.fs.writeJson(["tasks", id, "deleted.json"], { id, title: task.title, status: task.status, deletedAt: new Date().toISOString() });
-    await rm(join(this.fs.root, "observer", "digests", `${id}.json`), { force: true });
-    return { id, title: task.title };
+    const why = reason?.trim().slice(0, 1000) || undefined;
+    const at = new Date().toISOString();
+    await mkdir(join(this.fs.root, "deleted"), { recursive: true });
+    let folder = join("deleted", id);
+    for (let n = 2; await stat(join(this.fs.root, folder)).then(() => true, () => false); n++) folder = join("deleted", `${id}-${n}`);
+    await rename(join(this.fs.root, "tasks", id), join(this.fs.root, folder));
+    const mark = { at, ...(why ? { reason: why } : {}), folder };
+    await this.fs.writeJson(["tasks", id, "deleted.json"], { id, title: task.title, status: task.status, deletedAt: at, ...(why ? { reason: why } : {}), folder });
+    const digest = await this.fs.readJson<Record<string, unknown>>(["observer", "digests", `${id}.json`]);
+    if (digest) await this.fs.writeJson(["observer", "digests", `${id}.json`], { ...digest, deleted: mark });
+    return { id, title: task.title, folder };
   }
 
   /** Operator: undo a merged task with one revert commit (refused, with nothing changed, on conflicts). */

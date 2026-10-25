@@ -16,6 +16,7 @@ import { TaskStore } from "../stores/taskStore.js";
 import type { GitContext, Task } from "../types.js";
 import { acceptanceAlerts, collectAcceptance, renderAcceptancePage, type AcceptanceRange } from "../acceptancePage.js";
 import { MergeChecker, mergeRef, type MergeCheck } from "../mergeCheck.js";
+import { collectDigests } from "../observer/digest.js";
 import { PAGE_HTML } from "./page.js";
 import { listRuns, queueStates, taskState, type RunView } from "./runs.js";
 import type { RunnerPool } from "./runners.js";
@@ -621,7 +622,10 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const id = decodeURIComponent(del[1]!);
       if ((await p.mergeChecker?.get(id))?.status === "running") throw new AppError("MERGE_CHECK_RUNNING", `The merge of ${id} is being checked: delete it once the check is over`);
       if ((await p.deployer.list()).some((r) => r.taskId === id && r.status === "running")) throw new AppError("DEPLOY_RUNNING", `${id} is being deployed: delete it once the deploy is over`);
-      const deleted = await operator.deleteTask(id);
+      // its digest first, while the folder is where collectDigests reads it: the observer gets the deleted task too
+      await collectDigests(p.networkDir, (await p.prices?.())?.prices).catch(() => []);
+      const reason = (body as { reason?: unknown }).reason;
+      const deleted = await operator.deleteTask(id, typeof reason === "string" ? reason : undefined);
       await new Promise((done) => execFile("git", ["update-ref", "-d", mergeRef(id)], { cwd: p.projectDir, timeout: 15_000 }, () => done(null)));
       return json(200, { deleted });
     }

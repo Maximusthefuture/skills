@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { AppError, isAppError } from "../errors.js";
 import { defineTool, errorResult } from "../mcp/toolkit.js";
-import { readDigests } from "./digest.js";
+import { readDigests, unreported } from "./digest.js";
 import { ObserverStore } from "./store.js";
 
 /**
@@ -43,13 +43,12 @@ export function createObserverServer(networkDir: string): McpServer {
 
   tool(
     "digests",
-    "Digests of the closed tasks you have not reported on yet (all: every one): phases and minutes, cost per agent, failed and turn-limit sessions, blocks with reasons, review findings, questions to the operator and answer times, refused tool calls by code, red builds, supervisor incidents.",
+    "Digests of the closed tasks you have not reported on yet (all: every one): phases and minutes, cost per agent, failed and turn-limit sessions, blocks with reasons, review findings, questions to the operator and answer times, refused tool calls by code, red builds, supervisor incidents. deleted: the operator deleted the task (its reason, and the folder its files moved to, deleted/<id>/).",
     { all: z.boolean().optional() },
     async ({ all }) => {
-      const covered = new Set((await (await store()).reports()).flatMap((r) => r.covers));
       const digests = await readDigests(networkDir);
-      const fresh = all ? digests : digests.filter((d) => !covered.has(d.taskId));
-      return { digests: fresh, total: digests.length, newSinceLastReport: digests.filter((d) => !covered.has(d.taskId)).length };
+      const news = unreported(digests, await (await store()).reports());
+      return { digests: all ? digests : news, total: digests.length, newSinceLastReport: news.length };
     },
   );
   tool("history", "What you found and proposed before: the issues you track, your proposals with the operator's decisions (accepted: the task that implements it; rejected: why — do not propose it again), your last reports' titles.", {}, async () => {

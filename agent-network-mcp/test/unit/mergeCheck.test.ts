@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { defaultMergeSetup, mergeRef } from "../../src/mergeCheck.js";
+import { unreported } from "../../src/observer/digest.js";
 import { NetworkService } from "../../src/service.js";
 import { RunnerPool } from "../../src/ui/runners.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
@@ -183,14 +184,26 @@ describe("deleting a task", () => {
     expect(await s.post(`/api/tasks/${parent.id}/delete`)).toMatchObject({ status: 400, body: { message: expect.stringContaining(child.id) } });
     expect(await s.post(`/api/tasks/${open.id}/delete`, {}, { "x-agent-network-actor": "supervisor" })).toMatchObject({ status: 403 });
 
-    expect(await s.post(`/api/tasks/${open.id}/delete`)).toMatchObject({ status: 200, body: { deleted: { id: open.id, title: "Open" } } });
+    expect(await s.post(`/api/tasks/${open.id}/delete`, { reason: "the agent made the task up" })).toMatchObject({ status: 200, body: { deleted: { id: open.id, title: "Open", folder: `deleted/${open.id}` } } });
     const ids = (await s.state()).tasks.map((t: any) => t.id);
     expect(ids).not.toContain(open.id);
-    expect(existsSync(join(s.project, ".agent-network", "tasks", open.id, "deleted.json"))).toBe(true);
+    // nothing is erased: the folder moved where the observer reads it, its digest says why
+    const net = join(s.project, ".agent-network");
+    expect(JSON.parse(readFileSync(join(net, "deleted", open.id, "task.json"), "utf8"))).toMatchObject({ id: open.id, status: "CANCELLED" });
+    expect(JSON.parse(readFileSync(join(net, "tasks", open.id, "deleted.json"), "utf8"))).toMatchObject({ id: open.id, reason: "the agent made the task up", folder: `deleted/${open.id}` });
+    expect(JSON.parse(readFileSync(join(net, "observer", "digests", `${open.id}.json`), "utf8"))).toMatchObject({ taskId: open.id, deleted: { reason: "the agent made the task up", folder: `deleted/${open.id}` } });
     await s.operator.cancelTask(child.id, "x");
     expect(await s.post(`/api/tasks/${child.id}/delete`)).toMatchObject({ status: 200 });
     const next = await s.operator.createTaskAsOperator({ title: "Next", description: "d", agents: ["backend", "reviewer"] });
     expect(next.id).toBe("task-004"); // task-003 (the child, the latest) stays taken
+  });
+});
+
+describe("deleted tasks and the observer", () => {
+  it("a task deleted after a report covered it is news again", () => {
+    const d = (taskId: string, deleted?: string) => ({ taskId, ...(deleted ? { deleted: { at: deleted, folder: `deleted/${taskId}` } } : {}) }) as any;
+    const reports = [{ at: "2026-10-20T10:00:00Z", covers: ["task-001", "task-002", "task-003"] }];
+    expect(unreported([d("task-001"), d("task-002", "2026-10-21T09:00:00Z"), d("task-003", "2026-10-19T09:00:00Z"), d("task-004")], reports).map((x) => x.taskId)).toEqual(["task-002", "task-004"]);
   });
 });
 

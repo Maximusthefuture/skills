@@ -349,11 +349,14 @@ function go(tab,project){location.hash="#/"+tab+(project?"/"+encodeURIComponent(
 function q(path){return path+(route.project?(path.includes("?")?"&":"?")+"project="+encodeURIComponent(route.project):"")}
 async function getJSON(path){const r=await fetch(path,{cache:"no-store"});if(!r.ok)throw new Error(r.status+"");return r.json()}
 // a question in the page instead of confirm(): some browsers (the desktop app's own) answer confirm() with "cancel" by themselves
-function ask(text){return new Promise(done=>{const o=el("div","askov");o.setAttribute("role","dialog");const b=el("div","askbox");b.append(el("div","",text));
+// a yes/no question; with input (its placeholder) also a line of text: then "Да" gives that text ("" when left empty), "Отмена" false
+function ask(text,input){return new Promise(done=>{const o=el("div","askov");o.setAttribute("role","dialog");const b=el("div","askbox");b.append(el("div","",text));
+  const f=input?document.createElement("textarea"):null;if(f){f.rows=2;f.placeholder=input;f.style.width="100%";f.style.marginTop="8px";b.append(f)}
   const r=el("div","checks");const yes=el("button","","Да");yes.type="button";const no=el("button","ghost","Отмена");no.type="button";
-  const end=v=>{o.remove();removeEventListener("keydown",key,true);done(v)};const key=e=>{if(e.key==="Escape"){e.stopPropagation();end(false)}else if(e.key==="Enter"){e.preventDefault();end(true)}};
-  yes.onclick=()=>end(true);no.onclick=()=>end(false);o.onclick=e=>{if(e.target===o)end(false)};addEventListener("keydown",key,true);
-  r.append(yes,no);b.append(r);o.append(b);document.body.append(o);yes.focus()})}
+  const ok=()=>f?f.value.trim():true;
+  const end=v=>{o.remove();removeEventListener("keydown",key,true);done(v)};const key=e=>{if(e.key==="Escape"){e.stopPropagation();end(false)}else if(e.key==="Enter"&&(!f||e.metaKey||e.ctrlKey)){e.preventDefault();end(ok())}};
+  yes.onclick=()=>end(ok());no.onclick=()=>end(false);o.onclick=e=>{if(e.target===o)end(false)};addEventListener("keydown",key,true);
+  r.append(yes,no);b.append(r);o.append(b);document.body.append(o);(f||yes).focus()})}
 async function post(url,body){const r=await fetch(q(url),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body||{})});const t=await r.text();let j;try{j=JSON.parse(t)}catch(e){j={message:t}}if(!r.ok)throw new Error(j.message||t);return j}
 window.addEventListener("hashchange",()=>{const r=parseHash();const switched=r.project&&r.project!==route.project;route.tab=r.tab;if(r.project)route.project=r.project;if(switched)resetProject();showTab();tick()});
 document.querySelectorAll("nav a").forEach(a=>a.addEventListener("click",ev=>{ev.preventDefault();go(a.dataset.tab,route.project)}));
@@ -792,10 +795,10 @@ function renderBranch(t){
   appendDiff(box,t,key);
   return box;
 }
-// a closed task, for good: its folder goes (messages, reports, sessions and their cost), the code in branches stays
+// a closed task off the page: its folder moves to deleted/<id>/ for the observer, the code in branches stays
 function renderDelete(t){const r=el("div","checks");const b=el("button","ghost danger small","Удалить задачу");b.type="button";
-  b.onclick=async()=>{if(!await ask("Удалить "+t.id+" «"+t.title+"» навсегда? Пропадут её переписка, отчёты ревью, план, сборки, логи сессий и их расход в статистике. Код в ветках агентов и влитые коммиты останутся. Номер "+t.id+" новой задаче не достанется."))return;
-    b.disabled=true;try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/delete",{});toast("ok","Задача удалена",t.id+": "+t.title)}catch(e){b.disabled=false;toast("bad","Не удалено",e.message,t.id)}await tick()};
+  b.onclick=async()=>{const reason=await ask("Удалить "+t.id+" «"+t.title+"» со страницы? Её папка (переписка, отчёты ревью, план, сборки, логи сессий) переедет в .agent-network/deleted/"+t.id+"/: там её прочитает наблюдатель, а расход уйдёт из статистики страницы. Код в ветках агентов и влитые коммиты останутся. Номер "+t.id+" новой задаче не достанется.","Почему удаляете? Необязательно — наблюдатель учтёт это (например: агент придумал задачу)");if(reason===false)return;
+    b.disabled=true;try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/delete",reason?{reason}:{});toast("ok","Задача удалена",t.id+": "+t.title+" → deleted/"+t.id)}catch(e){b.disabled=false;toast("bad","Не удалено",e.message,t.id)}await tick()};
   r.append(b);return r}
 // the merge check of a DONE task: the merge built on the project's HEAD and its verifyCommand, apart from the project
 const MC_WORDS={running:"идёт",green:"зелёная",red:"красная",conflict:"конфликт",stale:"проект сдвинулся во время проверки",error:"не удалась",interrupted:"прервана перезапуском страницы"};

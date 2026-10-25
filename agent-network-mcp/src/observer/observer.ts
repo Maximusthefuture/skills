@@ -9,7 +9,7 @@ import type { ActivityItem } from "../sessionOutput.js";
 import { sessionCost, type Prices } from "../stats.js";
 import { FileStore } from "../storage/fileStore.js";
 import { PACKAGE_DIR, type ObserverConfig } from "../ui/runners.js";
-import { collectDigests, readDigests } from "./digest.js";
+import { collectDigests, readDigests, unreported } from "./digest.js";
 import { ObserverStore } from "./store.js";
 
 export interface ObserverRun {
@@ -97,8 +97,7 @@ export class Observer {
   }
 
   private async uncovered(): Promise<number> {
-    const covered = new Set((await (await ObserverStore.open(this.opts.networkDir)).reports()).flatMap((r) => r.covers));
-    return (await readDigests(this.opts.networkDir)).filter((d) => !covered.has(d.taskId)).length;
+    return unreported(await readDigests(this.opts.networkDir), await (await ObserverStore.open(this.opts.networkDir)).reports()).length;
   }
 
   setModel(model: string): void {
