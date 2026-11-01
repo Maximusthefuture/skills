@@ -100,8 +100,25 @@ main{padding:0;min-width:0;display:flex;flex-direction:column}
 .coord-compose label{display:block;font-size:13px;font-weight:600;margin-bottom:7px}
 .coord-compose textarea{min-height:90px}
 .coord-status{font-size:12.5px;color:var(--muted);margin:0 0 12px}
-.coord-proposal{border-color:var(--violet);}
+.coord-proposal{border:1px solid var(--violet);border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow);padding:16px 18px;margin:0 0 12px}
 .coord-proposal .coord-status{margin:10px 0}
+.coord-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;margin:0 0 18px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.coord-toolbar .coord-status{margin:0}
+.coord-thread{display:grid;gap:14px;margin:0 0 14px}
+.coord-turn{display:grid;gap:8px}
+.coord-bubble{max-width:92%;border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:12px 15px;box-shadow:var(--shadow)}
+.coord-bubble.user{justify-self:end;background:#F0F5E5;border-color:#D9E7BD;border-bottom-right-radius:4px}
+.coord-bubble.assistant{justify-self:start;border-bottom-left-radius:4px}
+.coord-meta{font-size:11px;font-weight:650;color:var(--muted);margin-bottom:4px}
+.coord-message{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.coord-result{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+.coord-error{border-left:3px solid var(--bad);background:var(--bad-soft);padding:9px 11px;border-radius:0 8px 8px 0;color:#853B37}
+.coord-error p{margin:0}
+.coord-error details{margin-top:6px;font-size:12px;color:var(--muted)}
+.coord-error pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.45 var(--mono);margin:6px 0 0}
+.coord-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.coord-section-title{font-size:14px;margin:22px 0 10px}
+.coord-empty{padding:14px;border:1px dashed var(--line);border-radius:11px;color:var(--muted);background:rgba(255,255,255,.5)}
 @media(max-width:680px){.coord-guide{grid-template-columns:1fr}.coord-step{padding:10px 12px}}
 .sect-h{font:650 15px var(--font);margin:34px 0 10px;display:flex;align-items:center;gap:8px}
 .sect-h .n{font:600 11px var(--mono);color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:1px 7px}
@@ -1926,20 +1943,31 @@ function renderProject(){
     history.dataset.signature=signature;
     const content=el("div");
     const queueNote=state.paused?"Обработка сообщений приостановлена.":state.coordinatorConfigured?"Координатор подключён. Сообщения обрабатываются по очереди.":"Координатор не подключён. Сообщения не будут обработаны, пока его не настроят.";
-    content.append(el("p","coord-status",queueNote));
-    const pause=el("button","btn",state.paused?"Продолжить обработку":"Приостановить обработку");
-    pause.onclick=async()=>{try{await post("/api/project/pause",{paused:!state.paused});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};content.append(pause);
-    if(!state.messages.length)content.append(el("p","page-sub","Напишите координатору ниже. Чтобы получить задачу на утверждение, начните сообщение с «Создай задачу:» и опишите результат."));
-    const labels={queued:"В очереди — координатор ответит автоматически",running:"Координатор обрабатывает сообщение",succeeded:"Ответ координатора",failed:"Координатор не смог ответить",cancelled:"Обработка отменена"};
-    for(const message of state.messages){const row=el("section","card");row.append(el("p","",message.content));
-      for(const run of state.runs.filter(r=>r.messageId===message.messageId)){row.append(el("p","page-sub",run.cancelRequested&&run.state==="running"?"Останавливается":labels[run.state]));
-        if(run.result)row.append(el("p","",run.result));if(run.error)row.append(el("p","bad",run.error));
-        if(run.state==="failed"){const retry=el("button","btn","Повторить ответ");retry.onclick=async()=>{retry.disabled=true;try{await post("/api/project/retry",{runId:run.runId,retryRunId:crypto.randomUUID()});renderProject()}catch(e){$("project-chat-error").textContent=e.message}finally{retry.disabled=false}};row.append(retry)}
-        if(run.state==="queued"||run.state==="running"){const cancel=el("button","btn",run.state==="queued"?"Убрать из очереди":"Остановить ответ");
-          cancel.onclick=async()=>{try{await post("/api/project/cancel",{runId:run.runId});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};row.append(cancel)}}content.append(row)}
-    content.append(el("p","page-sub","Остановка ответа не останавливает уже запущенные задачи. Управляйте ими в списке задач."));
+    const toolbar=el("div","coord-toolbar");toolbar.append(el("p","coord-status",queueNote));
+    const pause=el("button","ghost small",state.paused?"Продолжить":"Приостановить");
+    pause.onclick=async()=>{try{await post("/api/project/pause",{paused:!state.paused});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};toolbar.append(pause);content.append(toolbar);
+    if(!state.messages.length)content.append(el("div","coord-empty","Напишите координатору ниже. Чтобы получить задачу на утверждение, начните сообщение с «Создай задачу:» и опишите результат."));
+    const labels={queued:"В очереди",running:"Обрабатывает сообщение",succeeded:"Ответ",failed:"Не удалось ответить",cancelled:"Обработка отменена"};
+    const thread=el("div","coord-thread");
+    for(const message of state.messages){const turn=el("article","coord-turn");
+      const user=el("section","coord-bubble user");user.append(el("div","coord-meta","Вы"),el("p","coord-message",message.content));turn.append(user);
+      for(const run of state.runs.filter(r=>r.messageId===message.messageId)){const reply=el("section","coord-bubble assistant");
+        const runLabel=run.cancelRequested&&run.state==="running"?"Останавливается":labels[run.state]||"Статус координатора";
+        reply.append(el("div","coord-meta",run.state==="succeeded"?"Координатор":runLabel));
+        if(run.state==="queued"||run.state==="running")reply.append(el("p","coord-status",run.state==="queued"?"Ответ появится здесь автоматически.":"Подготавливает ответ…"));
+        if(run.result)reply.append(el("p","coord-result",run.result));
+        if(run.error){const errorBox=el("div","coord-error"),friendly=run.error.includes("returned no answer")?"Координатор завершил работу без ответа. Попробуйте повторить запрос.":"Координатор не смог обработать сообщение.";
+          errorBox.append(el("p","",friendly));const technical=el("details");technical.append(el("summary","","Технические подробности"),el("pre","",run.error));errorBox.append(technical);reply.append(errorBox)}
+        const actions=el("div","coord-actions");
+        if(run.state==="failed"){const retry=el("button","btn small","Повторить");retry.onclick=async()=>{retry.disabled=true;try{await post("/api/project/retry",{runId:run.runId,retryRunId:crypto.randomUUID()});renderProject()}catch(e){$("project-chat-error").textContent=e.message}finally{retry.disabled=false}};actions.append(retry)}
+        if(run.state==="queued"||run.state==="running"){const cancel=el("button","ghost small",run.state==="queued"?"Убрать из очереди":"Остановить");
+          cancel.onclick=async()=>{try{await post("/api/project/cancel",{runId:run.runId});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};actions.append(cancel)}
+        if(actions.childNodes.length)reply.append(actions);turn.append(reply)}thread.append(turn)}
+    if(state.messages.length){content.append(el("h2","coord-section-title","Переписка"),thread,el("p","page-sub","Остановка ответа не останавливает уже запущенные задачи. Управляйте ими в списке задач."))}
     const proposalStates={pending:"Нужно ваше подтверждение",approved:"Подтверждено, создаём задачу",executed:"Задача создана",rejected:"Предложение отклонено",superseded:"Заменено новой версией",failed:"Предложение не удалось сохранить"};
-    for(const proposal of state.proposals||[]){const card=el("section","card coord-proposal"),payload=proposal.payload;
+    const proposals=state.proposals||[];
+    if(proposals.length)content.append(el("h2","coord-section-title","Предложения задач"));
+    for(const proposal of proposals){const card=el("section","card coord-proposal"),payload=proposal.payload;
       card.append(el("h3","","Предложение задачи: "+payload.title),el("p","",proposal.summary),el("p","",payload.description),el("p","page-sub","Команда: "+payload.agents.join(", ")),
         el("p","page-sub","Стоимость неизвестна. "+(payload.maxCostUsd===undefined?"Лимит не задан.":"Лимит: $"+payload.maxCostUsd+"; это не прогноз.")),el("p","coord-status",proposalStates[proposal.status]||"Статус: "+proposal.status));
       if(proposal.status==="pending")card.append(el("p","page-sub","Задача пока не создана. Проверьте описание и состав команды, затем подтвердите или измените предложение."));
