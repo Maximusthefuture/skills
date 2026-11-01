@@ -68,6 +68,32 @@ describe("model", () => {
   });
 });
 
+describe("resolveArgv", () => {
+  it.skipIf(process.platform !== "win32")("on Windows an npm shim (kimi, qwen) is replaced by the node script it wraps: plain spawn cannot run a .cmd", async () => {
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { resolveArgv } = await import("../../src/runner.js");
+    const { tmpDir } = await import("../helpers/tmp.js");
+    const bin = await tmpDir();
+    await mkdir(join(bin, "node_modules", "pkg"), { recursive: true });
+    await writeFile(join(bin, "node_modules", "pkg", "main.js"), "// bin\n");
+    await writeFile(join(bin, "mycmd.cmd"), `@ECHO off\r\nSET dp0=%~dp0\r\nnode "%dp0%\\node_modules\\pkg\\main.js" %*\r\n`);
+    const env: NodeJS.ProcessEnv = { PATH: bin };
+    // the shim's node script is run directly: a multi-line {prompt} survives (cmd.exe would break it)
+    expect(await resolveArgv(["mycmd", "--prompt", "line1\nline2"], env)).toEqual({ argv: [process.execPath, join(bin, "node_modules", "pkg", "main.js"), "--prompt", "line1\nline2"] });
+    // an .exe is run as it is; an unknown name is left alone (spawn reports ENOENT)
+    await writeFile(join(bin, "real.exe"), "x");
+    expect(await resolveArgv(["real", "-v"], env)).toEqual({ argv: [join(bin, "real.exe"), "-v"] });
+    expect(await resolveArgv(["nope", "-v"], env)).toEqual({ argv: ["nope", "-v"] });
+    // a .cmd without a node script goes through cmd.exe, arguments quoted and meta chars ^-escaped
+    await writeFile(join(bin, "plain.cmd"), "@ECHO off\r\n");
+    const viaCmd = await resolveArgv(["plain", 'a & b'], env);
+    expect(viaCmd.argv.slice(0, 4)).toEqual([env.ComSpec ?? "cmd.exe", "/d", "/s", "/c"]);
+    expect(viaCmd.argv[4]).toContain("^&");
+    expect(viaCmd.verbatim).toBe(true);
+  });
+});
+
 describe("pickTask", () => {
   it("takes the oldest unfinished task of the agent, like the server", () => {
     const tasks = [task("task-010", "ACTIVE"), task("task-002", "COMPLETED"), task("task-009", "BLOCKED"), task("task-001", "ACTIVE", ["other"])];

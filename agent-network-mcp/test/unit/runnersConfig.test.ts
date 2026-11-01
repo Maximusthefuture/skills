@@ -243,6 +243,116 @@ describe("model per agent", () => {
   });
 });
 
+describe("runner templates", () => {
+  it("the page adds a runner from a template: checked against it, written into the config, stopped", async () => {
+    const dir = await tmpDir();
+    const configPath = join(dir, "runners.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        _comment: ["keep me"],
+        defaults: { command: ["qwen", "{prompt}", "-m", "{model}"], model: "qwen/small", models: ["qwen/small", "qwen/big"] },
+        agents: [{ id: "backend" }],
+        runnerTemplates: {
+          qwen: {}, // everything from defaults
+          kimi: { command: ["kimi", "--model", "{model}", "--prompt", "{prompt}"], model: "kimi/k3", models: ["kimi/k3", "kimi/k3-pro"] },
+        },
+      }),
+    );
+    const config = await loadRunnersConfig(configPath);
+    expect(config.runnerTemplates!.map((t) => [t.name, t.config.model, t.config.models])).toEqual([
+      ["qwen", "qwen/small", ["qwen/small", "qwen/big"]], // defaults apply
+      ["kimi", "kimi/k3", ["kimi/k3", "kimi/k3-pro"]],
+    ]);
+    const pool = new RunnerPool(join(dir, ".agent-network"), config.agents, { configPath: config.path!, templates: config.runnerTemplates });
+    expect(pool.templates()).toEqual([
+      { name: "qwen", model: "qwen/small", models: ["qwen/small", "qwen/big"] },
+      { name: "kimi", model: "kimi/k3", models: ["kimi/k3", "kimi/k3-pro"] },
+    ]);
+
+    await expect(pool.addRunner({ id: "backend", template: "kimi" })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("exists already") });
+    await expect(pool.addRunner({ id: "k-1", template: "nope" })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining('No runner template "nope"') });
+    await expect(pool.addRunner({ id: "k-1", template: "kimi", model: "kimi/other" })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining('not one the template "kimi" offers') });
+    await expect(pool.addRunner({ id: "bad id", template: "kimi" })).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("Invalid id") });
+
+    const view = await pool.addRunner({ id: "k-1", template: "kimi", model: "kimi/k3-pro" });
+    expect([view.id, view.model, view.running, view.models]).toEqual(["k-1", "kimi/k3-pro", false, ["kimi/k3", "kimi/k3-pro"]]);
+    const saved = JSON.parse(await readFile(configPath, "utf8"));
+    expect(saved._comment).toEqual(["keep me"]);
+    expect(saved.agents).toHaveLength(2);
+    expect(saved.agents[1]).toEqual({ id: "k-1", command: ["kimi", "--model", "{model}", "--prompt", "{prompt}"], model: "kimi/k3-pro", models: ["kimi/k3", "kimi/k3-pro"], autostart: false });
+    const reloaded = await loadRunnersConfig(configPath); // survives a restart
+    expect(reloaded.agents.map((a) => a.id)).toEqual(["backend", "k-1"]);
+
+    const ui = await startUiServer(join(dir, ".agent-network"), { port: 0, runners: pool });
+    try {
+      const post = (body: unknown) => fetch(`${ui.url}/api/runners`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const created = await post({ id: "q-1", template: "qwen" }); // no model: the template's default
+      expect(created.status).toBe(201);
+      expect(await created.json()).toMatchObject({ id: "q-1", model: "qwen/small", running: false });
+      expect((await post({ id: "q-1", template: "qwen" })).status).toBe(400); // a repeated id
+      expect((await post({ id: "q-2", template: "kimi", model: "kimi/other" })).status).toBe(400); // a model off the list
+      const state = (await (await fetch(`${ui.url}/api/state`)).json()) as { control: { runnerTemplates: { name: string }[]; runners: { id: string }[] } };
+      expect(state.control.runnerTemplates.map((t) => t.name)).toEqual(["qwen", "kimi"]);
+      expect(state.control.runners.map((r) => r.id)).toEqual(["backend", "k-1", "q-1"]);
+    } finally {
+      await ui.close();
+    }
+    await pool.stopAll();
+  });
+
+  it("a template without any model is refused at start", async () => {
+    const dir = await tmpDir();
+    const p = join(dir, "runners.json");
+    await writeFile(p, JSON.stringify({ defaults: { command: ["x", "{prompt}"] }, agents: [{ id: "a" }], runnerTemplates: { bare: {} } }));
+    await expect(loadRunnersConfig(p)).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.stringContaining('template "bare" needs "models"') });
+  });
+});
+
+describe("token saver", () => {
+  it("the checkbox on the page: defaults and a per-agent override, written back, given to the runner", async () => {
+    const dir = await tmpDir();
+    const configPath = join(dir, "runners.json");
+    await writeFile(configPath, JSON.stringify({ defaults: { command: ["x", "{prompt}"], tokenSaver: true }, agents: [{ id: "backend" }, { id: "reviewer", tokenSaver: false }] }));
+    const config = await loadRunnersConfig(configPath);
+    expect(config.agents.map((a) => a.tokenSaver)).toEqual([true, false]);
+
+    let given: RunnerOptions | undefined;
+    const pool = new RunnerPool(join(dir, ".agent-network"), config.agents, {
+      configPath: config.path!,
+      run: (o) => {
+        given = o;
+        return new Promise((r) => o.signal!.addEventListener("abort", () => r(0)));
+      },
+    });
+    pool.start("backend");
+    expect(given!.tokenSaver).toBe(true);
+    await pool.stop("backend");
+
+    const view = await pool.setTokenSaver("reviewer", true);
+    expect(view.tokenSaver).toBe(true);
+    expect(JSON.parse(await readFile(configPath, "utf8")).agents[1]).toEqual({ id: "reviewer", tokenSaver: true });
+    expect((await loadRunnersConfig(configPath)).agents[1]!.tokenSaver).toBe(true); // survives a restart
+
+    const ui = await startUiServer(join(dir, ".agent-network"), { port: 0, runners: pool });
+    try {
+      const res = await fetch(`${ui.url}/api/runners/backend/token-saver`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false }) });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ id: "backend", tokenSaver: false });
+    } finally {
+      await ui.close();
+    }
+    await pool.stopAll();
+  });
+
+  it("a non-boolean tokenSaver is refused at start", async () => {
+    const dir = await tmpDir();
+    const p = join(dir, "runners.json");
+    await writeFile(p, JSON.stringify({ defaults: { command: ["x"] }, agents: [{ id: "a", tokenSaver: "yes" }] }));
+    await expect(loadRunnersConfig(p)).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.stringContaining('"tokenSaver" is true or false') });
+  });
+});
+
 describe("token prices", () => {
   it("come from \"prices\" in runners.json (USD per 1M tokens) and are read again when the file changes", async () => {
     expect(parsePrices(undefined, "f")).toBeUndefined();

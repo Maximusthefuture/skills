@@ -59,7 +59,19 @@ export interface DeploySettings {
 
 export const DEFAULT_SETTINGS: DeploySettings = {
   bitbucket: { remote: "origin", branch: "feature/{task}-{slug}" },
-  jenkins: { mcpCommand: [], mcpEnv: {}, job: "", params: { BRANCH: "{branch}", ENV: "{env}" }, triggerTool: "", triggerArgs: "", statusTool: "", statusArgs: "", logTool: "", logArgs: "", timeoutMin: 30 },
+  jenkins: {
+    mcpCommand: [],
+    mcpEnv: {},
+    job: "",
+    params: { BRANCH: "{branch}", ENV: "{env}" },
+    triggerTool: "trigger_build",
+    triggerArgs: '{"jobName":"{job}","parameters":{params}}',
+    statusTool: "get_build",
+    statusArgs: '{"jobName":"{job}","buildNumber":{build}}',
+    logTool: "get_build_log",
+    logArgs: '{"jobName":"{job}","buildNumber":{build}}',
+    timeoutMin: 30,
+  },
   kubernetes: { kubectl: "kubectl", context: "", rolloutTimeoutSec: 300 },
   environments: [{ name: "dev" }],
 };
@@ -117,6 +129,7 @@ export function checkSettings(raw: unknown): DeploySettings {
     if (s && !NAME.test(s)) throw new AppError("INVALID_INPUT", `${what}: ${JSON.stringify(s)} is not an MCP tool name`);
     return s;
   };
+  const conventional = [j.triggerTool, j.triggerArgs, j.statusTool, j.statusArgs, j.logTool, j.logArgs].every((v) => !str(v));
   const kubectl = safe(str(k.kubectl) || "kubectl", "kubernetes.kubectl");
   const context = str(k.context, 200);
   if (context) safe(context, "kubernetes.context");
@@ -153,12 +166,12 @@ export function checkSettings(raw: unknown): DeploySettings {
       mcpEnv: map(j.mcpEnv, "jenkins.mcpEnv"),
       job: str(j.job, 200),
       params: j.params === undefined ? { ...DEFAULT_SETTINGS.jenkins.params } : map(j.params, "jenkins.params"),
-      triggerTool: tool(j.triggerTool, "jenkins.triggerTool"),
-      triggerArgs: template(j.triggerArgs, "jenkins.triggerArgs"),
-      statusTool: tool(j.statusTool, "jenkins.statusTool"),
-      statusArgs: template(j.statusArgs, "jenkins.statusArgs"),
-      logTool: tool(j.logTool, "jenkins.logTool"),
-      logArgs: template(j.logArgs, "jenkins.logArgs"),
+      triggerTool: tool(j.triggerTool, "jenkins.triggerTool") || (conventional ? DEFAULT_SETTINGS.jenkins.triggerTool : ""),
+      triggerArgs: template(j.triggerArgs, "jenkins.triggerArgs") || (conventional ? DEFAULT_SETTINGS.jenkins.triggerArgs : ""),
+      statusTool: tool(j.statusTool, "jenkins.statusTool") || (conventional ? DEFAULT_SETTINGS.jenkins.statusTool : ""),
+      statusArgs: template(j.statusArgs, "jenkins.statusArgs") || (conventional ? DEFAULT_SETTINGS.jenkins.statusArgs : ""),
+      logTool: tool(j.logTool, "jenkins.logTool") || (conventional ? DEFAULT_SETTINGS.jenkins.logTool : ""),
+      logArgs: template(j.logArgs, "jenkins.logArgs") || (conventional ? DEFAULT_SETTINGS.jenkins.logArgs : ""),
       timeoutMin: int(j.timeoutMin, 1, 240, DEFAULT_SETTINGS.jenkins.timeoutMin),
     },
     kubernetes: { kubectl, context, rolloutTimeoutSec: int(k.rolloutTimeoutSec, 10, 3600, DEFAULT_SETTINGS.kubernetes.rolloutTimeoutSec) },

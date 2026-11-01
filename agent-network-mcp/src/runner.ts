@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { isHandedOver } from "./handoff.js";
 import { isParked, lastPark } from "./park.js";
 import { progressMark, uncommittedCount, workBrief } from "./progress.js";
@@ -49,6 +50,13 @@ export interface UrgentChannel {
 export const URGENT =
   "URGENT FROM THE OPERATOR — your previous session was stopped so that you read this first:\n{message}\n" +
   "Act on it first (it is also in pendingMessages), then go on with the task as usual.\n\n";
+
+/** Appended to every session prompt when the config's tokenSaver is on (the page's checkbox). */
+export const TOKEN_SAVER =
+  "Token economy: the whole context is re-read on every turn, so keep it small. " +
+  "Grep/Glob first, then Read only the lines you need; never re-read a file you have already seen unless it changed. " +
+  "Do not restate a tool's output back. Commit every green step at once instead of carrying a long diff. " +
+  "Messages to other agents: to the point, no quoted code. When nextAction is wait, call wait() and end your turn.";
 
 const HANDOFF =
   " This is a fresh session for phase {phase}: the previous session handed the task over when the phase changed. " +
@@ -133,6 +141,60 @@ export function isValidModel(model: unknown): model is string {
   return typeof model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(model);
 }
 
+// Windows: a CLI installed by npm (kimi, qwen) is a .cmd shim plus an extensionless sh script, and plain spawn runs
+// neither (ENOENT; a .cmd is even refused with EINVAL). The shim only runs `node <package's bin> %*`: the bin path is
+// read out of it and run directly, so no cmd.exe comes in between (it would also break a multi-line {prompt}).
+// A .cmd/.bat that is not such a shim goes through cmd.exe with every argument quoted and its meta chars ^-escaped
+// (the cross-spawn rules); a real .exe/.com is run as it is.
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
+
+function cmdEscapeArg(arg: string, doubleEscape: boolean): string {
+  // backslashes before a quote (or the end, which becomes one) are doubled, the quote is \"-escaped, then ^-escape meta chars
+  let a = arg.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"').replace(/(?=(\\+?)?)\1$/, "$1$1");
+  a = `"${a}"`.replace(CMD_META, "^$1");
+  return doubleEscape ? a.replace(CMD_META, "^$1") : a;
+}
+
+/** The node script an npm shim runs (`"%dp0%\node_modules\<pkg>\<bin>.js"` in the .cmd, `"$basedir/..."` in the sh one). */
+async function shimNodeScript(file: string): Promise<string | null> {
+  const text = await readFile(file, "utf8").catch(() => "");
+  const matches = [...text.matchAll(/"%dp0%[\\/]?([^"\r\n]+?\.(?:mjs|cjs|js))"/gi)];
+  const rel = matches.at(-1)?.[1] ?? /"\$basedir[\\/]?([^"\r\n]+?\.(?:mjs|cjs|js))"/i.exec(text)?.[1];
+  if (!rel) return null;
+  const script = resolve(dirname(file), rel);
+  return existsSync(script) ? script : null;
+}
+
+/** The argv to really spawn: on Windows a bare CLI name is resolved on PATH and a shim replaced by what it runs. */
+export async function resolveArgv(argv: string[], env: NodeJS.ProcessEnv = process.env): Promise<{ argv: string[]; verbatim?: boolean }> {
+  if (process.platform !== "win32" || !argv.length) return { argv };
+  const name = argv[0]!;
+  if (/\.(exe|com)$/i.test(name)) return { argv };
+  let file: string | null = name.includes("/") || name.includes("\\") ? name : null;
+  if (!file) {
+    for (const dir of (env.PATH ?? "").split(";").filter(Boolean)) {
+      for (const ext of [".exe", ".com", ".cmd", ".bat", ""]) {
+        if (existsSync(join(dir, name + ext))) {
+          file = join(dir, name + ext);
+          break;
+        }
+      }
+      if (file) break;
+    }
+  }
+  if (!file) return { argv };
+  if (/\.(exe|com)$/i.test(file)) return { argv: [file, ...argv.slice(1)] };
+  const script = /\.(cmd|bat)$/i.test(file) || !/\.[a-z]+$/i.test(file) ? await shimNodeScript(file) : null;
+  if (script) return { argv: [process.execPath, script, ...argv.slice(1)] };
+  if (/\.(cmd|bat)$/i.test(file)) {
+    // a shim in node_modules/.bin re-quotes its arguments for the real script: its meta chars are ^-escaped twice
+    const double = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(file);
+    const shellCommand = [file.replace(CMD_META, "^$&"), ...argv.slice(1).map((a) => cmdEscapeArg(a, double))].join(" ");
+    return { argv: [env.ComSpec ?? "cmd.exe", "/d", "/s", "/c", `"${shellCommand}"`], verbatim: true };
+  }
+  return { argv };
+}
+
 /** The turn limit the command gives the CLI: `--max-turns 70` (Claude Code) or `--max-session-turns 70` (Qwen Code). */
 export function turnLimitOf(command: string[]): number | undefined {
   for (let i = 0; i < command.length; i++) {
@@ -162,7 +224,10 @@ export interface RunningSession {
 export interface RunnerOptions {
   agent: string;
   networkDir: string;
-  /** Agent CLI argv; `{prompt}` is replaced by the prompt (or the prompt is appended). */
+  /**
+   * Agent CLI argv; `{prompt}` is replaced by the prompt (or the prompt is appended). `{agentId}` and `{networkDir}`
+   * are replaced by this runner's agent id and network directory (for a CLI that names the MCP server's env in its argv).
+   */
   command: string[];
   cwd?: string;
   /** Placeholders: {agent} {taskId} {title} {attempt} {resume}. */
@@ -175,6 +240,8 @@ export interface RunnerOptions {
   systemPromptFile?: string;
   /** Put where the command has {model}. A function is asked before every session, so a change applies to the next one. */
   model?: string | ((task?: Task) => string | undefined);
+  /** Append the built-in token-economy rules (TOKEN_SAVER) to every session prompt. */
+  tokenSaver?: boolean;
   /**
    * Skills switched off for this agent in this task, asked before every session: Claude Code does not list them
    * (skillOverrides in --settings), other CLIs get them named in the prompt; the hook "pre-skill" refuses them.
@@ -243,9 +310,10 @@ export interface SessionRun {
  * Runs the agent session; on abort sends SIGTERM, then SIGKILL after 10 s. Its stdout goes through SessionOutput
  * (JSON events become a readable log and the final usage is kept); `sink` receives what to show (null = nothing).
  */
-export function runSession(argv: string[], env: NodeJS.ProcessEnv, cwd: string | undefined, sink: ((text: string) => void) | null, signal?: AbortSignal, onEvent?: (e: ActivityItem) => void, onContext?: (tokens: number) => void): Promise<SessionRun> {
+export async function runSession(argv: string[], env: NodeJS.ProcessEnv, cwd: string | undefined, sink: ((text: string) => void) | null, signal?: AbortSignal, onEvent?: (e: ActivityItem) => void, onContext?: (tokens: number) => void): Promise<SessionRun> {
+  const resolved = await resolveArgv(argv, env);
   return new Promise((done) => {
-    const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(resolved.argv[0]!, resolved.argv.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"], ...(resolved.verbatim ? { windowsVerbatimArguments: true } : {}) });
     const parsed = new SessionOutput(onEvent, Date.now, onContext);
     const show = (text: string): void => {
       if (text && sink) sink(text);
@@ -307,7 +375,9 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
   const agents = new AgentStore(fs);
   const messages = new MessageStore(fs);
   const sessions = new SessionStore(fs);
-  const turnLimit = turnLimitOf(opts.command);
+  // {agentId} and {networkDir} are this runner's own: fill them once, {prompt}/{model}/{systemPrompt} are per session
+  const command = opts.command.map((a) => a.replaceAll("{agentId}", agent).replaceAll("{networkDir}", networkDir));
+  const turnLimit = turnLimitOf(command);
 
   const attempts = new Map<string, number>();
   const freshPhases = opts.freshPhases ?? [];
@@ -385,8 +455,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       continue;
     }
 
-    const model = usesModel(opts.command) ? (typeof opts.model === "function" ? opts.model(task) : opts.model) : undefined;
-    if (usesModel(opts.command) && !model) {
+    const model = usesModel(command) ? (typeof opts.model === "function" ? opts.model(task) : opts.model) : undefined;
+    if (usesModel(command) && !model) {
       say("the command has {model} but no model is set; waiting");
       await sleep(pollMs, signal);
       continue;
@@ -421,11 +491,12 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const offSkills = [...(opts.disabledSkills?.(task) ?? [])];
     // the lead of a task that changes the API contract writes the contract's worktree too: the CLI is told so
     const contractDir = task.contract && task.agents[0] === agent ? task.contract.worktree : undefined;
-    const dirs = contractDir ? withExtraDir(opts.command, contractDir) : { command: opts.command, added: false };
+    const dirs = contractDir ? withExtraDir(command, contractDir) : { command, added: false };
     const skillsOff = withSkillOverrides(dirs.command, offSkills);
     const prompt =
       (urgent ? URGENT.replace("{message}", urgent) : "") +
       withInstructions(renderPrompt(template, vars), instructions, vars) +
+      (opts.tokenSaver ? `\n\n${TOKEN_SAVER}` : "") +
       (skillsOff.hidden ? "" : disabledSkillsNote(offSkills)) +
       (brief ? `\n\nYour folder right now (from the runner, no need to run git log or git status for this):\n${brief}` : "") +
       (contractDir ? `\n\nThe API contract's worktree of this task, yours to edit: ${contractDir}${dirs.added ? "" : " (your CLI may ask before writing outside your folder)"}.` : "");
@@ -440,7 +511,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const sink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
     const startedAt = new Date();
     opts.onSession?.({ taskId: task.id, attempt, startedAt: startedAt.toISOString(), ...(model ? { model } : {}) });
-    const wantsSystem = opts.command.some((a) => a.includes("{systemPrompt}"));
+    const wantsSystem = command.some((a) => a.includes("{systemPrompt}"));
     const systemText = wantsSystem ? (opts.systemPromptFile ? await readText(opts.systemPromptFile, "system prompt file", log) : undefined) : undefined;
     const system = wantsSystem ? renderPrompt(systemText?.trim() || FALLBACK_SYSTEM_PROMPT, vars) : undefined;
     // its own stop, so that an urgent message ends this session without stopping the runner

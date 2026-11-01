@@ -29,7 +29,7 @@ export function assembleProject(networkDir: string, config: RunnersConfig | unde
     const blocked = await (await operator).blockForRunner(taskId, agentId, reason);
     if (blocked) out(`[runner] ${taskId}: BLOCKED, ${agentId}'s runner gave up (${reason})`);
   };
-  const runners = config ? new RunnerPool(dir, config.agents, { ...(config.path ? { configPath: config.path } : {}), ...(onSessionEnd ? { onSessionEnd } : {}), onGiveUp }) : undefined;
+  const runners = config ? new RunnerPool(dir, config.agents, { ...(config.path ? { configPath: config.path } : {}), ...(config.runnerTemplates?.length ? { templates: config.runnerTemplates } : {}), ...(onSessionEnd ? { onSessionEnd } : {}), onGiveUp }) : undefined;
   // the supervisor watches this project's runners; it acts through the page, so it is attached once the page is up
   const supervisor =
     runners && config?.supervisor

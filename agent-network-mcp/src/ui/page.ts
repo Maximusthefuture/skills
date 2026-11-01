@@ -17,7 +17,7 @@ aside{background:var(--side);border-right:1px solid var(--line);display:flex;fle
 .grp{padding:10px 16px 4px;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
 nav a{display:flex;align-items:center;gap:10px;padding:7px 16px;color:var(--muted);text-decoration:none;border-left:2px solid transparent}
 nav a .n{font:11px var(--mono);color:var(--idle);width:16px}nav a .c{margin-left:auto;font:11px var(--mono)}
-nav a.on{color:var(--text);background:var(--card);border-left-color:var(--accent)}nav a:hover{color:var(--text)}
+nav a.on{color:var(--text);background:var(--card);border-left-color:var(--accent)}nav a:hover{color:var(--text)}.nav-more{margin-top:8px}.nav-more>summary{padding:8px 16px;color:var(--muted);cursor:pointer;list-style:none}.nav-more>summary::-webkit-details-marker{display:none}.nav-more>summary:after{content:"▾";float:right}.nav-more[open]>summary:after{content:"▴"}.nav-more a{padding-left:28px}
 .foot{margin-top:auto;padding:12px 16px;border-top:1px solid var(--line);color:var(--muted);font:11px var(--mono);word-break:break-all}
 .top{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;padding:10px 24px;border-bottom:1px solid var(--line);font:11px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:var(--bg);position:sticky;top:0;z-index:2}
 .top b{color:var(--text);font-weight:500;margin-left:4px}.top .link{cursor:pointer}.top .link:hover b{text-decoration:underline}.top .r{margin-left:auto;text-transform:none}.top .warnq b{color:var(--warn)}
@@ -183,6 +183,8 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 [hidden]{display:none!important}.nw{white-space:nowrap}.path{max-width:420px;overflow-wrap:anywhere}td .path{min-width:160px;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .app>div{min-width:0}
 @media (max-width:820px){.app{grid-template-columns:minmax(0,1fr)}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}nav{display:flex;overflow-x:auto}.grp,.foot{display:none}nav a{border-left:0;border-bottom:2px solid transparent;white-space:nowrap;padding:8px 12px}nav a.on{border-bottom-color:var(--accent)}.cols{grid-template-columns:1fr}.top{position:static;padding:8px 16px}main{padding:16px}.kpi{border-right:0;border-bottom:1px solid var(--line)}}
+.task-options,.agent-options{margin:16px 0;padding:12px;border:1px solid var(--line);border-radius:8px}.task-options>summary,.agent-options>summary{cursor:pointer;font-weight:600}.settings-links a{color:var(--text);text-decoration:none}.settings-links a:hover{border-color:var(--accent)}nav{overflow-y:auto}@media(max-width:820px){.nav-more{margin:0}.nav-more>summary{white-space:nowrap}.nav-more[open]{min-width:190px}}
+.project-switch{display:flex;gap:12px;align-items:center;padding:12px 24px;background:var(--card);border-bottom:1px solid var(--line)}.project-switch select{width:auto;min-width:160px}.history-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}.history-tabs a{padding:7px 12px;color:var(--muted);text-decoration:none;border:1px solid var(--line);border-radius:6px}.history-tabs a.on{background:var(--accbg);color:var(--accent)}
 </style>
 </head>
 <body>
@@ -191,40 +193,44 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 <aside>
   <div class="brand">◆ agent network</div>
   <div class="proj" id="projcard" title="Проекты"><b><span class="dot" id="projdot"></span><span id="projname">…</span></b><span class="s" id="projsub"></span></div>
-  <nav id="nav">
-    <div class="grp">Работа</div>
-    <a href="#/inbox" data-tab="inbox"><span class="n">00</span>Входящие<span class="c" id="c-inbox"></span></a>
-    <a href="#/overview" data-tab="overview"><span class="n">01</span>Обзор</a>
-    <a href="#/tasks" data-tab="tasks"><span class="n">02</span>Задачи<span class="c" id="c-tasks"></span></a>
-    <a href="#/runs" data-tab="runs"><span class="n">03</span>Запуски<span class="c" id="c-runs"></span></a>
-    <a href="#/activity" data-tab="activity"><span class="n">04</span>Активность<span class="c" id="c-activity"></span></a>
-    <a href="#/deploy" data-tab="deploy"><span class="n">05</span>Раскатка<span class="c" id="c-deploy"></span></a>
-    <div class="grp">Инфраструктура</div>
-    <a href="#/supervisor" data-tab="supervisor"><span class="n">06</span>Надзор<span class="c" id="c-supervisor"></span></a>
-    <a href="#/observer" data-tab="observer"><span class="n">07</span>Наблюдатель<span class="c" id="c-observer"></span></a>
-    <a href="#/runners" data-tab="runners"><span class="n">08</span>Runner'ы<span class="c" id="c-runners"></span></a>
-    <a href="#/projects" data-tab="projects"><span class="n">09</span>Проекты<span class="c" id="c-projects"></span></a>
-    <a href="#/events" data-tab="events"><span class="n">10</span>События</a>
+  <nav id="nav" aria-label="Основная навигация">
+    <a href="#/overview" data-tab="overview">Главная<span class="c" id="c-inbox"></span></a>
+    <a href="#/tasks" data-tab="tasks">Задачи<span class="c" id="c-tasks"></span></a>
+    <a href="#/runners" data-tab="runners">Агенты<span class="c" id="c-runners"></span></a>
+    <a href="#/settings" data-tab="settings">Настройки</a>
+    <a href="#/deploy" data-tab="deploy" id="deploy-nav" hidden>Публикация</a>
+    <details class="nav-more" id="nav-more">
+      <summary>История</summary>
+      <a href="#/activity" data-tab="activity">История<span class="c" id="c-runs"></span></a><span id="c-activity" hidden></span>
+
+      <span id="c-deploy" hidden></span>
+      <span id="c-supervisor" hidden></span>
+      <span id="c-observer" hidden></span>
+      <span id="c-projects" hidden></span>
+
+    </details>
   </nav>
   <div class="foot">сеть<br><span id="dir"></span></div>
 </aside>
 <div>
+  <div class="project-switch"><label for="project-select">Проект</label><select id="project-select" aria-label="Выбрать проект"></select><button id="project-manage" class="ghost">Управление проектами</button></div>
   <div class="top" id="topbar"></div>
   <main>
     <div class="banner note err" id="priceerr" hidden></div>
     <section id="questions" hidden><div class="grid" id="qlist"></div><div style="height:14px"></div></section>
     <section id="notes" hidden><div class="grid" id="nlist"></div><div style="height:14px"></div></section>
 
+    <section data-panel="overview">      <div class="hrow"><div><h1>Главная</h1><div class="lead">Что делают агенты сейчас и сколько это стоит.</div></div><div class="end win" id="win"><button data-w="24h">24ч</button><button data-w="7d">7д</button><button data-w="30d">30д</button></div></div></section>
     <section data-panel="inbox" hidden>
-      <h1>Входящие</h1><div class="lead">Всё, что ждёт вашего решения, во всех проектах страницы: вопросы агентов, планы и change'и, задачи на приёмку, вливания, которые не прошли проверку, BLOCKED-задачи, решения надзора, предложения наблюдателя. Сверху — то, без чего рой стоит. Пункт уходит сам, когда вы решили.</div>
+      <h2>Нужно ваше решение</h2><div class="lead">Вопросы, согласования и остановленные задачи во всех проектах.</div>
       <div class="checks"><button type="button" class="ghost" id="notif-on">Включить уведомления браузера</button><span class="muted" id="notif-state"></span></div>
       <div id="inbox"></div>
     </section>
     <section data-panel="overview">
-      <div class="hrow"><div><h1>Обзор</h1><div class="lead">Что делают агенты сейчас и сколько это стоит.</div></div><div class="end win" id="win"><button data-w="24h">24ч</button><button data-w="7d">7д</button><button data-w="30d">30д</button></div></div>
-      <div class="kpis" id="kpis"></div>
+
       <div class="panel" id="ov-progress" style="margin-bottom:16px" hidden></div>
       <div class="cols"><div class="panel" id="ov-runners"></div><div class="panel" id="ov-phases"></div></div>
+      <details><summary>Расход и итоги периода</summary><div class="kpis" id="kpis"></div></details>
       <div class="panel" id="ov-events"></div>
     </section>
 
@@ -234,13 +240,14 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
         <div class="draftbox" id="draftbox" hidden><label>Опишите своими словами — агент изучит код и заполнит форму ниже: название, конкретное описание, команду, подготовку, сборку, контракт. Можно вставить тикет целиком<textarea id="draftidea" placeholder="Нужен частичный возврат заказа, по сумме; письмо клиенту после возврата"></textarea></label>
           <div class="checks"><button type="button" class="ghost" id="draftgo">Составить черновик</button><button type="button" class="ghost" id="draftstop" hidden>Остановить</button><span class="muted" id="draftstate"></span></div>
           <div id="draftwhy" hidden></div></div>
+        <label>Название (можно оставить пустым)<input name="title" maxlength="200" placeholder="Отмена заказа: POST /orders/{id}/cancel"></label>
+        <label>Описание — конкретно: что сделать, где, ожидаемое поведение, кто что делает (с OpenSpec change — необязательно)<textarea name="description" placeholder="Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты."></textarea></label>
+        <div class="row"><label>Lead (интегрирует)<select name="lead" id="lead"></select></label><label>Остальные агенты<div class="checks" id="others"></div></label></div>
+        <details class="task-options"><summary>Дополнительные настройки</summary>
         <label>OpenSpec change (необязательно): агенты делят его tasks.md по номерам задач — или пишут новый<select name="openspec" id="openspec"><option value="">— без OpenSpec —</option><option value="__new__">+ написать новый change…</option></select></label>
         <div id="specfolders" class="note" hidden></div>
         <label id="proposes-row" hidden>Имя нового change (латиница, цифры, -): lead пишет его, остальные ревьюят; код не меняется<input name="proposes" placeholder="add-loyalty-discount" maxlength="60"></label>
         <label id="from-row" hidden>Артефакты аналитиков (необязательно): путь к папке или .md-файлам, по одному на строку. Это вход, а не change: lead покажет их страницей, проведёт допрос и напишет свой change по правилам проекта, а вы примете его на второй странице<textarea name="from" rows="2" placeholder="/Users/me/Downloads/loyalty-discount/"></textarea></label>
-        <label>Название<input name="title" maxlength="200" placeholder="Отмена заказа: POST /orders/{id}/cancel"></label>
-        <label>Описание — конкретно: что сделать, где, ожидаемое поведение, кто что делает (с OpenSpec change — необязательно)<textarea name="description" placeholder="Отменять можно NEW и PAID; при PAID писать событие OrderCancelled. backend — API и сервис, reviewer — тесты."></textarea></label>
-        <div class="row"><label>Lead (интегрирует)<select name="lead" id="lead"></select></label><label>Остальные агенты<div class="checks" id="others"></div></label></div>
         <div class="row">
           <label title="Lead сдаёт задачу только после зелёного прогона этой команды на слитом результате. По умолчанию — verifyCommand из runners.json; пусто — без проверки.">Сборка и тесты (--verify)<input name="verifyCommand" placeholder="без проверки сборки"></label>
           <label>Follow-up задач на цепочку<input name="maxFollowUps" type="number" min="0" max="20" value="0"></label>
@@ -261,21 +268,21 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
         <div class="prep"><label class="inline" title="Lead может добавить агентов из шаблонов spawn (runners.json), если решит, что работы больше, чем людей в команде. Каждый добавленный агент — отдельная сессия, примерно как ещё один участник по стоимости. Без галочки lead делит работу между выбранными агентами."><input type="checkbox" name="allowSpawn"> Lead может добавлять агентов</label></div>
         <div class="prep"><label>Проект контракта OpenAPI <span class="muted">(если задача меняет API: абсолютный путь к Maven-проекту со спекой; lead поменяет её в своём worktree и поднимет версию)</span>
           <input name="contract" placeholder="/Users/me/projects/orders-api" autocomplete="off"></label><div class="muted small" id="contractnote"></div></div>
+        </details>
         <div class="checks"><button type="submit">Создать задачу</button><span class="note" id="formnote"></span></div>
       </form>
-      <div class="panel" id="schedules" hidden></div>
       <div class="taskback" id="taskback" hidden><a href="#" id="taskback-link">← Все задачи</a><span class="muted"> · открыта <span id="taskback-id"></span></span></div>
       <div id="tasks"></div>
     </section>
 
-    <section data-panel="runs" hidden>
+    <section data-panel="runs" hidden><div class="history-tabs" aria-label="История"><a href="#/activity" data-tab="activity">Действия агентов</a><a href="#/runs" data-tab="runs">Сессии и расход</a><a href="#/events" data-tab="events">События задач</a></div>
       <h1>Запуски</h1><div class="lead">Каждая сессия агента: сколько шла, сколько токенов и денег.</div>
       <div class="filters"><select id="f-agent"></select><select id="f-task"></select><select id="f-model"></select><select id="f-status"></select></div>
       <div class="panel"><table id="runs"></table></div>
       <div class="total" id="runtotal"></div>
     </section>
 
-    <section data-panel="activity" hidden>
+    <section data-panel="activity" hidden><div class="history-tabs" aria-label="История"><a href="#/activity" data-tab="activity">Действия агентов</a><a href="#/runs" data-tab="runs">Сессии и расход</a><a href="#/events" data-tab="events">События задач</a></div>
       <h1>Активность</h1><div class="lead">Что делают агенты: вызовы инструментов, результаты, их текст и мысли. Новые сверху; нажмите на строку, чтобы раскрыть.</div>
       <div class="filters"><div class="akinds" id="a-kinds"></div><select id="a-agent"></select><select id="a-task"></select><input id="a-q" placeholder="поиск: команда, файл, текст"><label class="follow"><input type="checkbox" id="a-follow" checked>следить</label></div>
       <div class="panel act" id="activity"></div>
@@ -314,13 +321,15 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
     </section>
 
     <section data-panel="runners" hidden>
-      <h1>Runner'ы</h1><div class="lead" id="runners-lead">Агенты проекта: запуск, модель, инструкции, лог.</div>
+      <h1>Агенты</h1><div class="lead" id="runners-lead">Агенты проекта: запуск, модель, инструкции, лог.</div>
       <div class="grid" id="runners"></div>
+      <h2>Агенты в сети</h2><div class="grid" id="agents"></div>
+      <details class="agent-options"><summary>Скиллы, роли и обслуживание</summary>
       <h2>Скиллы агентов</h2><div class="lead">Какие скиллы агент может загружать. Выключенный скилл runner называет агенту в промпте, а хук pre-skill отклоняет его загрузку (Skill или чтение SKILL.md). Действует со следующей сессии и пишется в runners.json (disabledSkills). «без: change» и «без: код» — скилл выключен только в задачах этого типа (disabledSkillsByTask в runners.json). Claude Code выключенных скиллов не видит вовсе: их описания не тратят токены.</div><div id="skills"></div>
       <h2>Роли проекта</h2><div class="lead">Что делают агенты, которых lead добавляет сам: роль по имени из библиотеки (.agent-network/roles) или своя, написанная под задачу. На чём агент работает (CLI, модель, права), решает шаблон в runners.json.</div><div class="grid" id="roles"></div>
-      <h2>Агенты в сети</h2><div class="grid" id="agents"></div>
       <h2>Worktree проекта</h2><div class="lead">Убрать разом все worktree проекта: агентов (если у них нет открытых задач), контрактов API закрытых и удалённых задач, брошенные проверками вливания. Без --force: папка с незакоммиченными правками и невлитая ветка остаются, ответ скажет почему. Нужные worktree создадутся заново перед следующей задачей.</div>
       <div class="checks"><button type="button" class="ghost" id="wt-clean">Убрать все worktree проекта</button></div><pre class="log" id="wt-out" hidden></pre>
+      </details>
     </section>
 
     <section data-panel="projects" hidden>
@@ -332,7 +341,19 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
       <div class="total" id="proj-note">Список всех проектов ведёт страница, запущенная с runner'ами: ~/.agent-network/projects.json.</div>
     </section>
 
-    <section data-panel="events" hidden>
+    <section data-panel="settings" hidden>
+      <h1>Настройки проекта</h1><div class="lead">Автоматизация, агенты и обслуживание проекта.</div>
+      <div class="grid settings-links">
+        <a class="card" href="#/runners" data-tab="runners">Агенты и модели</a>
+        <a class="card" href="#/supervisor" data-tab="supervisor">Надзор — помощь при сбоях</a>
+        <a class="card" href="#/observer" data-tab="observer">Наблюдатель — предложения улучшений</a>
+        <a class="card" href="#/projects" data-tab="projects">Управление проектами</a>
+        <a class="card" href="#/deploy" data-tab="deploy">Публикация и окружения</a>
+      </div>
+      <details class="task-options"><summary>Подключить автоматизацию</summary><p class="muted">Надзор и наблюдатель появляются здесь после настройки supervisor и observer в runners.json. Публикация и окружения настраиваются в соответствующем разделе.</p></details>
+      <h2>Автоматизация по расписанию</h2><div class="panel" id="schedules" hidden></div>
+    </section>
+    <section data-panel="events" hidden><div class="history-tabs" aria-label="История"><a href="#/activity" data-tab="activity">Действия агентов</a><a href="#/runs" data-tab="runs">Сессии и расход</a><a href="#/events" data-tab="events">События задач</a></div>
       <h1>События</h1><div class="lead">Что происходило в задачах проекта, новые сверху (последние 50 на задачу).</div>
       <div class="filters"><select id="e-task"></select><select id="e-type"></select></div>
       <div class="panel feed" id="events"></div>
@@ -341,8 +362,9 @@ tr.exp td{background:var(--bg)}.detail{display:grid;gap:4px;font-size:13px;paddi
 </div>
 </div>
 <script>
+const PHASE_NAMES={DISCUSS:"Согласование",IMPLEMENT:"Выполнение",SYNC:"Проверка",INTEGRATE:"Сведение результата",DONE:"Готово"};
 const PHASES=["DISCUSS","IMPLEMENT","SYNC","INTEGRATE","DONE"];
-const TABS=["inbox","overview","tasks","runs","activity","deploy","supervisor","observer","runners","projects","events"];
+const TABS=["inbox","overview","tasks","runs","activity","deploy","supervisor","observer","runners","projects","events","settings"];
 const WIN={"24h":864e5,"7d":7*864e5,"30d":30*864e5};
 const $=id=>document.getElementById(id);
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
@@ -364,7 +386,7 @@ let route=parseHash();
 function parseHash(){const m=location.hash.replace(/^#\/?/,"").split("/");const tab=TABS.includes(m[0])?m[0]:"overview";return {tab,project:m[1]?decodeURIComponent(m[1]):null,task:tab==="tasks"&&m[2]?decodeURIComponent(m[2]):null}}
 function go(tab,project,task){location.hash="#/"+tab+(project?"/"+encodeURIComponent(project):"")+(project&&task?"/"+encodeURIComponent(task):"")}
 // one task on its own: #/tasks/<project>/<task> shows its card alone, at the top, with the way back to the list
-function openTask(taskId,project){go("tasks",project||route.project,taskId);window.scrollTo(0,0)}
+function openTask(taskId,project){go("tasks",project||route.project,taskId)}
 function q(path){return path+(route.project?(path.includes("?")?"&":"?")+"project="+encodeURIComponent(route.project):"")}
 async function getJSON(path){const r=await fetch(path,{cache:"no-store"});if(!r.ok)throw new Error(r.status+"");return r.json()}
 // a question in the page instead of confirm(): some browsers (the desktop app's own) answer confirm() with "cancel" by themselves
@@ -377,10 +399,18 @@ function ask(text,input){return new Promise(done=>{const o=el("div","askov");o.s
   yes.onclick=()=>end(ok());no.onclick=()=>end(false);o.onclick=e=>{if(e.target===o)end(false)};addEventListener("keydown",key,true);
   r.append(yes,no);b.append(r);o.append(b);document.body.append(o);(f||yes).focus()})}
 async function post(url,body){const r=await fetch(q(url),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body||{})});const t=await r.text();let j;try{j=JSON.parse(t)}catch(e){j={message:t}}if(!r.ok)throw new Error(j.message||t);return j}
-window.addEventListener("hashchange",()=>{const r=parseHash();const switched=r.project&&r.project!==route.project;route.tab=r.tab;route.task=r.task;if(r.project)route.project=r.project;if(switched)resetProject();showTab();tick()});
-document.querySelectorAll("nav a").forEach(a=>a.addEventListener("click",ev=>{ev.preventDefault();go(a.dataset.tab,route.project)}));
+if("scrollRestoration" in history)history.scrollRestoration="manual";
+const FILTER_IDS=["f-agent","f-task","f-model","f-status","e-task","e-type","a-agent","a-task","a-q","a-follow"];
+const projectFilters=new Map();
+function saveFilters(){projectFilters.set(route.project,Object.fromEntries(FILTER_IDS.map(id=>{const e=$(id);return [id,e.type==="checkbox"?e.checked:e.value]})))}
+function restoreFilters(){const values=projectFilters.get(route.project)||{};for(const id of FILTER_IDS){const e=$(id),v=values[id];e.dataset.sig="";if(e.type==="checkbox")e.checked=v===undefined?true:v;else{if(e.tagName==="SELECT"&&v&&![...e.options].some(o=>o.value===v))e.append(new Option(v,v));e.value=v||""}}}
+const viewScroll=new Map();const viewKey=()=>[route.project,route.tab,route.task||""].join("/");
+window.addEventListener("hashchange",()=>{viewScroll.set(viewKey(),window.scrollY);const r=parseHash();const switched=r.project&&r.project!==route.project;if(switched)saveFilters();route.tab=r.tab;route.task=r.task;if(r.project)route.project=r.project;if(switched){resetProject();restoreFilters()}showTab();tick().then(()=>requestAnimationFrame(()=>window.scrollTo(0,viewScroll.get(viewKey())||0)))});
+document.querySelectorAll("nav a,.settings-links a,.history-tabs a").forEach(a=>a.addEventListener("click",ev=>{ev.preventDefault();go(a.dataset.tab,route.project)}));
 $("projcard").onclick=()=>go("projects",route.project);
-function showTab(){document.querySelectorAll("[data-panel]").forEach(s=>s.hidden=s.dataset.panel!==route.tab);document.querySelectorAll("nav a").forEach(a=>a.classList.toggle("on",a.dataset.tab===route.tab))}
+$("project-manage").onclick=()=>go("projects",route.project);
+$("project-select").onchange=e=>go(route.tab,e.target.value);
+function showTab(){document.querySelectorAll("[data-panel]").forEach(s=>s.hidden=s.dataset.panel!==route.tab&&!(route.tab==="overview"&&s.dataset.panel==="inbox"));document.querySelectorAll("nav a").forEach(a=>a.classList.toggle("on",a.dataset.tab===route.tab));document.querySelectorAll(".history-tabs a").forEach(a=>{a.classList.toggle("on",a.dataset.tab===route.tab);a.href="#/"+a.dataset.tab+"/"+encodeURIComponent(route.project||"")});const more=$("nav-more");if(more)more.open=["runs","events","activity"].includes(route.tab)||!!more.querySelector('[data-tab="'+route.tab+'"]')}
 
 let win=WIN[store("an.win")]?store("an.win"):"24h";
 document.querySelectorAll("#win button").forEach(b=>b.onclick=()=>{win=b.dataset.w;store("an.win",win);render()});
@@ -396,6 +426,7 @@ async function tick(){
     if(["activity","runners","tasks","overview"].includes(route.tab))await fetchActivity();
     if(route.tab==="supervisor")SUP=await getJSON(q("/api/supervisor"+(supAll?"?all=1":"")));
     if(route.tab==="observer")OBS=await getJSON(q("/api/observer"));
+    if(!n||route.tab==="settings"){OBS=await getJSON(q("/api/observer"));DEP=await getJSON(q("/api/deploys"))}
     if(route.tab==="deploy")DEP=await getJSON(q("/api/deploys"));
     ATT=await getJSON("/api/attention").catch(()=>ATT);watchAttention(ATT);
     n++;render();planSync();
@@ -405,14 +436,17 @@ async function tick(){
     $("topbar").textContent="нет связи с сервером"}
 }
 function render(){if(!S)return;const y=window.scrollY;renderChrome();renderQuestions(S);renderNotes(S);
+  if(route.tab==="settings"){renderSchedules(S);document.querySelectorAll(".settings-links a").forEach(a=>{a.hidden=a.dataset.tab==="observer"?!(OBS&&OBS.observer):a.dataset.tab==="supervisor"?!(S.supervisor&&S.supervisor.available):false})}
   if(route.tab==="overview")renderOverview();if(route.tab==="tasks")renderTasks();if(route.tab==="runs")renderRuns();
-  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderSkills();renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();if(route.tab==="deploy")renderDeploy();if(route.tab==="inbox")renderInbox();if(route.tab==="tasks"&&!DRAFT)draftShow();
+  if(route.tab==="runners"){renderControl(S);renderAgents(S);renderSkills();renderRoles()}if(route.tab==="projects")renderProjects();if(route.tab==="events")renderEvents();if(route.tab==="activity")renderActivity();if(route.tab==="supervisor")renderSupervisor();if(route.tab==="observer")renderObserver();if(route.tab==="deploy")renderDeploy();if(["inbox","overview"].includes(route.tab))renderInbox();if(route.tab==="tasks"&&!DRAFT)draftShow();
   if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y)} // a refresh never moves the page
 
 function current(){return PROJ.find(p=>p.id===route.project)}
 function renderChrome(){
   const s=S,p=current(),tasks=s.tasks,rs=s.control?s.control.runners:[];
+  $("deploy-nav").hidden=!(DEP&&DEP.configured);
   $("projname").textContent=s.project.name;
+  const picker=$("project-select");if(document.activeElement!==picker){picker.replaceChildren(...PROJ.map(p=>{const o=el("option","",p.name||p.id);o.value=p.id;return o}));if(!PROJ.some(p=>p.id===s.project.id)){const o=el("option","",s.project.name);o.value=s.project.id;picker.append(o)}picker.value=s.project.id;}
   $("projsub").textContent=[p&&p.git?p.git.branch+" · "+p.git.head:"не git",s.project.count+" "+plural(s.project.count,"проект","проекта","проектов")+(PROJK.length?", ещё "+PROJK.length+" в списке":"")].join(" · ");
   const otherQ=PROJ.filter(x=>x.id!==route.project).reduce((a,x)=>a+x.openQuestions,0);
   $("projdot").className="dot "+((s.openQuestions||[]).length||otherQ?"warn":rs.some(r=>r.session)?"ok":"");
@@ -421,7 +455,7 @@ function renderChrome(){
   $("c-tasks").textContent=active?String(active):"";$("c-runs").textContent=RUNS.length?String(RUNS.length):"";
   $("c-runners").textContent=rs.length?rs.filter(r=>r.running).length+"/"+rs.length:"";$("c-projects").textContent=PROJ.length?String(PROJ.length):"";
   const bar=$("topbar");bar.replaceChildren();const item=(label,value,cls)=>{const sp=el("span",cls||"");sp.append(label,el("b","",value));bar.append(sp)};
-  if(rs.length){const sp=el("span","");sp.append(dot(rs.some(r=>r.session)?"ok":rs.some(r=>r.running)?"warn":""),"runner'ы",el("b","",rs.filter(r=>r.running).length+"/"+rs.length));bar.append(sp)}
+  if(rs.length){const sp=el("span","");sp.append(dot(rs.some(r=>r.session)?"ok":rs.some(r=>r.running)?"warn":""),"агенты",el("b","",rs.filter(r=>r.running).length+"/"+rs.length));bar.append(sp)}
   const sv=s.supervisor;
   if(sv&&sv.available){const st=sv.working?["ok","работает"]:!sv.enabled?["","выкл"]:sv.held?["warn","ждёт"]:["acc","следит"];const sp=el("span","link"+(sv.needsYou.length?" warnq":""));sp.title="вкладка «Надзор»";sp.onclick=()=>go("supervisor",route.project);
     sp.append(dot(st[0]),"надзор",el("b","",st[1]+(sv.needsYou.length?" · решить: "+sv.needsYou.length:"")));bar.append(sp)}
@@ -454,7 +488,7 @@ function renderOverview(){
   kpi("Сделано",String(finished.length),plural(finished.length,"задача","задачи","задач"),[fu?fu+" follow-up":"",arch?arch+" change в архиве":""].filter(Boolean).join(" · ")||"за выбранный период");
 
   const rp=$("ov-runners");rp.replaceChildren();
-  if(s.control){const ph=el("div","ph","Runner'ы");ph.append(el("span","end",rs.filter(r=>r.session).length+" работают · "+rs.filter(r=>!r.running).length+" остановлено"));rp.append(ph);
+  if(s.control){const ph=el("div","ph","Агенты");ph.append(el("span","end",rs.filter(r=>r.session).length+" работают · "+rs.filter(r=>!r.running).length+" остановлено"));rp.append(ph);
     const t=el("table");t.append(head(["Агент","Модель","Сейчас","Расход · "+win.replace("h","ч").replace("d","д")]));
     rs.forEach(r=>{const cur=r.session?s.tasks.find(x=>x.id===r.session.taskId):null;const subs=cur&&cur.subtasks&&cur.subtasks[r.id]||[];const live=subs.filter(x=>x.status!=="DROPPED");
       const skillNow=cur?skillsOf(r.id,cur,true).now:null;
@@ -469,8 +503,8 @@ function renderOverview(){
   const t2=el("table");t2.append(head(["Фаза","Сколько","Самая старая"]));
   const act=s.tasks.filter(x=>x.status==="ACTIVE");
   const line=(label,cls,list,showAge)=>{const c=el("td","nw");c.append(dot(cls),label);const old=list.map(x=>x.phaseSince).sort()[0];t2.append(row([c,td(String(list.length),"mono"),td(showAge&&old?since(old):"—","mono muted")]))};
-  ["DISCUSS","IMPLEMENT","SYNC","INTEGRATE"].forEach(ph=>line(ph,ph==="IMPLEMENT"?"ok":"acc",act.filter(x=>x.phase===ph),true));
-  line("BLOCKED","bad",s.tasks.filter(x=>x.status==="BLOCKED"),true);line("DONE","ok",s.tasks.filter(x=>x.status==="COMPLETED"),false);line("отменено","",s.tasks.filter(x=>x.status==="CANCELLED"),false);
+  ["DISCUSS","IMPLEMENT","SYNC","INTEGRATE"].forEach(ph=>line(PHASE_NAMES[ph],ph==="IMPLEMENT"?"ok":"acc",act.filter(x=>x.phase===ph),true));
+  line("Остановлены","bad",s.tasks.filter(x=>x.status==="BLOCKED"),true);line("Готово","ok",s.tasks.filter(x=>x.status==="COMPLETED"),false);line("отменено","",s.tasks.filter(x=>x.status==="CANCELLED"),false);
   pp.append(t2);
 
   const ep=$("ov-events");ep.replaceChildren();const ph3=el("div","ph","Последние события");const all=el("a","end","все события →");all.href="#/events";all.onclick=ev=>{ev.preventDefault();go("events",route.project)};ph3.append(all);ep.append(ph3);
@@ -488,7 +522,7 @@ function watchAttention(a){if(!a)return;const fresh=[];
   const one=fresh.length===1?fresh[0]:null;
   const n=new Notification(one?one.p.name+": "+one.i.title:"Ждут вашего решения: "+fresh.length,{body:one?one.i.text:fresh.slice(0,5).map(x=>x.p.name+": "+x.i.title).join("\n"),tag:one?one.p.id+"/"+one.i.key:"agent-network-batch"});
   n.onclick=()=>{window.focus();n.close();if(one)openAttention(one.p.id,one.i);else go("inbox",route.project)}}
-function openAttention(projectId,i){const o=i.open||{tab:"tasks"};const switching=projectId!==route.project;route.project=projectId;go(o.tab,projectId);
+function openAttention(projectId,i){const o=i.open||{tab:"tasks"};const switching=projectId!==route.project;go(o.tab,projectId);
   setTimeout(async()=>{if(switching)await tick();
     if(o.plan&&i.taskId)openPlan(i.taskId);else if(o.acceptance&&i.taskId)openAcceptance(i.taskId);
     else if(o.tab==="tasks"&&i.taskId&&!o.messageId)openTask(i.taskId,projectId)
@@ -509,9 +543,9 @@ $("notif-on").onclick=async()=>{try{await Notification.requestPermission()}catch
 
 /* ---------- pop-ups: a task changed its phase or status ---------- */
 const seenTasks=new Map();let seenProject=null;
-const phaseName=t=>t.phase+(t.phase==="SYNC"&&t.syncRound?" #"+t.syncRound:"");
+const phaseName=t=>(PHASE_NAMES[t.phase]||t.phase)+(t.phase==="SYNC"&&t.syncRound?" #"+t.syncRound:"");
 // the phase with its round, for lists: SYNC #2 is the second review, IMPLEMENT after a review is a fix round
-const phaseLabel=t=>t.phase==="IMPLEMENT"&&t.syncRound>0?"IMPLEMENT · исправления #"+t.syncRound:phaseName(t);
+const phaseLabel=t=>t.phase==="IMPLEMENT"&&t.syncRound>0?"Выполнение · исправления #"+t.syncRound:phaseName(t);
 function watchTransitions(s){
   // the first look at a project only remembers: pop-ups are for changes while the page is open
   if(seenProject!==s.project.id){seenProject=s.project.id;seenTasks.clear();s.tasks.forEach(t=>seenTasks.set(t.id,t));return}
@@ -567,7 +601,7 @@ function phaseBar(t){
     seg.style.flex=String(p==="DONE"?total*0.07:Math.max(m,total*0.09)); // time-proportional, every phase still readable
     // a phase entered again (fix rounds: IMPLEMENT → SYNC → IMPLEMENT …) is one segment: its total time, ×N and a dot per stay
     const row=st.phases.find(x=>x.phase===p),visits=row&&row.visits?row.visits:[];
-    seg.append((visits.length>1?p+" ×"+visits.length:p)+((past||now)&&p!=="DONE"&&m?" · "+mins(m):"")+(now?(t.status==="BLOCKED"?" ■":" ▸"):""));
+    seg.append((visits.length>1?PHASE_NAMES[p]+" ×"+visits.length:PHASE_NAMES[p])+((past||now)&&p!=="DONE"&&m?" · "+mins(m):"")+(now?(t.status==="BLOCKED"?" ■":" ▸"):""));
     if(visits.length>1&&visits.length<=8){const rd=el("span","rd");visits.forEach((v,j)=>rd.append(el("i",j===visits.length-1?"last":"")));seg.append(rd)}
     seg.title=p+(m?": "+fmtMs(m):"")+(visits.length>1?"\n"+visits.map((v,j)=>(p==="SYNC"?"раунд ":"заход ")+(j+1)+": "+fmtMs(v)).join("\n"):"")+(now?"\n— сейчас":"");bar.append(seg)});
   return bar}
@@ -616,13 +650,13 @@ function progressBlock(t){
 function renderOvProgress(){
   const box=$("ov-progress");const open=S.tasks.filter(t=>t.queue==="running"||t.queue==="blocked"||t.queue==="queued").sort((a,b)=>["running","blocked","queued"].indexOf(a.queue)-["running","blocked","queued"].indexOf(b.queue)||a.id.localeCompare(b.id));
   // rebuilt only when a row would change: a row replaced under the mouse between press and release takes no click
-  const sig=route.project+JSON.stringify(open.map(t=>{const pr=progressOf(t);return [t.id,t.title,t.queue,t.status,t.phase,t.syncRound,t.blockedBy,pr.overall,pr.overallDoing]}));
+  const recent=events(S);const sig=route.project+JSON.stringify([recent[0],ACT.length?ACT[ACT.length-1].seq:0,open.map(t=>{const pr=progressOf(t);return [t.id,t.title,t.queue,t.status,t.phase,t.syncRound,t.blockedBy,pr.overall,pr.overallDoing]})]);
   if(box.dataset.sig===sig&&box.childElementCount)return;box.dataset.sig=sig;
   box.hidden=!open.length;box.replaceChildren();if(!open.length)return;
-  const ph=el("div","ph","Прогресс задач");ph.append(el("span","end","по фазам; в IMPLEMENT — по подзадачам агентов или задачам OpenSpec"));box.append(ph);
+  const ph=el("div","ph","Сейчас выполняется");ph.append(el("span","end","выберите задачу, чтобы открыть подробности"));box.append(ph);
   for(const t of open){const pr=progressOf(t);const row=el("div","ovp");row.title="открыть задачу";
     row.onclick=()=>openTask(t.id);
-    const tt=el("div","tt");tt.append(el("span","",t.id),t.title);
+    const tt=el("div","tt");tt.append(el("span","",t.id),t.title);const latest=ACT.filter(e=>e.taskId===t.id).slice(-1)[0];const state=t.blockedReason||(latest&&(latest.summary||latest.tool))||(t.waitingOn.length?"Ожидается: "+t.waitingOn.map(id=>id==="operator"?"ваше решение":id).join(", "):"Работа продолжается");tt.append(el("div","muted small",state));
     const blocked=t.status==="BLOCKED",queued=t.queue==="queued";
     // where it stands even while it waits for its agents: the phase and round, then "в очереди"
     const pill=badge(blocked?"BLOCKED":queued?"queued":"running",blocked?"BLOCKED · "+phaseLabel(t):queued?phaseLabel(t)+" · в очереди":phaseLabel(t));
@@ -632,7 +666,7 @@ function renderOvProgress(){
 }
 
 /* ---------- tasks ---------- */
-const QUEUE={running:"идёт",queued:"в очереди",blocked:"BLOCKED",done:"DONE",cancelled:"отменена"};
+const QUEUE={running:"идёт",queued:"в очереди",blocked:"остановлена",done:"готово",cancelled:"отменена"};
 const archiveState=new Map();
 function renderOpenspec(t){
   const o=t.openspec;const box=el("div","openspec");const key=route.project+"/"+t.id;
@@ -740,20 +774,21 @@ function renderDeployRuns(){const box=$("druns");if(!box)return;const sig=JSON.s
     box.append(card)}}
 function renderDeploySettings(){const box=$("dsettings");if(!box)return;const sig=JSON.stringify([DEP.settings,DEP.control]);if(box.dataset.sig===sig||depSetDirty)return;box.dataset.sig=sig;box.replaceChildren();
   const S0=DEP.settings,ro=!DEP.control;const form=document.createElement("form");form.className="card";form.oninput=()=>{depSetDirty=true};
-  const field=(label,value,opts)=>{const l=el("label","",label);const i=opts&&opts.area?document.createElement("textarea"):document.createElement("input");i.value=value==null?"":String(value);if(opts&&opts.ph)i.placeholder=opts.ph;if(opts&&opts.area)i.rows=opts.rows||3;i.disabled=ro;l.append(i);form.append(l);return i};
+  const field=(label,value,opts,parent=form)=>{const l=el("label","",label);const i=opts&&opts.area?document.createElement("textarea"):document.createElement("input");i.value=value==null?"":String(value);if(opts&&opts.ph)i.placeholder=opts.ph;if(opts&&opts.area)i.rows=opts.rows||3;i.disabled=ro;l.append(i);parent.append(l);return i};
   form.append(el("h3","","Bitbucket"));
   const fRemote=field("git remote (SSH-адрес репозитория в Bitbucket)",S0.bitbucket.remote,{ph:"origin"});
   const fBranch=field("Шаблон ветки: {task} {change} {slug} {env}",S0.bitbucket.branch,{ph:"feature/{task}-{slug}"});
   const fWeb=field("Ссылка на ветку ({branch}); пусто — для bitbucket.org сама",S0.bitbucket.webUrl||"",{ph:"https://bitbucket.example.com/projects/X/repos/svc/browse?at=refs/heads/{branch}"});
-  form.append(el("h3","","Jenkins (через MCP)"));
+  form.append(el("h3","","Jenkins (через MCP)"),el("div","lead","Для стандартных инструментов trigger_build / get_build / get_build_log достаточно команды, переменных и job."));
   const fCmd=field("Команда MCP-сервера Jenkins, по аргументу на строку",(S0.jenkins.mcpCommand||[]).join("\n"),{area:true,ph:"npx\n-y\n<пакет MCP Jenkins>"});
   const fEnv=field("Переменные MCP: ИМЯ=значение, по строке (значение \${ИМЯ} — из окружения сервера)",mapToLines(S0.jenkins.mcpEnv),{area:true,ph:"JENKINS_URL=https://jenkins.example.com\nJENKINS_TOKEN=\${JENKINS_TOKEN}"});
   const fJob=field("Job",S0.jenkins.job,{ph:"orders-service/deploy"});
   const fParams=field("Параметры job: ИМЯ=значение ({branch} {commit} {env} {task})",mapToLines(S0.jenkins.params),{area:true});
-  const fTrig=field("Инструмент MCP: запуск job",S0.jenkins.triggerTool,{});const fTrigA=field("…его аргументы (JSON, плейсхолдеры {job} {params} {branch} {env})",S0.jenkins.triggerArgs,{area:true,ph:'{"jobName": "{job}", "parameters": {params}}'});
-  const fStat=field("Инструмент MCP: статус сборки",S0.jenkins.statusTool,{});const fStatA=field("…его аргументы (JSON, {job} {build})",S0.jenkins.statusArgs,{area:true});
-  const fLog=field("Инструмент MCP: лог сборки",S0.jenkins.logTool,{});const fLogA=field("…его аргументы (JSON, {job} {build})",S0.jenkins.logArgs,{area:true});
   const fTo=field("Сколько ждать job, минут",S0.jenkins.timeoutMin,{});
+  const advanced=el("details","");advanced.append(el("summary","","Нестандартный MCP: инструменты и JSON-аргументы"));form.append(advanced);
+  const fTrig=field("Инструмент MCP: запуск job",S0.jenkins.triggerTool,{},advanced);const fTrigA=field("…его аргументы (JSON, плейсхолдеры {job} {params} {branch} {env})",S0.jenkins.triggerArgs,{area:true,ph:'{"jobName": "{job}", "parameters": {params}}'},advanced);
+  const fStat=field("Инструмент MCP: статус сборки",S0.jenkins.statusTool,{},advanced);const fStatA=field("…его аргументы (JSON, {job} {build})",S0.jenkins.statusArgs,{area:true},advanced);
+  const fLog=field("Инструмент MCP: лог сборки",S0.jenkins.logTool,{},advanced);const fLogA=field("…его аргументы (JSON, {job} {build})",S0.jenkins.logArgs,{area:true},advanced);
   form.append(el("h3","","Kubernetes (только чтение)"));
   const fKc=field("kubectl",S0.kubernetes.kubectl,{});const fCtx=field("Контекст kubeconfig",S0.kubernetes.context,{ph:"dev-cluster"});const fRt=field("Сколько ждать rollout, секунд",S0.kubernetes.rolloutTimeoutSec,{});
   form.append(el("h3","","Окружения"));const envBox=el("div","");form.append(envBox);let envs=S0.environments.map(e=>Object.assign({},e));
@@ -1203,7 +1238,8 @@ function renderBlocked(t){
   const act=async(what,body,question)=>{if(!await ask(question))return;unblockState.set(key,{pending:true});render();
     try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/"+what,body);unblockState.delete(key)}catch(e){unblockState.set(key,{error:e.message})}await tick()};
   if(t.blockedBy==="runner"){
-    box.append(el("div","","Сессии агента подряд заканчивались, не доделав его часть, и runner сдался — без него остальные ждали бы вечно. Посмотрите лог runner'а на вкладке «Runner'ы» (причина обычно там), поправьте и попробуйте снова: runner начнёт с новой сессии."));
+    box.append(el("div","","Сессии агента подряд заканчивались, не доделав его часть, и runner сдался — без него остальные ждали бы вечно. Откройте диагностику ниже, исправьте причину и нажмите «Попробовать снова». Агент начнёт новую сессию."));
+    const logs=el("details","task-log");logs.append(el("summary","","Диагностика и логи агентов"));const content=el("div","");logs.append(content);logs.ontoggle=async()=>{if(!logs.open)return;content.replaceChildren();for(const id of t.agents||[]){const heading=el("h3","",id),pre=el("pre","log","Загрузка…");content.append(heading,pre);try{const data=await getJSON(q("/api/runners/"+encodeURIComponent(id)+"/log"));pre.textContent=data.lines.join("\n")||"Лог пуст"}catch(e){pre.textContent="Не удалось получить лог: "+e.message}}};box.append(logs);
     const r=el("div","checks");const again=el("button","","Попробовать снова");again.type="button";again.disabled=!!st.pending;
     again.onclick=()=>act("unblock",{rounds:1},t.id+": вернуть задачу в работу? Runner, который сдался, начнёт заново.");r.append(again);
     const c=el("button","ghost","Отменить задачу");c.type="button";c.disabled=!!st.pending;
@@ -1268,6 +1304,7 @@ function renderTask(t){
   const hd=el("div");const h3=el("h3","",t.id+" · "+t.title);
   // on the press, not the click: the list is rebuilt every refresh, and a title replaced between press and release takes no click
   if(route.task!==t.id){h3.classList.add("link");h3.title="открыть задачу отдельно";h3.onmousedown=e=>{if(e.button===0&&!e.shiftKey&&!e.metaKey&&!e.ctrlKey)openTask(t.id)}}const sch=scheduleOf(t);if(sch)h3.append(badge("","по расписанию "+sch));h3.append(badge(t.queue,QUEUE[t.queue]||t.queue));if(t.openspec)h3.append(badge("","OpenSpec"));hd.append(h3);hd.append(el("div","muted",t.description));
+  if(route.task===t.id){const actions=el("div","checks");const history=el("button","ghost","История задачи");history.onclick=()=>{fillSelect("a-task","Все задачи",[t.id]);$("a-task").value=t.id;go("activity",route.project)};actions.append(history);const sessions=el("button","ghost","Сессии и расход");sessions.onclick=()=>{fillSelect("f-task","Все задачи",[t.id]);$("f-task").value=t.id;go("runs",route.project)};actions.append(sessions);hd.append(actions);if(t.waitingOn.length)hd.append(el("div","note","Следующий шаг ожидается от: "+t.waitingOn.map(id=>id==="operator"?"вас":id).join(", ")));}
   const chain=[];if(t.parentTaskId)chain.push("follow-up от "+t.parentTaskId);if(t.followUps&&t.followUps.length)chain.push("follow-up задачи: "+t.followUps.join(", "));if(t.followUpBudget)chain.push("бюджет follow-up: "+t.followUpBudget.used+"/"+t.followUpBudget.max);
   if(chain.length)hd.append(el("div","muted",chain.join(" · ")));
   if(t.openspec)hd.append(renderOpenspec(t));
@@ -1288,7 +1325,7 @@ function renderTask(t){
   c.append(hd);
   if(t.stats)c.append(phaseBar(t));
   else{const steps=el("div","steps");const idx=PHASES.indexOf(t.phase);
-    PHASES.forEach((p,i)=>steps.append(el("div","step"+(i<idx?" past":i===idx?" now":""),p+(p==="SYNC"&&t.syncRound&&idx>=2?" #"+t.syncRound:""))));
+    PHASES.forEach((p,i)=>steps.append(el("div","step"+(i<idx?" past":i===idx?" now":""),({DISCUSS:"Согласование",IMPLEMENT:"Выполнение",SYNC:"Проверка",INTEGRATE:"Сведение результата",DONE:"Готово"}[p]||p)+(p==="SYNC"&&t.syncRound&&idx>=2?" #"+t.syncRound:""))));
     c.append(steps)}
   if(t.status==="ACTIVE"||t.status==="BLOCKED")c.append(progressBlock(t));
   if(S.control&&(t.status==="ACTIVE"||t.status==="BLOCKED"))c.append(renderCompose(t));
@@ -1322,6 +1359,7 @@ function renderTask(t){
     else{const sl=el("div","scroll subs");sl.dataset.scroll="subs-"+id; // a long plan scrolls in its own box, opened at the step in progress
       const icon={DONE:"✓",DOING:"▶",TODO:"·",DROPPED:"✕"};subs.forEach(x=>{const d=el("div",x.status,icon[x.status]+" "+x.id+" "+x.title);if(x.note)d.title=x.note;sl.append(d)});right.append(sl)}
     grid.append(left,right);card.append(grid);
+    if(r){const log=el("details","task-agent-log");log.dataset.key="agent-log-"+id;log.append(el("summary","","Лог агента"));const pre=el("pre","log","Откройте для загрузки");log.append(pre);log.ontoggle=async()=>{if(!log.open)return;try{const j=await getJSON(q("/api/runners/"+encodeURIComponent(id)+"/log"));pre.textContent=j.lines.join("\n")||"Лог пуст"}catch(e){pre.textContent="Не удалось загрузить лог: "+e.message}};card.append(log)}
     if(im&&(im.summary||im.filesChanged.length)){const sec=el("div","asec");sec.append(el("div","lbl","Итог агента"));if(im.summary)sec.append(longText(im.summary,"impl-"+id,280));
       if(im.filesChanged.length){const fd=el("details","files");fd.dataset.key="changed-"+id;fd.append(el("summary","muted","изменённые файлы ("+im.filesChanged.length+")"),el("div","muted mono",im.filesChanged.join(", ")));sec.append(fd)}card.append(sec)}
     if(rep&&rep.findings.length){const sec=el("div","asec");sec.append(el("div","lbl","Ревью раунда "+t.syncRound));
@@ -1408,7 +1446,6 @@ function renderSchedules(s){
   box.replaceChildren(ph,...(schedForm?[schedForm.el]:[]),...empty,...rows)}
 function scheduleOf(t){for(const x of (S.schedules||[]))if(x.runs.some(r=>r.taskId===t.id))return x.id;return null}
 function renderTasks(){
-  renderSchedules(S);
   if(document.activeElement&&document.activeElement.matches&&document.activeElement.matches("#tasks .compose textarea, #tasks .dcomment textarea"))return; // you are writing to a lead: the refresh waits
   const s=S;$("newbtn").hidden=!s.control;if(!s.control)$("newtask").hidden=true;
   $("tasks-lead").textContent="Текущие и завершённые задачи проекта "+s.project.name+"."+(s.control?"":" Только чтение: чтобы ставить задачи, запустите UI с --runners.");
@@ -1465,11 +1502,11 @@ $("newtask").elements.namedItem("grill").addEventListener("change",e=>{if(e.targ
 // analysts' input is grilled by default: filling the path turns the grilling on (it can be turned off again)
 $("newtask").elements.namedItem("from").addEventListener("input",e=>{const f=$("newtask");if(e.target.value.trim()&&!e.target.dataset.grilled){e.target.dataset.grilled="1";f.elements.namedItem("clarify").checked=true;f.elements.namedItem("grill").checked=true;syncDepth()}if(!e.target.value.trim())delete e.target.dataset.grilled});
 $("newtask").elements.namedItem("clarify").addEventListener("change",e=>{if(!e.target.checked)$("newtask").elements.namedItem("grill").checked=false});
-$("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev.target;const note=$("formnote");const btn=f.querySelector("button");
+$("newtask").addEventListener("submit",async ev=>{ev.preventDefault();const f=ev.target;const note=$("formnote");const btn=f.querySelector('button[type="submit"]');
   const others=[...$("others").querySelectorAll("input:checked")].map(i=>i.value);const v=n=>f.elements.namedItem(n);
-  if(!v("openspec").value&&(!v("title").value.trim()||!v("description").value.trim())){note.className="note err";note.textContent="Нужны название и описание (или выберите OpenSpec change).";return}
+  if(!v("openspec").value&&!v("description").value.trim()){note.className="note err";note.textContent="Опишите задачу или выберите OpenSpec change.";return}
   btn.disabled=true;note.className="note";note.textContent="создаю…";
-  try{const r=await post("/api/tasks",{title:v("title").value,description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,...(v("contract").value.trim()?{contract:v("contract").value.trim()}:{}),clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,allowSpawn:v("allowSpawn").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value,from:v("from").value.split("\n").map(x=>x.trim()).filter(Boolean)}:{openspec:v("openspec").value})});
+  try{const r=await post("/api/tasks",{title:v("title").value.trim()||v("description").value.trim().split(/[.!?\n]/)[0].slice(0,120),description:v("description").value,agents:[v("lead").value,...others],verifyCommand:v("verifyCommand").value,maxFollowUps:v("maxFollowUps").value,maxFixRounds:v("maxFixRounds").value,maxCostUsd:v("maxCostUsd").value,...(v("contract").value.trim()?{contract:v("contract").value.trim()}:{}),clarify:v("clarify").checked||v("grill").checked,grill:v("grill").checked,allowSpawn:v("allowSpawn").checked,planReview:v("planReview").checked&&v("openspec").value!=="__new__",...(v("openspec").value==="__new__"?{proposes:v("proposes").value,from:v("from").value.split("\n").map(x=>x.trim()).filter(Boolean)}:{openspec:v("openspec").value})});
     note.className="note ok";note.textContent="Создана "+r.task.id+": "+r.task.title+". Runner'ы подхватят её за пару секунд.";v("title").value="";v("description").value="";v("contract").value="";$("contractnote").textContent="";v("openspec").value="";v("proposes").value="";v("from").value="";delete v("from").dataset.grilled;$("proposes-row").hidden=true;$("from-row").hidden=true;await tick()}
   catch(e){note.className="note err";note.textContent=e.message}finally{btn.disabled=false}});
 
@@ -1508,7 +1545,7 @@ const expandedRuns=new Set();
 const runKey=r=>r.id?r.taskId+"/"+r.id:"live/"+r.agentId;
 function renderRuns(){
   const uniq=f=>[...new Set(RUNS.flatMap(f).filter(Boolean))].sort();
-  fillSelect("f-agent","Все агенты",uniq(r=>[r.agentId]));fillSelect("f-task","Все задачи",uniq(r=>[r.taskId,...r.alsoFinished.map(x=>x.id)]));fillSelect("f-model","Все модели",uniq(r=>[r.model]));fillSelect("f-status","Все статусы",uniq(r=>[r.status]),v=>STATUS[v]||v);
+  fillSelect("f-agent","Все агенты",uniq(r=>[r.agentId]));fillSelect("f-task","Все задачи",[...new Set([...(S.tasks||[]).map(t=>t.id),...uniq(r=>[r.taskId,...r.alsoFinished.map(x=>x.id)])])].sort());fillSelect("f-model","Все модели",uniq(r=>[r.model]));fillSelect("f-status","Все статусы",uniq(r=>[r.status]),v=>STATUS[v]||v);
   const f={agent:$("f-agent").value,task:$("f-task").value,model:$("f-model").value,status:$("f-status").value};
   const list=RUNS.filter(r=>(!f.agent||r.agentId===f.agent)&&(!f.task||r.taskId===f.task||r.alsoFinished.some(x=>x.id===f.task))&&(!f.model||r.model===f.model)&&(!f.status||r.status===f.status));
   const t=$("runs");t.replaceChildren(head(["","Сессия","Статус","Агент","Модель","Задача","Начало","Длит.","Токены","Стоимость"]));
@@ -1547,7 +1584,7 @@ const runnerCards=new Map();
 function renderControl(s){
   $("runners-lead").textContent=s.control?"Агенты проекта "+s.project.name+" из runners.json: запуск, модель, инструкции, лог.":"Только чтение: runner'ов нет. Запустите UI с --runners runners.json, чтобы управлять агентами отсюда.";
   const box=$("runners");if(!s.control){box.replaceChildren();runnerCards.clear();return}
-  if(!s.control.runners.length&&!box.childElementCount)box.append(el("div","empty","В runners.json нет агентов."));
+  if(!s.control.runners.length&&!box.childElementCount&&!(s.control.runnerTemplates||[]).length)box.append(el("div","empty","В runners.json нет агентов."));
   const live=new Set(s.control.runners.map(r=>r.id)); // the UI restarted with another runners.json: drop the old cards
   for(const [id,c] of runnerCards)if(!live.has(id)){c.root.remove();runnerCards.delete(id)}
   const day=RUNS.filter(r=>r.costUsd!==null&&inWin(r.endedAt,"24h"));
@@ -1555,7 +1592,7 @@ function renderControl(s){
     let c=runnerCards.get(r.id);
     if(!c){c=makeRunnerCard(r.id);runnerCards.set(r.id,c);box.append(c.root)}
     c.dot.className="dot "+(r.session?"ok":r.running?"warn":"");
-    c.badge.className="badge "+(r.running?"RUNNING":"STOPPED");c.badge.textContent=r.running?"RUNNING":"STOPPED";
+    c.badge.className="badge "+(r.running?"RUNNING":"STOPPED");const failed=RUNS.find(x=>x.agentId===r.id);const failure=r.running&&!r.session&&failed&&failed.status==="failed"&&(!r.startedAt||failed.startedAt>=r.startedAt);c.badge.textContent=failure?"Ошибка запуска или выполнения":r.session?"Выполняет задачу":r.running?"Ожидает задачу":"Остановлен";
     c.btn.textContent=r.running?"Стоп":"Старт";c.btn.className=r.running?"ghost":"";c.btn.dataset.action=r.running?"stop":"start";
     const mine=day.filter(x=>x.agentId===r.id);
     c.info.textContent=(r.session?"сейчас: "+r.session.taskId+" · сессия #"+r.session.attempt+" · "+since(r.session.startedAt):r.running&&r.startedAt?"ждёт задачу · запущен "+ago(r.startedAt):r.stoppedAt?"остановлен "+ago(r.stoppedAt):"не запускался")+(mine.length?" · за 24ч "+fmtUsd(mine.reduce((a,x)=>a+x.costUsd,0),mine.some(x=>x.costEstimated)):"")+(r.spawned?" · добавлен lead'ом для "+r.spawned.taskId+" (шаблон "+r.spawned.template+"), нет в runners.json":"");
@@ -1571,8 +1608,33 @@ function renderControl(s){
     c.instState.title=r.instructionsFile||"";
     c.instPre.textContent=r.instructions&&r.instructions.preview!==undefined?r.instructions.preview:"";c.instDetails.hidden=!(r.instructions&&r.instructions.preview);
     if(document.activeElement!==c.instInput&&c.instInput.dataset.server!==(r.instructionsFile||"")){c.instInput.value=r.instructionsFile||"";c.instInput.dataset.server=r.instructionsFile||""}
+    if(document.activeElement!==c.saverCb)c.saverCb.checked=r.tokenSaver;
     if(c.details.open)loadLog(r.id,c);
   }
+  renderAddRunner(box,s.control.runnerTemplates||[]);
+}
+/* the «Добавить runner» card: a new runner from a "runnerTemplates" entry (CLI + its models), written into runners.json */
+let addRunnerCard=null;
+function renderAddRunner(box,templates){
+  if(!templates.length){if(addRunnerCard){addRunnerCard.root.remove();addRunnerCard=null}return}
+  if(!addRunnerCard){
+    const root=el("div","card runner");const top=el("div","top2");top.append(el("b","","Добавить runner"));
+    const form=el("form","inst");const idIn=document.createElement("input");idIn.placeholder="id, напр. kimi-2";idIn.required=true;
+    const tSel=document.createElement("select");const mSel=document.createElement("select");const btn=el("button","","Добавить");btn.type="submit";
+    form.append(idIn,tSel,mSel,btn);
+    const hint=el("div","muted","CLI и модели на выбор — «runnerTemplates» в runners.json. Новый runner создаётся остановленным.");
+    root.append(top,form,hint);
+    let sig="";
+    const fill=ts=>{const ns=JSON.stringify(ts);if(ns===sig)return;sig=ns;
+      tSel.replaceChildren(...ts.map(t=>new Option(t.name,t.name)));
+      const pick=()=>{const t=ts.find(x=>x.name===tSel.value);mSel.replaceChildren(...(t?t.models:[]).map(m=>new Option(m,m)));if(t&&t.model)mSel.value=t.model};
+      tSel.onchange=pick;pick()};
+    form.onsubmit=async ev=>{ev.preventDefault();btn.disabled=true;
+      try{await post("/api/runners",{id:idIn.value.trim(),template:tSel.value,model:mSel.value});idIn.value="";await tick()}catch(e){alert(e.message)}finally{btn.disabled=false}};
+    addRunnerCard={root,fill};
+  }
+  addRunnerCard.fill(templates);
+  box.append(addRunnerCard.root);
 }
 function makeRunnerCard(id){
   const root=el("div","card runner");const top=el("div","top2");const dt=dot("");const badgeEl=el("span","badge","");const btn=el("button","","");
@@ -1594,8 +1656,13 @@ function makeRunnerCard(id){
   const feedHead=el("div","row2");const feedTitle=el("b","","Активность");const feedLink=el("a","","вся лента агента →");feedLink.href="#";
   feedLink.onclick=ev=>{ev.preventDefault();$("a-agent").dataset.sig="";go("activity",route.project);setTimeout(()=>{$("a-agent").value=id;render()},0)};
   feedHead.append(feedTitle,feedLink);const feed=el("div","act mini");
-  root.append(top,info,cwd,cmd,modelState,modelForm,modelHint,instState,inst,instDetails,feedHead,feed,details);
-  const c={root,dot:dt,badge:badgeEl,btn,info,cwd,cmd,details,pre,modelState,modelForm,modelSel,modelHint,instState,instInput,instPre,instDetails,feed};return c}
+  const settings=el("details","runner-settings");settings.append(el("summary","","Настройки агента"),cwd,cmd,modelForm,modelHint,instState,inst,instDetails);
+  const saverLabel=el("label","inst");const saverCb=document.createElement("input");saverCb.type="checkbox";
+  saverLabel.append(saverCb,document.createTextNode(" экономия токенов: в промпт каждой сессии добавляются встроенные правила бережливости (со следующей сессии)"));
+  saverCb.onchange=async()=>{saverCb.disabled=true;try{await post("/api/runners/"+encodeURIComponent(id)+"/token-saver",{enabled:saverCb.checked});await tick()}catch(e){alert(e.message);saverCb.checked=!saverCb.checked}finally{saverCb.disabled=false}};
+  settings.append(saverLabel);
+  root.append(top,info,modelState,feedHead,feed,details,settings);
+  const c={root,dot:dt,badge:badgeEl,btn,info,cwd,cmd,details,pre,modelState,modelForm,modelSel,modelHint,instState,instInput,instPre,instDetails,feed,saverCb};return c}
 async function loadLog(id,c){try{const j=await getJSON(q("/api/runners/"+encodeURIComponent(id)+"/log"));
   const atEnd=c.pre.scrollTop+c.pre.clientHeight>=c.pre.scrollHeight-8;c.pre.textContent=j.lines.length?j.lines.join("\n"):"(пусто)";if(atEnd)c.pre.scrollTop=c.pre.scrollHeight}catch(e){}}
 function renderAgents(s){
@@ -1657,7 +1724,7 @@ function renderEvents(){
 
 /* ---------- activity: what the agents call, what comes back ---------- */
 let ACT=[],actSeq=0,actProject=null,actShown=0,actKind="all";const actOpen=new Set();
-const KINDS=[["all","all"],["tool_use","tool_use"],["tool_result","tool_result"],["err","errors"],["text","text"],["thinking","thinking"],["runner","runner"]];
+const KINDS=[["all","Все"],["tool_use","Инструменты"],["tool_result","Результаты"],["err","Ошибки"],["text","Сообщения"],["thinking","Рассуждения"],["runner","Запуск агента"]];
 async function fetchActivity(){
   if(actProject!==route.project){actProject=route.project;ACT=[];actSeq=0;actShown=0;actOpen.clear()}
   try{const j=await getJSON(q("/api/activity?after="+actSeq));if(j.events.length){ACT.push(...j.events);if(ACT.length>3000)ACT.splice(0,ACT.length-3000)}actSeq=j.lastSeq||actSeq}catch(e){}
@@ -1685,7 +1752,7 @@ function keepAnchor(box,rebuild){const top=box.scrollTop;let anchor=null,off=0;c
   rebuild();
   if(top>0){const r=anchor&&box.querySelector('[data-seq="'+anchor+'"]');box.scrollTop=top;if(r)box.scrollTop+=r.getBoundingClientRect().top-bt()-off}}
 function renderActivity(){
-  const agents=[...new Set(ACT.map(e=>e.agentId))].sort();fillSelect("a-agent","Все агенты",agents);fillSelect("a-task","Все задачи",[...new Set(ACT.map(e=>e.taskId).filter(Boolean))].sort());
+  const agents=[...new Set(ACT.map(e=>e.agentId))].sort();fillSelect("a-agent","Все агенты",agents);fillSelect("a-task","Все задачи",[...new Set([...(S.tasks||[]).map(t=>t.id),...ACT.map(e=>e.taskId).filter(Boolean)])].sort());
   const fa=$("a-agent").value,ft=$("a-task").value,fq=$("a-q").value.trim().toLowerCase(),follow=$("a-follow").checked;
   const base=ACT.filter(e=>(!fa||e.agentId===fa)&&(!ft||e.taskId===ft)&&(!fq||((e.summary||"")+" "+(e.tool||"")+" "+(e.detail||"")).toLowerCase().includes(fq)));
   const counts=KINDS.map(([k])=>base.filter(e=>matchKind(e,k)).length);const kb=$("a-kinds");const ksig=actKind+"|"+counts.join(",");
@@ -1715,7 +1782,7 @@ function miniFeed(id,box){const mine=ACT.filter(e=>e.agentId===id);let from=mine
 /* ---------- questions ---------- */
 const qCards=new Map();
 function renderQuestions(s){
-  const open=s.openQuestions||[];$("questions").hidden=!open.length;const box=$("qlist");const keep=new Set();
+  const open=["tasks","inbox"].includes(route.tab)?(s.openQuestions||[]).filter(x=>!route.task||x.taskId===route.task):[];$("questions").hidden=!open.length;const box=$("qlist");const keep=new Set();
   for(const qq of open){const key=route.project+"/"+qq.taskId+"/"+qq.messageId;keep.add(key);if(qCards.has(key))continue;
     const c=questionCard(qq,s,key);qCards.set(key,c);box.append(c)}
   for(const [key,c] of qCards)if(!keep.has(key)){c.remove();qCards.delete(key)}
@@ -1955,7 +2022,7 @@ function renderNotes(s){
 
 /* ---------- switching projects ---------- */
 function resetProject(){
-  S=null;RUNS=[];SUP=null;n=0;knownIds="";openDetails.clear();supOpen.clear();["s-needs","s-journal"].forEach(id=>{$(id).dataset.sig="";$(id).replaceChildren()});supSessions.clear();supAll=false;if(supUi)supUi.tlist.dataset.sig="";
+  S=null;RUNS=[];SUP=null;OBS=null;DEP=null;n=0;knownIds="";openDetails.clear();supOpen.clear();["s-needs","s-journal"].forEach(id=>{$(id).dataset.sig="";$(id).replaceChildren()});supSessions.clear();supAll=false;if(supUi)supUi.tlist.dataset.sig="";
   for(const c of runnerCards.values())c.root.remove();runnerCards.clear();
   for(const c of qCards.values())c.remove();qCards.clear();for(const c of nCards.values())c.remove();nCards.clear();
   ["tasks","runs","events","agents","kpis","ov-runners","ov-phases","ov-events"].forEach(id=>$(id).replaceChildren());

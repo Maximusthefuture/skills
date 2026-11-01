@@ -310,7 +310,7 @@ const slug = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g,
 
 /**
  * GET / (page), GET /api/projects, and per project (?project=<id>, default: the first one): GET /api/state, /api/runs,
- * /api/openspec/changes, /api/runners/<id>/log; with runners also POST /api/tasks, /api/runners/<id>/start|stop|instructions|model,
+ * /api/openspec/changes, /api/runners/<id>/log; with runners also POST /api/tasks, /api/runners (add from a template), /api/runners/<id>/start|stop|instructions|model|token-saver,
  * /api/questions/answer, /api/openspec/archive, /api/tasks/<id>/unblock|handover|cancel|message|merge, /api/tasks/<id>/acceptance/accept|return (GET /api/tasks/<id>/acceptance[/view]), /api/worktrees/clean, /api/supervisor/start|stop|model|tools|note|resolve
  * (GET /api/supervisor, /api/activity). Bound to loopback; foreign Host headers are refused, and state-changing
  * requests must be same-origin JSON (a page on another site cannot create tasks for the agents).
@@ -635,6 +635,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
             ? {
                 runners: await p.pool.details(), maxTaskCostUsd: p.maxTaskCostUsd ?? null, verifyCommand: p.verifyCommand ?? null,
                 drafter: p.drafter ? { model: p.drafter.model ?? null } : null,
+                /** The CLIs with their models the «Добавить runner» form offers (runners.json "runnerTemplates"). */
+                runnerTemplates: p.pool.templates(),
                 /** Agents in auto worktrees: the DONE task card offers to merge the lead's branch and remove the worktrees. */
                 worktrees: p.pool.ids().filter((id) => p.pool!.agentFolder(id)?.worktree),
               }
@@ -753,7 +755,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
           .filter((t) => t.merged && !t.merged.reverted)
           .map((t) => ({ id: t.id, title: t.title, commit: t.merged!.commit, into: t.merged!.into, at: t.merged!.at, state: taskDeployState(t.id, runs) }))
           .sort((a, b) => b.at.localeCompare(a.at));
-        return json(200, { control: !!p.pool, settings: await p.deployer.settings(), ready, runs });
+        return json(200, { control: !!p.pool, configured: await p.fs.exists(["deploy", "settings.json"]), settings: await p.deployer.settings(), ready, runs });
       }
       const dep = /^\/api\/deploys\/(dep-\d+)$/.exec(path);
       if (dep) return json(200, { run: await p.deployer.get(dep[1]!) });
@@ -1259,6 +1261,12 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const b = body as { name?: unknown; enabled?: unknown };
       return json(200, await p.supervisor.setToolEnabled(String(b.name ?? ""), b.enabled !== false));
     }
+    if (path === "/api/runners") {
+      // the page's «Добавить runner» form: a new runner from a "runnerTemplates" entry, written into the config, stopped
+      const b = body as { id?: unknown; template?: unknown; model?: unknown };
+      const view = await pool.addRunner({ id: String(b.id ?? ""), template: String(b.template ?? ""), ...(typeof b.model === "string" && b.model.trim() ? { model: b.model } : {}) });
+      return json(201, view);
+    }
     const inst = /^\/api\/runners\/([^/]+)\/instructions$/.exec(path);
     if (inst) {
       const file = (body as { file?: unknown }).file;
@@ -1271,6 +1279,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     }
     const mdl = /^\/api\/runners\/([^/]+)\/model$/.exec(path);
     if (mdl) return json(200, await pool.setModel(decodeURIComponent(mdl[1]!), String((body as { model?: unknown }).model ?? "")));
+    const saver = /^\/api\/runners\/([^/]+)\/token-saver$/.exec(path);
+    if (saver) return json(200, await pool.setTokenSaver(decodeURIComponent(saver[1]!), (body as { enabled?: unknown }).enabled === true));
     const act = /^\/api\/runners\/([^/]+)\/(start|stop)$/.exec(path);
     if (act) {
       const id = decodeURIComponent(act[1]!);

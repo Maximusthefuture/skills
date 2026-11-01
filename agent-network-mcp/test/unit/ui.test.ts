@@ -142,3 +142,15 @@ describe("ui server", () => {
     expect(status).toBe(403);
   });
 });
+
+ describe("optional publication navigation", () => {
+  it("distinguishes saved publication settings from implicit defaults", async () => {
+    const { dir } = await network();
+    ui = await startUiServer(dir, { port: 0 });
+    const read = async () => (await (await fetch(ui!.url + "/api/deploys")).json()) as { configured: boolean };
+    expect((await read()).configured).toBe(false);
+    const store = await FileStore.open(dir);
+    await store.writeJson(["deploy", "settings.json"], {});
+    expect((await read()).configured).toBe(true);
+  });
+});

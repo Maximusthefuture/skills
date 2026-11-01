@@ -1,6 +1,6 @@
 import { ATTENTION_KINDS, type NotifyConfig } from "../attention.js";
 import { homedir } from "node:os";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { catchUpBranch, ensureWorktrees, switchTaskBranch, type AgentWorktree } from "../worktrees.js";
@@ -24,8 +24,12 @@ import { buildTools, parseBuildCommand } from "../build.js";
  *   {
  *     "networkDir": "/abs/project/.agent-network",          optional: --network-dir / NETWORK_DIR win
  *     "defaults": { "command": ["qwen", "{prompt}", "-m", "{model}", ...], "model": "qwen/qwen3.5-9b", "models": ["qwen/qwen3.5-9b", "qwen/qwen3-coder-30b"], "promptFile": "qwen-prompt.md" },
- *     "agents": [ { "id": "backend", "cwd": "../project-backend", "instructionsFile": "backend.md" }, { "id": "reviewer", "cwd": "../project-reviewer", "autostart": false } ]
+ *     "agents": [ { "id": "backend", "cwd": "../project-backend", "instructionsFile": "backend.md" }, { "id": "reviewer", "cwd": "../project-reviewer", "autostart": false } ],
+ *     "runnerTemplates": { "kimi": { "command": [...], "model": "...", "models": [...] } }
  *   }
+ *
+ * "runnerTemplates": the CLIs (with their models) the page's «Добавить runner» form creates a runner from; agent fields,
+ * "defaults" apply.
  *
  * Every agent field may also sit in "defaults"; relative paths are resolved against the config file.
  */
@@ -51,6 +55,8 @@ export interface RunnerAgentConfig {
   systemPromptFile?: string;
   /** Put where the command has {model}; the UI can change it (applies from the next session). */
   model?: string;
+  /** Append the built-in token-economy rules to every session prompt; the page's checkbox (applies from the next session). */
+  tokenSaver?: boolean;
   /**
    * The model for sessions of a task that writes an OpenSpec change (task create --propose): a stronger reviewer of the
    * change while the code is written on a cheaper one. Default: model.
@@ -149,6 +155,14 @@ export interface RunnersConfig {
   notify?: NotifyConfig;
   /** «Составить черновик» in the task form (src/drafter.ts): a read-only session drafts a task from the operator's idea. */
   drafter?: ObserverConfig;
+  /** "runnerTemplates": the CLIs with their models the page's «Добавить runner» form creates a runner from. */
+  runnerTemplates?: RunnerTemplate[];
+}
+
+/** One entry of "runnerTemplates": a CLI (agent fields, "defaults" applied) the page can add a runner from. */
+export interface RunnerTemplate {
+  name: string;
+  config: RunnerAgentConfig;
 }
 
 export interface ObserverConfig {
@@ -320,7 +334,7 @@ function costLimit(value: unknown, what: string): number {
 
 export async function loadRunnersConfig(path: string, opts: { projectDir?: string } = {}): Promise<RunnersConfig> {
   const file = resolve(path);
-  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; verifyCommand?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown; mergeCheck?: unknown; notify?: unknown; drafter?: unknown };
+  let raw: { networkDir?: unknown; project?: unknown; defaults?: RawAgent & { worktree?: unknown }; agents?: (RawAgent & { worktree?: unknown })[]; prices?: unknown; supervisor?: unknown; schedules?: unknown; maxTaskCostUsd?: unknown; verifyCommand?: unknown; spawn?: unknown; observer?: unknown; planCritic?: unknown; mergeStrategy?: unknown; mergeCheck?: unknown; notify?: unknown; drafter?: unknown; runnerTemplates?: unknown };
   try {
     // {agentNetworkMcp} anywhere in the file is this package's folder
     raw = JSON.parse((await readFile(file, "utf8")).replaceAll("{agentNetworkMcp}", PACKAGE_DIR.replaceAll("\\", "/")));
@@ -345,6 +359,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
       throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" "models" must be a list of model names`);
     }
     if (usesModel(merged.command) && !merged.model) throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" command has {model}: set "model" (in the agent or in "defaults")`);
+    if (merged.tokenSaver !== undefined && typeof merged.tokenSaver !== "boolean") throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" "tokenSaver" is true or false`);
     const freshPhases = parseFreshPhases(merged.freshPhases as readonly unknown[] | string | undefined, `${file}: agent "${id}" freshPhases`);
     const promptFile = merged.promptFile ? abs(merged.promptFile) : undefined;
     const instructionsFile = merged.instructionsFile ? abs(merged.instructionsFile) : undefined;
@@ -381,6 +396,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
       ...(instructionsFile ? { instructionsFile } : {}),
       ...(systemPromptFile ? { systemPromptFile } : {}),
       ...(merged.model ? { model: merged.model } : {}),
+      ...(merged.tokenSaver !== undefined ? { tokenSaver: merged.tokenSaver } : {}),
       ...(merged.proposeModel ? { proposeModel: merged.proposeModel } : {}),
       ...(merged.models?.length ? { models: [...new Set(merged.models)] } : {}),
       ...(merged.maxRestarts !== undefined ? { maxRestarts: Number(merged.maxRestarts) } : {}),
@@ -408,6 +424,23 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
       templates.push({ name, description: (description as string).trim(), config: await parseAgent({ ...raw.defaults, ...fields }, name) });
     }
     return { templates, maxPerTask };
+  }
+
+  // "runnerTemplates": {"kimi": {...agent fields}}: the CLIs (with their models) the page's «Добавить runner» form offers
+  async function parseRunnerTemplates(rawTemplates: unknown): Promise<RunnerTemplate[]> {
+    const bad = (what: string): never => {
+      throw new AppError("INVALID_CONFIG", `${file}: "runnerTemplates" ${what}`);
+    };
+    if (!rawTemplates || typeof rawTemplates !== "object" || Array.isArray(rawTemplates)) bad('must be an object: {"<name>": {...agent fields, "models": [...]}}');
+    const templates: RunnerTemplate[] = [];
+    for (const [name, t] of Object.entries(rawTemplates as Record<string, unknown>)) {
+      if (!/^[a-z][a-z0-9-]{0,20}$/.test(name)) bad(`template "${name}": a name of lowercase letters, digits and -`);
+      if (!t || typeof t !== "object" || Array.isArray(t)) bad(`template "${name}" must be an object`);
+      const config = await parseAgent({ ...raw.defaults, ...(t as RawAgent) }, name);
+      if (!(config.models?.length || config.model)) bad(`template "${name}" needs "models" (or at least "model"): the choice the «Добавить runner» form offers`);
+      templates.push({ name, config });
+    }
+    return templates;
   }
 
   function parseSkillSets(rawSets: unknown): { skillSets?: SkillSet[] } {
@@ -467,6 +500,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     agents.push(await parseAgent(merged, id));
   }
   const spawn = raw.spawn === undefined ? undefined : await parseSpawn(raw.spawn);
+  const runnerTemplates = raw.runnerTemplates === undefined ? undefined : await parseRunnerTemplates(raw.runnerTemplates);
   const observer = raw.observer === undefined ? undefined : await parseObserver(raw.observer);
   const planCritic = raw.planCritic === undefined ? undefined : { ...(await parseObserver({ ...(raw.planCritic as object), cron: undefined }, "planCritic")), ...parseSkillSets((raw.planCritic as { skillSets?: unknown }).skillSets) };
   if (raw.mergeStrategy !== undefined && raw.mergeStrategy !== "squash" && raw.mergeStrategy !== "merge") throw new AppError("INVALID_CONFIG", `${file}: "mergeStrategy" is "squash" (one commit per task) or "merge"`);
@@ -491,6 +525,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     ...(mergeCheck ? { mergeCheck } : {}),
     ...(notify ? { notify } : {}),
     ...(drafter ? { drafter } : {}),
+    ...(runnerTemplates?.length ? { runnerTemplates } : {}),
   };
 }
 
@@ -751,6 +786,8 @@ export interface RunnerView {
   disabledSkillsByTask: SkillsByTask;
   /** Its model in tasks that write an OpenSpec change, when it differs. */
   proposeModel: string | null;
+  /** The built-in token-economy rules are appended to every session prompt (the page's checkbox). */
+  tokenSaver: boolean;
 }
 
 export interface RunnerDetails extends RunnerView {
@@ -801,7 +838,7 @@ export class RunnerPool {
   constructor(
     private readonly networkDir: string,
     agents: RunnersConfig["agents"],
-    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string; home?: string; onSessionEnd?: (agentId: string, taskId: string) => Promise<void>; onGiveUp?: (agentId: string, taskId: string, reason: string) => Promise<void> } = {},
+    private readonly opts: { maxLines?: number; run?: (o: RunnerOptions) => Promise<number>; configPath?: string; home?: string; templates?: RunnerTemplate[]; onSessionEnd?: (agentId: string, taskId: string) => Promise<void>; onGiveUp?: (agentId: string, taskId: string, reason: string) => Promise<void> } = {},
   ) {
     for (const config of agents) this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [], urgent: [], stopSession: null, interruptAt: null });
   }
@@ -833,6 +870,7 @@ export class RunnerPool {
       disabledSkills: m.config.disabledSkills ?? [],
       disabledSkillsByTask: m.config.disabledSkillsByTask ?? {},
       proposeModel: m.config.proposeModel ?? null,
+      tokenSaver: m.config.tokenSaver === true,
     }));
   }
 
@@ -865,6 +903,29 @@ export class RunnerPool {
     this.managed.set(config.id, { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [], urgent: [], stopSession: null, interruptAt: null, spawnedFor });
     this.start(config.id);
     return true;
+  }
+
+  /** The "runnerTemplates" of the config: what the page's «Добавить runner» form offers (name, default model, choice). */
+  templates(): { name: string; model: string | null; models: string[] }[] {
+    return (this.opts.templates ?? []).map((t) => ({
+      name: t.name,
+      model: t.config.model ?? t.config.models?.[0] ?? null,
+      models: t.config.models?.length ? t.config.models : t.config.model ? [t.config.model] : [],
+    }));
+  }
+
+  /**
+   * A runner the page's form adds from a template: written into the runners config (autostart: false) and joins the
+   * pool stopped; «Старт» runs it.
+   */
+  async addRunner(given: { id: string; template: string; model?: string }): Promise<RunnerView> {
+    if (!this.opts.configPath) throw new AppError("INVALID_INPUT", "Adding a runner needs the runners config file");
+    if (this.managed.has(given.id.trim())) throw new AppError("INVALID_INPUT", `A runner "${given.id.trim()}" exists already: pick another id`);
+    const config = await saveRunner(this.opts.configPath, given);
+    const m: Managed = { config, startedAt: null, stoppedAt: null, lines: [], partial: "", session: null, events: [], urgent: [], stopSession: null, interruptAt: null };
+    this.managed.set(config.id, m);
+    this.say(m, `[ui] runner added from the "${given.template}" template; stopped — start it with the button`);
+    return this.view(config.id);
   }
 
   /** list() plus a look into each instructions file, for the page. */
@@ -916,6 +977,18 @@ export class RunnerPool {
     m.config.model = model;
     if (this.opts.configPath && !this.managed.get(id)?.spawnedFor) await saveAgentField(this.opts.configPath, id, "model", model);
     this.say(m, `[ui] model: ${model}${m.controller ? " (applies from the next session)" : ""}`);
+    return this.view(id);
+  }
+
+  /**
+   * Switch the built-in token-economy rules in the agent's prompt on or off (applies from the next session). With a
+   * config file the value is written back there, so it survives a restart.
+   */
+  async setTokenSaver(id: string, enabled: boolean): Promise<RunnerView> {
+    const m = this.get(id);
+    m.config.tokenSaver = enabled;
+    if (this.opts.configPath && !this.managed.get(id)?.spawnedFor) await saveAgentField(this.opts.configPath, id, "tokenSaver", enabled);
+    this.say(m, `[ui] token saver in the prompt: ${enabled ? "on" : "off"} (applies from the next session)`);
     return this.view(id);
   }
 
@@ -971,6 +1044,7 @@ export class RunnerPool {
       ...(m.config.instructionsFile ? { instructionsFile: m.config.instructionsFile } : {}),
       ...(m.config.systemPromptFile ? { systemPromptFile: m.config.systemPromptFile } : {}),
       model: (task) => (task?.proposes && m.config.proposeModel) || m.config.model,
+      ...(m.config.tokenSaver ? { tokenSaver: true } : {}),
       disabledSkills: (task) => sessionDisabledSkills(m.config.disabledSkills ?? [], m.config.disabledSkillsByTask, task),
       onSession: (session) => {
         m.session = session;
@@ -1084,11 +1158,48 @@ export class RunnerPool {
 }
 
 /** Update one field of one agent in the JSON config, keeping everything else (including _comment). */
-async function saveAgentField(configPath: string, id: string, field: string, value: string | string[] | null): Promise<void> {
+async function saveAgentField(configPath: string, id: string, field: string, value: string | string[] | boolean | null): Promise<void> {
   const raw = JSON.parse(await readFile(configPath, "utf8")) as { agents?: Record<string, unknown>[] };
   const agent = raw.agents?.find((a) => a.id === id);
   if (!agent) return;
   if (value === null) delete agent[field];
   else agent[field] = value;
   await writeConfig(configPath, raw);
+}
+
+/**
+ * Add one agent to the JSON config from a "runnerTemplates" entry (the page's «Добавить runner» form), keeping
+ * everything else. The template's fields are copied as they are; the id must be new, the model must be one the
+ * template lists, and the runner starts stopped (autostart: false). The changed config is parsed whole (exactly as at
+ * start) before anything is written. Returns the new agent's parsed config.
+ */
+export async function saveRunner(configPath: string, given: { id: string; template: string; model?: string }): Promise<RunnerAgentConfig> {
+  const id = assertAgentId(given.id.trim(), "id");
+  const current = await loadRunnersConfig(configPath); // the config as it stands, checked before anything changes
+  if (current.agents.some((a) => a.id === id)) throw new AppError("INVALID_INPUT", `A runner "${id}" exists already: pick another id`);
+  const t = current.runnerTemplates?.find((x) => x.name === given.template);
+  if (!t) throw new AppError("INVALID_INPUT", `No runner template "${given.template}" in ${configPath}`);
+  const models = t.config.models?.length ? t.config.models : t.config.model ? [t.config.model] : [];
+  const model = given.model?.trim() || t.config.model || models[0];
+  if (model !== undefined) {
+    if (!isValidModel(model)) throw new AppError("INVALID_INPUT", `Not a model name: ${JSON.stringify(model)}`);
+    if (models.length && !models.includes(model)) throw new AppError("INVALID_INPUT", `Model "${model}" is not one the template "${given.template}" offers (${models.join(", ")})`);
+  }
+  const raw = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown> & { agents?: Record<string, unknown>[]; runnerTemplates?: Record<string, unknown> };
+  const fields = raw.runnerTemplates![given.template] as Record<string, unknown>;
+  const agent: Record<string, unknown> = { id, ...fields, ...(model ? { model } : {}), autostart: false };
+  raw.agents = [...(raw.agents ?? []), agent];
+  // checked whole before it is written: a temp copy next to it (its relative paths resolve the same)
+  const check = `${configPath}.${process.pid}.check`;
+  await writeFile(check, JSON.stringify(raw));
+  let parsed: RunnersConfig;
+  try {
+    parsed = await loadRunnersConfig(check);
+  } catch (e) {
+    throw new AppError("INVALID_INPUT", (e as Error).message.replaceAll(check, configPath));
+  } finally {
+    await rm(check, { force: true });
+  }
+  await writeConfig(configPath, raw);
+  return parsed.agents.find((a) => a.id === id)!;
 }

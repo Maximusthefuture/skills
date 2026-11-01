@@ -137,7 +137,11 @@ describe("settings and the agents' push", () => {
     const s = checkSettings({});
     expect(s.bitbucket).toEqual({ remote: "origin", branch: "feature/{task}-{slug}" });
     expect(s.environments).toEqual([{ name: "dev" }]);
+    expect(s.jenkins).toMatchObject({ triggerTool: "trigger_build", statusTool: "get_build", logTool: "get_build_log" });
+    expect(s.jenkins.triggerArgs).toBe('{"jobName":"{job}","parameters":{params}}');
+    expect(s.jenkins.statusArgs).toBe('{"jobName":"{job}","buildNumber":{build}}');
     expect(checkSettings({ jenkins: { mcpEnv: { JENKINS_TOKEN: "${JENKINS_TOKEN}" }, triggerArgs: '{"job": "{job}", "parameters": {params}}' } }).jenkins.mcpEnv).toEqual({ JENKINS_TOKEN: "${JENKINS_TOKEN}" });
+    expect(checkSettings({ jenkins: { triggerTool: "custom_trigger", statusTool: "custom_status" } }).jenkins.logTool).toBe("");
     expect(() => checkSettings({ bitbucket: { remote: "--upload-pack=x" } })).toThrow(/remote/);
     expect(() => checkSettings({ bitbucket: { branch: "feature/../x" } })).toThrow(/branch/);
     expect(() => checkSettings({ jenkins: { triggerArgs: "{not json" } })).toThrow(/triggerArgs/);
@@ -240,6 +244,16 @@ describe("the Jenkins job through its MCP server", () => {
     const c = readCalls(calls);
     expect(c[0]).toEqual({ tool: "trigger_build", args: { jobName: "orders-service/deploy", parameters: { BRANCH: "feature/task-001-a", ENV: "dev" } }, token: "tok-123" });
     expect(c.filter((x) => x.tool === "get_build").map((x) => x.args)).toEqual([{ jobName: "orders-service/deploy", buildNumber: 42 }, { jobName: "orders-service/deploy", buildNumber: 42 }]);
+  });
+
+  it("uses the conventional tools and arguments when only the server and job are configured", async () => {
+    const calls = join(await tmpDir(), "calls.jsonl");
+    const settings = checkSettings({ jenkins: { mcpCommand: ["node", FAKE], mcpEnv: { FAKE_CALLS: calls }, job: "orders-service/deploy" } }).jenkins;
+    const vars = { branch: "feature/task-001-a", commit: "abc", env: "dev", task: "task-001" };
+    const r = await runJob(openJenkinsMcp, settings, { ...vars, params: jobParams(settings.params, undefined, vars) }, { intervalMs: 10 });
+    expect(r.ok).toBe(true);
+    expect(readCalls(calls)[0]).toMatchObject({ tool: "trigger_build", args: { jobName: "orders-service/deploy", parameters: { BRANCH: "feature/task-001-a", ENV: "dev" } } });
+    expect(readCalls(calls).filter((x) => x.tool === "get_build")[0]!.args).toEqual({ jobName: "orders-service/deploy", buildNumber: 42 });
   });
 
   it("a failed job brings its log and stops the deploy before Kubernetes", async () => {
