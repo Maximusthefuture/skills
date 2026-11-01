@@ -127,7 +127,19 @@ describe("ui server", () => {
     const page = await fetch(ui.url);
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
-    expect(await page.text()).toContain("Agent Network");
+    expect(await page.text()).toContain("Agent Network v2");
+
+    const v1 = await fetch(`${ui.url}/v1`);
+    expect(v1.status).toBe(200);
+    expect(v1.headers.get("content-type")).toContain("text/html");
+    const v1html = await v1.text();
+    expect(v1html).toContain("Agent Network");
+    expect(v1html).not.toContain("Agent Network v2");
+
+    const v2 = await fetch(`${ui.url}/v2`);
+    expect(v2.status).toBe(200);
+    expect(v2.headers.get("content-type")).toContain("text/html");
+    expect(await v2.text()).toContain("Agent Network v2");
 
     const state: any = await (await fetch(`${ui.url}/api/state`)).json();
     expect(state.tasks).toEqual([expect.objectContaining({ id: "task-001", phase: "DISCUSS" })]);

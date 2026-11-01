@@ -24,6 +24,7 @@ import { detectStack } from "../stack.js";
 import { MergeChecker, mergeRef, type MergeCheck } from "../mergeCheck.js";
 import { collectDigests } from "../observer/digest.js";
 import { PAGE_HTML } from "./page.js";
+import { PAGE2_HTML } from "./page2.js";
 import { listRuns, queueStates, taskState, type RunView } from "./runs.js";
 import type { ObserverConfig, RunnerPool } from "./runners.js";
 import { Journal } from "../supervisor/journal.js";
@@ -309,7 +310,7 @@ const tilde = (path: string): string => {
 const slug = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project";
 
 /**
- * GET / (page), GET /api/projects, and per project (?project=<id>, default: the first one): GET /api/state, /api/runs,
+ * GET / (page v2, рефакторинг по ui-mockups/PLAN.md), GET /v1 (старая страница), GET /api/projects, and per project (?project=<id>, default: the first one): GET /api/state, /api/runs,
  * /api/openspec/changes, /api/runners/<id>/log; with runners also POST /api/tasks, /api/runners (add from a template), /api/runners/<id>/start|stop|instructions|model|token-saver,
  * /api/questions/answer, /api/openspec/archive, /api/tasks/<id>/unblock|handover|cancel|message|merge, /api/tasks/<id>/acceptance/accept|return (GET /api/tasks/<id>/acceptance[/view]), /api/worktrees/clean, /api/supervisor/start|stop|model|tools|note|resolve
  * (GET /api/supervisor, /api/activity). Bound to loopback; foreign Host headers are refused, and state-changing
@@ -599,7 +600,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     if (!p) return json(404, { error: "PROJECT_NOT_FOUND", message: `No project '${wanted}' on this page`, projects: projects.map((x) => x.id) });
 
     if (method === "GET") {
-      if (path === "/") return { status: 200, type: "text/html; charset=utf-8", body: PAGE_HTML };
+      if (path === "/" || path === "/v2") return { status: 200, type: "text/html; charset=utf-8", body: PAGE2_HTML };
+      if (path === "/v1") return { status: 200, type: "text/html; charset=utf-8", body: PAGE_HTML };
       if (path === "/api/projects") return json(200, { projects: await Promise.all(projects.map(summary)), known: await knownProjects(), canOpen: !!opts.openProject && !!opts.registry });
       if (path === "/api/openspec/folders") {
         // before a task implements a change: which of its agents do not have it in their folder yet
