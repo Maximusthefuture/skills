@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Агенты — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="search"><input placeholder="Поиск по задачам…"></div>
+  <div class="side-nav">
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+  </div>
+  <div class="side-label">Задачи<span class="plus" title="Новая задача" onclick="location.href='new.html'">＋</span></div>
+  <a class="chat-item" href="task.html">
+    <span class="dot warn"></span>
+    <span class="col"><span class="nm">Частичный возврат заказа по сумме</span>
+    <span class="pv">ждёт ответа: какой шаблон письма?</span></span>
+    <span class="nudge">вы</span>
+  </a>
+  <a class="chat-item" href="task.html">
+    <span class="dot ok"></span>
+    <span class="col"><span class="nm">Отмена заказа: POST /orders/{id}/cancel</span>
+    <span class="pv">проверка, раунд 1 · backend 3/5</span></span>
+    <span class="tm">14:32</span>
+  </a>
+  <div class="side-label">Ещё</div>
+  <div class="side-nav">
+    <a class="on" href="agents.html"><span class="ic">◐</span>Агенты<span class="c mut">2/3</span></a>
+    <a href="history.html"><span class="ic">▦</span>Архив и история</a>
+  </div>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+    <button class="icon-btn" title="Настройки" onclick="location.href='settings.html'">⚙</button>
+  </div>
+</aside>
+
+<main>
+  <div class="wrap">
+    <h1 class="page-h">Агенты</h1>
+    <p class="page-sub">Кто в команде и чем занят прямо сейчас.</p>
+
+    <div class="agent-row">
+      <span class="av">B</span>
+      <div style="min-width:0">
+        <h3>backend <span class="badge lime">работает</span></h3>
+        <div class="now">T-14 · «маппинг OrderCancelled» · действие 20 сек назад · сегодня $1.87</div>
+      </div>
+      <div class="acts"><button class="ghost small">Лог</button><button class="ghost small">Стоп</button></div>
+    </div>
+
+    <div class="agent-row">
+      <span class="av v">R</span>
+      <div style="min-width:0">
+        <h3>reviewer <span class="badge lime">работает</span></h3>
+        <div class="now">T-14 · ревью раунда 1 · сегодня $0.54</div>
+      </div>
+      <div class="acts"><button class="ghost small">Лог</button><button class="ghost small">Стоп</button></div>
+    </div>
+
+    <div class="agent-row" style="opacity:.65">
+      <span class="av" style="background:var(--line);color:var(--muted)">D</span>
+      <div style="min-width:0">
+        <h3>devops <span class="badge">спит</span></h3>
+        <div class="now">Проснётся сам, когда появится работа по его шаблону.</div>
+      </div>
+      <div class="acts"><button class="ghost small">Разбудить</button></div>
+    </div>
+
+    <div class="agent-row" style="border-style:dashed;box-shadow:none">
+      <span class="av" style="background:var(--lime-soft);color:var(--lime-text)">＋</span>
+      <div style="min-width:0">
+        <h3>Добавить агента</h3>
+        <div class="now">Из шаблона runnerTemplates (runners.json): CLI и модели на выбор. Создаётся остановленным.</div>
+      </div>
+      <div class="acts"><button class="cta small" onclick="document.getElementById('addagent').open=true">Добавить…</button></div>
+    </div>
+
+    <details class="adv" id="addagent" style="margin-top:14px">
+      <summary>Новый агент из шаблона</summary>
+      <div class="in">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px">
+          <label>Имя (id)
+            <input placeholder="kimi-2"></label>
+          <label>Шаблон CLI
+            <select><option>claude-code</option><option>qwen-code</option><option>kimi-cli</option></select></label>
+          <label>Модель
+            <select><option>claude-sonnet-4.5</option><option>claude-haiku</option></select></label>
+        </div>
+        <div><button class="cta small">Добавить агента</button> <span style="font-size:12px;color:var(--muted)">Запишется в runners.json, появится в списке остановленным.</span></div>
+      </div>
+    </details>
+
+    <details class="adv" style="margin-top:22px">
+      <summary>Скиллы и обслуживание</summary>
+      <div class="in">
+        <label class="checks" style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--text)">
+          <span><input type="checkbox" checked> spring-boot</span>
+          <span><input type="checkbox" checked> openspec</span>
+          <span><input type="checkbox"> flyway-migrations</span>
+          <span><input type="checkbox" checked> test-containers</span>
+        </label>
+        <div><button class="ghost small">Убрать все worktree проекта</button></div>
+      </div>
+    </details>
+  </div>
+</main>
+</div>
+</body>
+</html>

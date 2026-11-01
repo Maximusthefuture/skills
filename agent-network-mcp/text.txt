@@ -1,0 +1,1 @@
+Smoke-check: verify swarm_context and other agent-network commands respond as expected.

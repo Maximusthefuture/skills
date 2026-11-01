@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Наблюдатель — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="side-nav">
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+  </div>
+  <div class="side-label">Настройки</div>
+  <div class="side-nav">
+    <a href="supervisor.html"><span class="ic">◔</span>Надзор</a>
+    <a class="on" href="observer.html"><span class="ic">◈</span>Наблюдатель<span class="c mut">2</span></a>
+    <a href="deploy.html"><span class="ic">⇪</span>Публикация</a>
+    <a href="schedules.html"><span class="ic">◷</span>Расписания</a>
+    <a href="projects.html"><span class="ic">▣</span>Проекты</a>
+    <a href="settings.html"><span class="ic">⚙</span>Все настройки</a>
+  </div>
+  <div class="side-foot"><span class="who"><span class="me">M</span>Maximus</span></div>
+</aside>
+
+<main>
+  <div class="wrap" style="max-width:860px">
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div>
+        <h1 class="page-h">Наблюдатель</h1>
+        <p class="page-sub">Учится на закрытых задачах и предлагает улучшения самой системы. Принятое предложение становится задачей для роя.</p>
+      </div>
+      <button class="ghost" style="margin-left:auto">Запустить сейчас</button>
+    </div>
+
+    <div class="sect-h">Предложения <span class="n">2 новых</span></div>
+
+    <div class="need plan">
+      <div class="k">Предложение · из отчёта вчера</div>
+      <h3>Ограничивать размер читаемых логов в инструкциях runner'ов</h3>
+      <div class="body">В 3 из 5 падений за месяц агент читал лог >50 МБ целиком и упирался в контекст. Правило для роли: читать хвост лога, по необходимости — grep.</div>
+      <div class="opts">
+        <button class="cta">Принять → задача рою</button>
+        <button class="ghost">Отклонить</button>
+        <button class="ghost">Обсудить</button>
+      </div>
+    </div>
+
+    <div class="need plan">
+      <div class="k">Предложение · из отчёта вчера</div>
+      <h3>Статус «ждёт dependsOn» показывать вам сразу</h3>
+      <div class="body">Задачи простаивали в среднем 14 минут, пока агент ждал зависимость. Наблюдатель предлагает пинговать вас, если ожидание >10 минут.</div>
+      <div class="opts">
+        <button class="cta">Принять → задача рою</button>
+        <button class="ghost">Отклонить</button>
+      </div>
+    </div>
+
+    <div class="sect-h">Известные проблемы <span class="n">4</span></div>
+    <div class="panel2">
+      <div class="act-row"><span class="kind err">ERROR</span><span class="sum">FILE_OVERLAP на старте согласования — 6 раз за месяц</span><span class="tm">видели 12×</span></div>
+      <div class="act-row"><span class="kind err">ERROR</span><span class="sum">runner OOM при чтении больших логов</span><span class="tm">5×</span></div>
+      <div class="act-row"><span class="kind think">WARN</span><span class="sum">долгие ответы reviewer'а в SYNC (>20 мин)</span><span class="tm">8×</span></div>
+      <div class="act-row"><span class="kind think">WARN</span><span class="sum">дорогая фаза DISCUSS при тщательной подготовке</span><span class="tm">3×</span></div>
+    </div>
+
+    <div class="sect-h">Отчёты</div>
+    <div class="panel2">
+      <div class="act-row"><span class="tm">вчера</span><span class="kind ok">отчёт</span><span class="sum">14 закрытых задач · 2 предложения · 4 проблемы</span><span class="tm">▾</span></div>
+      <div class="act-row"><span class="tm">30 окт</span><span class="kind ok">отчёт</span><span class="sum">9 задач · 1 предложение (принято: правило «сначала читать код»)</span><span class="tm">▾</span></div>
+      <div class="act-row"><span class="tm">27 окт</span><span class="kind ok">отчёт</span><span class="sum">11 задач · 0 предложений</span><span class="tm">▾</span></div>
+    </div>
+  </div>
+</main>
+</div>
+</body>
+</html>

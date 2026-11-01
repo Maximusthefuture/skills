@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diff · T-14 — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="diffov">
+  <div class="dhead2">
+    <a class="back" href="task.html">←</a>
+    <h2>Изменения · T-14 «Отмена заказа» · 3 коммита</h2>
+    <span class="badge warn">замечаний открыто: 1</span>
+    <button class="cta small">Отправить замечания lead'у</button>
+  </div>
+  <div class="diffbody">
+    <div class="diffmain">
+
+      <div class="dfile">
+        <div class="fh">src/main/java/shop/orders/OrderService.java · +18 −4</div>
+        <pre class="dpatch"><span class="dhunk"><span class="ln">…</span>@@ -138,7 +138,18 @@ public class OrderService {</span><span><span class="ln">138</span>     public Order getOrder(Long id) {</span><span><span class="ln">139</span>         return repo.find(id);</span><span><span class="ln">140</span>     }</span><span class="dadd"><span class="ln">141</span>+</span><span class="dadd"><span class="ln">142</span>+    public Order cancel(Long id) {</span><span class="dadd"><span class="ln">143</span>+        Order o = repo.find(id);</span><span class="dadd"><span class="ln">144</span>+        if (o.getItems().isEmpty()) {</span><span class="dadd"><span class="ln">145</span>+            throw new EmptyOrderException(id);</span><span class="dadd"><span class="ln">146</span>+        }</span><span class="dcmt"><b>Вы:</b> а если корзина пуста из-за частичного возврата — это легальный случай, не exception. Уточнить у reviewer'а сценарий.</span><span class="dadd"><span class="ln">147</span>+        o.setStatus(CANCELLED);</span><span class="dadd"><span class="ln">148</span>+        events.publish(new OrderCancelled(o));</span><span class="dadd"><span class="ln">149</span>+        return o;</span><span class="dadd"><span class="ln">150</span>+    }</span><span><span class="ln">151</span> }</span></pre>
+      </div>
+
+      <div class="dfile">
+        <div class="fh">src/main/java/shop/orders/CancelController.java · +12 −2</div>
+        <pre class="dpatch"><span class="dhunk"><span class="ln">…</span>@@ -28,8 +28,10 @@ public class CancelController {</span><span><span class="ln">29</span>     @PostMapping("/orders/{id}/cancel")</span><span class="ddel"><span class="ln">30</span>-    @ResponseStatus(BAD_REQUEST)</span><span class="dadd"><span class="ln">30</span>+    @ResponseStatus(CONFLICT)</span><span class="dcmt sent"><b>Вы:</b> 409 вместо 400 при PAID→CANCEL — так клиент поймёт, что это конфликт состояний. <span class="badge ok" style="margin-left:6px">исправлено</span><div style="color:var(--violet);margin-top:4px">lead: поправил в b21d7aa</div></span><span><span class="ln">31</span>     public Response cancel(@PathVariable Long id) {</span><span class="dnew"><textarea placeholder="Комментарий к этой строке… (клик по строке выше)"></textarea><button class="small">→</button></span></pre>
+      </div>
+
+      <div class="dfile">
+        <div class="fh">src/test/java/shop/orders/CancelIT.java · +64 −0</div>
+        <pre class="dpatch"><span class="dhunk"><span class="ln">…</span>@@ новый файл @@</span><span class="dadd"><span class="ln">1</span>+class CancelIT extends BaseIT {</span><span class="dadd"><span class="ln">2</span>+    @Test void cancelNew() { … }</span><span class="dadd"><span class="ln">3</span>+    @Test void cancelPaid_emitsEvent() { … }</span><span class="dadd"><span class="ln">4</span>+}</span></pre>
+      </div>
+
+    </div>
+    <div class="diffside">
+      <h3 style="margin:0 0 10px;font:650 11px var(--font);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Замечания · 2</h3>
+      <div class="review-item open"><span class="st2">открыто</span> · <span class="mono" style="font-size:11px">OrderService.java:144</span><div>пустая корзина — легальный случай после частичного возврата</div></div>
+      <div class="review-item fixed"><span class="st2">исправлено</span> · <span class="mono" style="font-size:11px">CancelController.java:30</span><div>409 вместо 400<div class="note2">lead: поправил в b21d7aa</div></div></div>
+      <p style="font-size:11.5px;color:var(--muted)">Lead не сдаст задачу, пока каждое замечание не исправлено или не отклонено с причиной.</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Проекты — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="side-nav">
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+  </div>
+  <div class="side-label">Настройки</div>
+  <div class="side-nav">
+    <a href="supervisor.html"><span class="ic">◔</span>Надзор</a>
+    <a href="observer.html"><span class="ic">◈</span>Наблюдатель</a>
+    <a href="deploy.html"><span class="ic">⇪</span>Публикация</a>
+    <a href="schedules.html"><span class="ic">◷</span>Расписания</a>
+    <a class="on" href="projects.html"><span class="ic">▣</span>Проекты</a>
+    <a href="settings.html"><span class="ic">⚙</span>Все настройки</a>
+  </div>
+  <div class="side-foot"><span class="who"><span class="me">M</span>Maximus</span></div>
+</aside>
+
+<main>
+  <div class="wrap" style="max-width:860px">
+    <h1 class="page-h">Проекты</h1>
+    <p class="page-sub">«Открыть» загружает проект на эту страницу без перезапуска — со своими агентами, надзором и расписаниями.</p>
+
+    <div class="sect-h">Открытые <span class="n">1</span></div>
+    <table class="tbl">
+      <tr><th>Проект</th><th>Ветка</th><th>Задачи</th><th>Ждут вас</th><th></th></tr>
+      <tr>
+        <td><b>shop-backend</b><div class="mono" style="font-size:11.5px;color:var(--muted)">D:\Projects\shop-backend</div></td>
+        <td class="mono">main · a3f9c1e</td>
+        <td class="mono">2 идёт · 1 в очереди</td>
+        <td><span class="badge warn">3</span></td>
+        <td><span class="badge lime">текущий</span></td>
+      </tr>
+    </table>
+
+    <div class="sect-h">Остальные <span class="n">2</span></div>
+    <table class="tbl">
+      <tr><th>Проект</th><th>Ветка</th><th>Статус</th><th></th></tr>
+      <tr>
+        <td><b>loyalty-service</b><div class="mono" style="font-size:11.5px;color:var(--muted)">D:\Projects\loyalty-service</div></td>
+        <td class="mono">develop · 9d1f3ab</td>
+        <td><span class="badge bad">2 вопроса ждут</span></td>
+        <td><button class="cta small">Открыть</button></td>
+      </tr>
+      <tr>
+        <td><b>docs-site</b><div class="mono" style="font-size:11.5px;color:var(--muted)">D:\Projects\docs-site</div></td>
+        <td class="mono">main · 11cc902</td>
+        <td><span class="badge">закрыт</span></td>
+        <td><button class="ghost small">Открыть</button></td>
+      </tr>
+    </table>
+
+    <div class="sect-h">Добавить проект</div>
+    <div style="display:flex;gap:8px">
+      <input placeholder="D:\Projects\my-service — путь к git-репозиторию" style="flex:1;font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:8px 12px">
+      <button>Добавить</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">Список ведётся в ~/.agent-network/projects.json. Остановленные runner'ы закрытого проекта не тратят ресурсы.</div>
+  </div>
+</main>
+</div>
+</body>
+</html>

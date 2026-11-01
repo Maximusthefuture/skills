@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Надзор — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="side-nav">
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+  </div>
+  <div class="side-label">Настройки</div>
+  <div class="side-nav">
+    <a class="on" href="supervisor.html"><span class="ic">◔</span>Надзор<span class="c mut">!</span></a>
+    <a href="observer.html"><span class="ic">◈</span>Наблюдатель</a>
+    <a href="deploy.html"><span class="ic">⇪</span>Публикация</a>
+    <a href="schedules.html"><span class="ic">◷</span>Расписания</a>
+    <a href="projects.html"><span class="ic">▣</span>Проекты</a>
+    <a href="settings.html"><span class="ic">⚙</span>Все настройки</a>
+  </div>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+  </div>
+</aside>
+
+<main>
+  <div class="wrap" style="max-width:860px">
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div>
+        <h1 class="page-h">Надзор</h1>
+        <p class="page-sub">Следит за роем каждые 10 секунд, чинит сам, отдаёт вам только решения.</p>
+      </div>
+      <button class="ghost" style="margin-left:auto">Выключить</button>
+    </div>
+
+    <div class="need blocked">
+      <div class="k">Нужно решение · 12:40</div>
+      <h3>runner reviewer перезапущен 3 раза за час</h3>
+      <div class="body">Сессия падает на OOM при чтении большого лога. Надзор перезапускал, помогает ненадолго. Вариант надзора: ограничить размер читаемого лога в инструкциях reviewer'а.</div>
+      <div class="opts">
+        <button class="cta">Применить вариант надзора</button>
+        <button class="ghost">Не перезапускать больше</button>
+        <button class="ghost">Разберусь сам</button>
+      </div>
+    </div>
+
+    <div class="sect-h">Журнал <span class="n">сегодня · 12 событий</span></div>
+    <div class="filters2">
+      <select><option>все типы</option><option>инциденты</option><option>действия</option><option>сессии</option></select>
+    </div>
+    <div class="panel2">
+      <div class="act-row"><span class="tm">12:40</span><span class="kind err">инцидент</span><span class="sum">reviewer: 3 перезапуска/час → передано вам</span></div>
+      <div class="act-row"><span class="tm">12:33</span><span class="kind tool">действие</span><span class="sum">перезапуск reviewer (попытка 3) — снова OOM</span></div>
+      <div class="act-row"><span class="tm">12:11</span><span class="kind tool">действие</span><span class="sum">перезапуск reviewer (попытка 2)</span></div>
+      <div class="act-row"><span class="tm">11:58</span><span class="kind think">сессия</span><span class="sum">надзор #18: разбор падения reviewer, лог приложен ▾</span></div>
+      <div class="act-row"><span class="tm">09:02</span><span class="kind ok">действие</span><span class="sum">runner devops не отвечал 5 мин — перезапущен, задача не пострадала</span></div>
+    </div>
+    <div class="logbox">[12:33:10] session reviewer exited code 137 (OOM) after 4m12s
+[12:33:10] restart attempt 3/3 in 1h window
+[12:40:02] escalation: restart budget exhausted → needs operator</div>
+
+    <div class="sect-h">Правила и лимиты</div>
+    <div class="panel2" style="padding:14px 16px">
+      <div class="kv"><span class="k">перезапусков в час, потом — эскалация</span><span class="v"><input value="3" style="width:56px;text-align:right;font:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 6px"></span></div>
+      <div class="kv"><span class="k">не отвечает, минут → перезапуск</span><span class="v"><input value="5" style="width:56px;text-align:right;font:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 6px"></span></div>
+      <div class="kv"><span class="k">сессий надзора в час, макс</span><span class="v"><input value="4" style="width:56px;text-align:right;font:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 6px"></span></div>
+      <div class="kv"><span class="k">бюджет надзора на день, $</span><span class="v"><input value="2" style="width:56px;text-align:right;font:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 6px"></span></div>
+      <div style="margin-top:10px"><button class="small">Сохранить</button></div>
+    </div>
+
+    <div class="sect-h">Инструменты надзора</div>
+    <div class="panel2" style="padding:10px 16px;font-size:13px">
+      <div class="kv"><span>перезапуск runner'ов</span><input type="checkbox" checked style="width:auto"></div>
+      <div class="kv"><span>остановка зависших сессий</span><input type="checkbox" checked style="width:auto"></div>
+      <div class="kv"><span>правка инструкций агентов</span><input type="checkbox" style="width:auto"></div>
+      <div class="kv"><span>отмена задач</span><input type="checkbox" style="width:auto"></div>
+    </div>
+  </div>
+</main>
+</div>
+</body>
+</html>

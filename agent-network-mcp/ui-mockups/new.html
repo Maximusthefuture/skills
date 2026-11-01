@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Новая задача — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="search"><input placeholder="Поиск по задачам…"></div>
+  <div class="side-nav">
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+  </div>
+  <div class="side-label">Задачи<span class="plus">＋</span></div>
+  <a class="chat-item" href="task.html">
+    <span class="dot ok"></span>
+    <span class="col"><span class="nm">Отмена заказа: POST /orders/{id}/cancel</span>
+    <span class="pv">проверка, раунд 1 · backend 3/5</span></span>
+    <span class="tm">14:32</span>
+  </a>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+    <button class="icon-btn" title="Настройки" onclick="location.href='settings.html'">⚙</button>
+  </div>
+</aside>
+
+<main>
+  <div class="wrap">
+    <h1 class="page-h">Что сделать?</h1>
+    <p class="page-sub">Опишите своими словами или вставьте тикет — детали заполнит агент.</p>
+
+    <div class="newbox">
+      <textarea placeholder="Например: частичный возврат заказа по сумме; письмо клиенту после возврата…" autofocus></textarea>
+      <div class="hint">
+        <button class="hint-chip">Отмена заказа через API</button>
+        <button class="hint-chip">Миграция: таблица refunds</button>
+        <button class="hint-chip">Починить падающий тест оплаты</button>
+      </div>
+    </div>
+
+    <details class="adv">
+      <summary>Настройки · lead backend · стандартная глубина · без лимита</summary>
+      <div class="in">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+          <label>Ведёт задачу
+            <select><option>backend</option><option>reviewer</option></select></label>
+          <label>Участники
+            <select><option>reviewer</option><option>reviewer + devops</option></select></label>
+          <label>Глубина
+            <select><option>быстро</option><option selected>стандарт</option><option>тщательно</option></select></label>
+          <label>Лимит, $
+            <input type="number" placeholder="без лимита"></label>
+        </div>
+      </div>
+    </details>
+
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="cta">Создать задачу</button>
+      <button class="ghost">Сначала черновик от агента</button>
+    </div>
+  </div>
+</main>
+</div>
+</body>
+</html>

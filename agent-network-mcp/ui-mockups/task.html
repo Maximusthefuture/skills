@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Отмена заказа · T-14 — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="search"><input placeholder="Поиск по задачам…"></div>
+  <div class="side-nav">
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+  </div>
+  <div class="side-label">Задачи<span class="plus" title="Новая задача" onclick="location.href='new.html'">＋</span></div>
+  <a class="chat-item" href="task.html">
+    <span class="dot warn"></span>
+    <span class="col"><span class="nm">Частичный возврат заказа по сумме</span>
+    <span class="pv">ждёт ответа: какой шаблон письма?</span></span>
+    <span class="nudge">вы</span>
+  </a>
+  <a class="chat-item on" href="task.html">
+    <span class="dot ok"></span>
+    <span class="col"><span class="nm">Отмена заказа: POST /orders/{id}/cancel</span>
+    <span class="pv">проверка, раунд 1 · backend 3/5</span></span>
+    <span class="tm">14:32</span>
+  </a>
+  <a class="chat-item" href="task.html" style="opacity:.55">
+    <span class="dot"></span>
+    <span class="col"><span class="nm">Прогреть кэш каталога после деплоя</span>
+    <span class="pv">принята · влита в проект</span></span>
+    <span class="tm">вчера</span>
+  </a>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+    <button class="icon-btn" title="Настройки" onclick="location.href='settings.html'">⚙</button>
+  </div>
+</aside>
+
+<main>
+  <div class="chat-head">
+    <div class="wrap2">
+      <a class="back" href="index.html">←</a>
+      <div style="flex:1;min-width:0">
+        <h1>Отмена заказа: POST /orders/{id}/cancel</h1>
+        <div class="sub"><span class="badge acc">Проверка · раунд 1/3</span><span>backend · reviewer</span><span>$2.41</span></div>
+      </div>
+      <button class="ghost small" onclick="location.href='diff.html'">Diff</button>
+      <button class="ghost small" onclick="location.href='details.html'">Подробности</button>
+      <button class="menu-btn" title="Ещё: влить в проект · остановить · отменить">⋯</button>
+    </div>
+    <div class="wrap2"><div class="pbar" style="margin-top:10px"><i style="width:78%"></i></div></div>
+  </div>
+
+  <div class="chat-body">
+    <div class="daydiv">Согласование · 13:10</div>
+
+    <div class="msg">
+      <span class="av">B</span>
+      <div class="bubble">
+        <div class="who2">backend · ведёт задачу</div>
+        <div class="txt">Прочитал задачу и код заказов. Предлагаю: я делаю API и сервис отмены (NEW и PAID, событие OrderCancelled), reviewer пишет интеграционные тесты.</div>
+        <div class="tm2">13:12</div>
+      </div>
+    </div>
+
+    <div class="action-card">
+      <h4>Соглашение <span class="badge ok">одобрено всеми</span></h4>
+      <p>backend → <code>src/orders/**</code> · reviewer → <code>src/test/orders/**</code></p>
+      <div class="opts"><button class="ghost small">Целиком</button></div>
+    </div>
+
+    <div class="daydiv">Выполнение · 13:20</div>
+
+    <div class="progress-card">
+      <b>Подзадачи — 3 из 5</b>
+      <div class="row"><span class="nm">backend</span><div class="pbar" style="flex:1"><i style="width:66%"></i></div><span class="st">▶ OrderCancelled</span></div>
+      <div class="row"><span class="nm">reviewer</span><div class="pbar" style="flex:1"><i style="width:50%"></i><i class="b" style="width:0%"></i></div><span class="st">тест на PAID</span></div>
+    </div>
+
+    <div class="msg me">
+      <span class="av">Вы</span>
+      <div class="bubble">
+        <div class="who2">Вы → lead'у backend</div>
+        <div class="txt">При PAID обязательно письмо клиенту об отмене.</div>
+        <div class="tm2">13:41 · ✓ получил backend</div>
+      </div>
+    </div>
+
+    <div class="msg">
+      <span class="av">B</span>
+      <div class="bubble">
+        <div class="who2">backend · вопрос · отвечено</div>
+        <div class="txt">Куда писать событие — в тот же топик orders-events?</div>
+        <div class="qchips"><span class="badge lime">вы выбрали: да, в orders-events</span></div>
+        <div class="tm2">13:40</div>
+      </div>
+    </div>
+
+    <div class="msg">
+      <span class="av">B</span>
+      <div class="bubble">
+        <div class="who2">backend</div>
+        <div class="txt">Принял, добавил подзадачу «письмо при отмене PAID».</div>
+        <div class="tm2">13:42</div>
+      </div>
+    </div>
+
+    <div class="daydiv">Проверка · 14:32</div>
+
+    <div class="action-card">
+      <h4>Ревью раунда 1 <span class="badge ok">PASS</span></h4>
+      <p>Дефектов нет; 2 замечания INFO — имя метода и лишний лог. Дальше — сведение результата.</p>
+      <div class="opts"><button class="ghost small">Отчёт ревью</button></div>
+    </div>
+
+    <div class="msg">
+      <span class="av rv">R</span>
+      <div class="bubble">
+        <div class="who2">reviewer</div>
+        <div class="txt">Смотрю diff после последнего коммита backend…</div>
+        <div class="tm2">только что</div>
+      </div>
+    </div>
+
+    <div class="msg">
+      <span class="av">B</span>
+      <div class="bubble">
+        <div class="who2">backend · вопрос вам</div>
+        <div class="txt">Письмо при отмене PAID — отправлять сразу в транзакции или через outbox? В проекте уже есть outbox для OrderPaid, рекомендую его же.</div>
+        <div class="qchips">
+          <button class="qchip rec">через outbox</button>
+          <button class="qchip">сразу в транзакции</button>
+          <button class="qchip">обсудить…</button>
+        </div>
+        <div class="tm2">ждёт · без ответа выберет «outbox» в 15:10</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="box">
+      <textarea rows="1" placeholder="Написать lead'у backend…"></textarea>
+      <button class="ghost small" title="Срочно: прервёт текущую сессию lead'а и доставит сразу. Иначе прочитает при следующем ответе.">⚡</button>
+      <button title="Ctrl+Enter">Отправить</button>
+    </div>
+    <div style="max-width:720px;margin:6px auto 0;font-size:11px;color:var(--muted)">Пишется lead'у — остальные получают через него · черновик сохраняется сам · ⚡ — срочно, прерывает сессию</div>
+  </div>
+</main>
+</div>
+</body>
+</html>

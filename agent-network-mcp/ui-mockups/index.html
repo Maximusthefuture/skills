@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Network — Нужно мне</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="search"><input placeholder="Поиск по задачам…"></div>
+  <div class="side-nav">
+    <a class="on" href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+  </div>
+  <div class="side-label">Задачи<span class="plus" title="Новая задача" onclick="location.href='new.html'">＋</span></div>
+  <a class="chat-item" href="task.html">
+    <span class="dot warn"></span>
+    <span class="col"><span class="nm">Частичный возврат заказа по сумме</span>
+    <span class="pv">ждёт ответа: какой шаблон письма?</span></span>
+    <span class="nudge">вы</span>
+  </a>
+  <a class="chat-item" href="task.html">
+    <span class="dot bad"></span>
+    <span class="col"><span class="nm">Метрики отказов оплаты</span>
+    <span class="pv">остановлена: лимит $10</span></span>
+    <span class="nudge">вы</span>
+  </a>
+  <a class="chat-item" href="task.html">
+    <span class="dot ok"></span>
+    <span class="col"><span class="nm">Отмена заказа: POST /orders/{id}/cancel</span>
+    <span class="pv">проверка, раунд 1 · backend 3/5</span></span>
+    <span class="tm">14:32</span>
+  </a>
+  <a class="chat-item" href="task.html" style="opacity:.55">
+    <span class="dot"></span>
+    <span class="col"><span class="nm">Прогреть кэш каталога после деплоя</span>
+    <span class="pv">принята · влита в проект</span></span>
+    <span class="tm">вчера</span>
+  </a>
+  <div class="side-label">Ещё</div>
+  <div class="side-nav">
+    <a href="agents.html"><span class="ic">◐</span>Агенты<span class="c mut">2/3</span></a>
+    <a href="history.html"><span class="ic">▦</span>Архив и история</a>
+  </div>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+    <button class="icon-btn" title="Настройки" onclick="location.href='settings.html'">⚙</button>
+  </div>
+</aside>
+
+<main>
+  <div class="wrap">
+    <h1 class="page-h">Нужно ваше решение</h1>
+    <p class="page-sub">Три вещи ждут вас. Остальное агенты делают сами.</p>
+
+    <div class="need q">
+      <div class="k">Вопрос · T-12 · ждёт 40 мин</div>
+      <h3>Какой шаблон письма после частичного возврата?</h3>
+      <div class="body">В коде два шаблона. «refund-partial» содержит строку про сумму — lead рекомендует его.</div>
+      <div class="opts">
+        <button class="ghost rec">refund-partial</button>
+        <button class="ghost">refund-full</button>
+        <button class="ghost">без письма</button>
+        <button class="ghost small">Своё…</button>
+      </div>
+      <div class="meta">Без ответа агент выберет рекомендацию <b>в 12:45</b></div>
+    </div>
+
+    <div class="need accept">
+      <div class="k">Приёмка · T-14</div>
+      <h3>«Отмена заказа» готова</h3>
+      <div class="body">3 критерия из 3 подтверждены тестами, сборка зелёная. Расход $2.41 · 6 сессий.</div>
+      <div class="opts">
+        <button class="cta">Принять</button>
+        <button class="ghost">Критерии</button>
+        <button class="ghost">Замечания к коду</button>
+      </div>
+    </div>
+
+    <div class="need blocked">
+      <div class="k">Остановлена · T-09 · лимит стоимости</div>
+      <h3>«Метрики отказов оплаты» уперлась в лимит $10</h3>
+      <div class="body">Потрачено $10.02 из $10. Два раунда исправлений без прогресса: тест падает на timezone.</div>
+      <div class="opts">
+        <button class="cta">Добавить $5</button>
+        <button class="ghost">+$2</button>
+        <button class="ghost">+$10</button>
+        <button class="ghost">Своя сумма…</button>
+        <button class="ghost">Отменить задачу</button>
+      </div>
+    </div>
+
+    <div class="need blocked">
+      <div class="k">Остановлена · T-07 · runner сдался · <span class="count">решить до 14:15 (38 мин)</span></div>
+      <h3>«Прогрев кэша»: runner reviewer сдался — 3 перезапуска, падает на OOM</h3>
+      <div class="body">Диагностика надзора: сессия падает на чтении большого лога, похоже на лимит памяти CLI. <a href="history.html">Лог и 3 попытки →</a></div>
+      <div class="opts">
+        <button class="cta">Попробовать снова</button>
+        <button class="ghost">Отдать lead'у сейчас</button>
+        <button class="ghost">Отложить, взять следующую</button>
+        <button class="ghost">Отменить</button>
+      </div>
+      <div class="meta">Если не решить до <b>14:15</b>, исправление возьмёт lead backend</div>
+    </div>
+
+    <div class="need blocked">
+      <div class="k">Остановлена · T-05 · кончились раунды исправлений (3/3)</div>
+      <h3>«Валидация корзины»: ревью снова нашло ошибку</h3>
+      <div class="body">Раунд 3 закончился NEEDS_FIX: граничный случай с пустой корзиной. Можно дать ещё раундов или закрыть.</div>
+      <div class="opts">
+        <button class="cta">+1 раунд</button>
+        <button class="ghost">+2</button>
+        <button class="ghost">+3</button>
+        <button class="ghost">Отдать lead'у</button>
+        <button class="ghost">Отложить, взять следующую</button>
+        <button class="ghost">Отменить</button>
+      </div>
+    </div>
+
+    <div class="sect-h">Что происходит <span class="n">живое</span></div>
+    <div>
+      <div class="feed-item"><span class="tm">14:32</span><span class="who">reviewer</span><span>ревью T-14, раунд 1: PASS, 2 замечания INFO</span></div>
+      <div class="feed-item"><span class="tm">14:18</span><span class="who">backend</span><span>T-14 · «маппинг OrderCancelled» готова (3/5)</span></div>
+      <div class="feed-item"><span class="tm">13:57</span><span class="who">lead</span><span>T-14 · соглашение одобрено всеми</span></div>
+      <div class="feed-item"><span class="tm">12:05</span><span class="who">lead</span><span>T-12 · спрашивает про шаблон письма</span></div>
+      <div class="feed-item"><span class="tm">11:40</span><span class="who">система</span><span>T-09 остановлена: лимит $10</span></div>
+    </div>
+  </div>
+</main>
+</div>
+</body>
+</html>

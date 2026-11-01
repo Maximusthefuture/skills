@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Архив и история — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="search"><input placeholder="Поиск по задачам…"></div>
+  <div class="side-nav">
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+  </div>
+  <div class="side-label">Ещё</div>
+  <div class="side-nav">
+    <a href="agents.html"><span class="ic">◐</span>Агенты<span class="c mut">2/3</span></a>
+    <a class="on" href="history.html"><span class="ic">▦</span>Архив и история</a>
+  </div>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+    <button class="icon-btn" title="Настройки" onclick="location.href='settings.html'">⚙</button>
+  </div>
+</aside>
+
+<main>
+  <div class="wrap" style="max-width:900px">
+    <h1 class="page-h">Архив и история</h1>
+    <p class="page-sub">Что делали агенты, сколько стоили сессии, что происходило в задачах.</p>
+
+    <div class="tabs2">
+      <a class="on" href="history.html">Действия агентов</a>
+      <a href="history.html#sessions">Сессии и расход</a>
+      <a href="history.html#events">События задач</a>
+    </div>
+
+    <div class="filters2">
+      <select><option>все типы</option><option>tool_use</option><option>text</option><option>thinking</option><option>ошибки</option></select>
+      <select><option>все агенты</option><option>backend</option><option>reviewer</option></select>
+      <select><option>все задачи</option><option>T-14</option><option>T-12</option></select>
+      <input placeholder="поиск: команда, файл, текст">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)"><input type="checkbox" checked style="width:auto">следить</label>
+    </div>
+
+    <div class="panel2">
+      <div class="ph2">Лента <span class="end">новые сверху · 128 записей</span></div>
+      <div class="act-row"><span class="tm">14:32</span><span class="kind tool">tool_use</span><span class="sum">backend · Read src/orders/OrderService.java</span></div>
+      <div class="act-row"><span class="tm">14:31</span><span class="kind ok">tool_result</span><span class="sum">backend · BUILD SUCCESS — Tests run: 42, Failures: 0</span></div>
+      <div class="act-row"><span class="tm">14:30</span><span class="kind think">thinking</span><span class="sum">reviewer · проверяю граничный случай с пустой корзиной…</span></div>
+      <div class="act-row"><span class="tm">14:28</span><span class="kind tool">tool_use</span><span class="sum">reviewer · Bash ./mvnw -pl orders test</span></div>
+      <div class="act-row"><span class="tm">14:26</span><span class="kind">text</span><span class="sum">backend · добавил подзадачу «письмо при отмене PAID»</span></div>
+      <div class="act-row"><span class="tm">14:24</span><span class="kind err">stderr</span><span class="sum">reviewer · warning: deprecated API в OrderDto</span></div>
+      <div class="act-row"><span class="tm">14:20</span><span class="kind tool">tool_use</span><span class="sum">backend · Edit src/orders/CancelController.java</span></div>
+    </div>
+    <div style="margin-top:10px;font-size:12px;color:var(--muted)">Нажмите на строку, чтобы раскрыть детали · загружается окном по 50, «показать раньше» выше</div>
+
+    <h2 class="sect-h" id="sessions">Сессии и расход</h2>
+    <div class="filters2">
+      <select><option>все агенты</option></select>
+      <select><option>все задачи</option></select>
+      <select><option>все модели</option></select>
+      <select><option>все статусы</option></select>
+    </div>
+    <table class="tbl">
+      <tr><th>Агент</th><th>Задача</th><th>Модель</th><th>Длит.</th><th>Токены</th><th>Стоимость</th><th>Статус</th></tr>
+      <tr><td>backend</td><td class="mono">T-14</td><td class="mono">claude-sonnet-4.5</td><td class="mono">31м</td><td class="mono">412k / 38k</td><td class="mono">$1.12</td><td><span class="badge lime">работает</span></td></tr>
+      <tr><td>reviewer</td><td class="mono">T-14</td><td class="mono">claude-sonnet-4.5</td><td class="mono">18м</td><td class="mono">118k / 12k</td><td class="mono">$0.31</td><td><span class="badge ok">готова</span></td></tr>
+      <tr><td>backend</td><td class="mono">T-12</td><td class="mono">claude-sonnet-4.5</td><td class="mono">44м</td><td class="mono">590k / 51k</td><td class="mono">$1.64</td><td><span class="badge ok">готова</span></td></tr>
+    </table>
+    <div style="margin-top:8px;font-size:12px;color:var(--muted)">Итого за 24ч: 6 сессий · $3.07 (2 без цены — модель не в prices)</div>
+
+    <h2 class="sect-h" id="events">События задач</h2>
+    <div class="filters2"><select><option>все задачи</option></select><select><option>все типы</option></select></div>
+    <div class="panel2">
+      <div class="act-row"><span class="tm">14:32</span><span class="kind ok">T-14</span><span class="sum">фаза: Выполнение → Проверка (раунд 1)</span></div>
+      <div class="act-row"><span class="tm">13:57</span><span class="kind">T-14</span><span class="sum">agreement одобрен всеми</span></div>
+      <div class="act-row"><span class="tm">12:05</span><span class="kind tool">T-12</span><span class="sum">вопрос оператору: шаблон письма</span></div>
+      <div class="act-row"><span class="tm">11:40</span><span class="kind err">T-09</span><span class="sum">BLOCKED: лимит стоимости $10</span></div>
+    </div>
+  </div>
+</main>
+</div>
+</body>
+</html>

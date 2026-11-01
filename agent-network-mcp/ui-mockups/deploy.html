@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Публикация — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="side-nav">
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+  </div>
+  <div class="side-label">Настройки</div>
+  <div class="side-nav">
+    <a href="supervisor.html"><span class="ic">◔</span>Надзор</a>
+    <a href="observer.html"><span class="ic">◈</span>Наблюдатель</a>
+    <a class="on" href="deploy.html"><span class="ic">⇪</span>Публикация</a>
+    <a href="schedules.html"><span class="ic">◷</span>Расписания</a>
+    <a href="projects.html"><span class="ic">▣</span>Проекты</a>
+    <a href="settings.html"><span class="ic">⚙</span>Все настройки</a>
+  </div>
+  <div class="side-foot"><span class="who"><span class="me">M</span>Maximus</span></div>
+</aside>
+
+<main>
+  <div class="wrap" style="max-width:900px">
+    <h1 class="page-h">Публикация</h1>
+    <p class="page-sub">Влитая задача → ветка в Bitbucket → job в Jenkins → проверка в Kubernetes. Запускаете только вы.</p>
+
+    <div class="sect-h">Влитые задачи <span class="n">4</span></div>
+    <div class="filters2">
+      <select><option>все</option><option>не отправлены</option><option>в ветке</option><option>идёт раскатка</option><option>на стенде</option><option>ошибка</option></select>
+    </div>
+    <table class="tbl">
+      <tr><th>Задача</th><th>Состояние</th><th>Коммит</th><th></th></tr>
+      <tr>
+        <td><b>T-11</b> · Прогреть кэш каталога</td>
+        <td><span class="badge warn">в ветке, ждёт</span><div class="mono" style="font-size:11.5px;color:var(--muted)">feature/t11-cache-warm</div></td>
+        <td class="mono">e91b2c4</td>
+        <td><button class="cta small">Раскатить…</button></td>
+      </tr>
+      <tr style="background:var(--bg)">
+        <td colspan="4">
+          <div style="padding:6px 0 10px">
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+              <span style="font-size:13px">Окружение</span>
+              <select style="font:inherit;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px"><option>staging</option><option>prod</option></select>
+              <span style="font-size:12px;color:var(--muted)">ветка по шаблону feature/* → remote origin</span>
+            </div>
+            <b style="font-size:13px">Для раскатки</b>
+            <div class="panel2" style="margin-top:8px">
+              <table class="tbl" style="border:0">
+                <tr><th>Свойство</th><th>Переменная</th><th>Обязательно</th><th>staging</th><th>prod</th></tr>
+                <tr><td class="mono">cache.warm.batch</td><td class="mono">CACHE_WARM_BATCH</td><td>нет</td><td>✓</td><td>✓</td></tr>
+                <tr><td class="mono">cache.warm.enabled</td><td class="mono">CACHE_WARM_ENABLED</td><td>да</td><td>✓</td><td style="color:var(--bad)">✗ нет</td></tr>
+              </table>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-top:8px">Миграций нет · топиков Kafka нет · внешних адресов нет. В prod не задано обязательное CACHE_WARM_ENABLED — сервис не стартует.</div>
+            <div style="margin-top:10px;display:flex;gap:8px">
+              <button class="cta small">Отправить в Bitbucket и раскатить на staging</button>
+              <button class="ghost small">Скрыть</button>
+            </div>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td><b>T-08</b> · Метрики корзины</td>
+        <td><span class="badge ok">на стенде: staging</span></td>
+        <td class="mono">77aa01d</td>
+        <td></td>
+      </tr>
+      <tr>
+        <td><b>T-06</b> · Таймаут оплаты 30s</td>
+        <td><span class="badge ok">на стенде: staging, prod</span></td>
+        <td class="mono">c3d88f0</td>
+        <td></td>
+      </tr>
+      <tr>
+        <td><b>T-04</b> · Ретраи вебхуков</td>
+        <td><span class="badge bad">ошибка раскатки</span><div class="mono" style="font-size:11.5px;color:var(--muted)">jenkins #412 · k8s: CrashLoopBackOff</div></td>
+        <td class="mono">9f0b1e2</td>
+        <td><button class="ghost small">Лог</button></td>
+      </tr>
+    </table>
+
+    <div class="sect-h">Прогоны <span class="n">3</span></div>
+    <table class="tbl">
+      <tr><th>Прогон</th><th>Окружение</th><th>Шаги</th><th>Статус</th></tr>
+      <tr><td class="mono">T-08 → staging</td><td>staging</td><td class="mono">✓ для раскатки · ✓ push · ✓ jenkins · ✓ kubernetes</td><td><span class="badge ok">готово</span></td></tr>
+      <tr><td class="mono">T-04 → staging</td><td>staging</td><td class="mono">✓ для раскатки · ✓ push · ✓ jenkins · ✗ kubernetes</td><td><span class="badge bad">ошибка</span> <button class="ghost small">Отменить</button></td></tr>
+      <tr><td class="mono">T-06 → prod</td><td>prod</td><td class="mono">✓✓✓✓</td><td><span class="badge ok">готово</span></td></tr>
+    </table>
+
+    <div class="sect-h">Настройки</div>
+    <details class="adv">
+      <summary>Bitbucket · Jenkins · Kubernetes</summary>
+      <div class="in">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+          <label>Remote Bitbucket<input value="origin"></label>
+          <label>Шаблон ветки<input value="feature/{task}-{slug}"></label>
+          <label>Jenkins MCP (адрес)<input value="https://jenkins.local/mcp"></label>
+          <label>Job по умолчанию<input value="shop-backend-deploy"></label>
+          <label>Kube-context staging<input value="k8s-staging"></label>
+          <label>Kube-context prod<input value="k8s-prod"></label>
+        </div>
+        <div style="font-size:12px;color:var(--muted)">Секреты — через ${ИМЯ} из окружения сервера страницы, в файл не пишутся.</div>
+        <div><button class="small">Сохранить</button></div>
+      </div>
+    </details>
+  </div>
+</main>
+</div>
+</body>
+</html>

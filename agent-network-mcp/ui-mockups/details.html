@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Подробности · T-14 — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+<style>.underlay{filter:blur(2px);opacity:.5;pointer-events:none;min-height:100vh}</style>
+</head>
+<body>
+<!-- фон: страница задачи приглушена; drawer справа -->
+<div class="underlay app">
+  <aside>
+    <div class="side-top"><span class="logo">◆</span><span class="projname">shop-backend<small>main · a3f9c1e</small></span></div>
+    <div class="side-label">Задачи</div>
+    <a class="chat-item on"><span class="dot ok"></span><span class="col"><span class="nm">Отмена заказа</span><span class="pv">проверка, раунд 1</span></span></a>
+  </aside>
+  <main><div class="wrap"><h1 class="page-h">Отмена заказа: POST /orders/{id}/cancel</h1></div></main>
+</div>
+
+<div class="drawer">
+  <div class="dhead">
+    <a class="back" href="task.html">←</a>
+    <h2>Подробности · T-14</h2>
+    <button class="ghost small" onclick="location.href='diff.html'">Diff</button>
+  </div>
+  <div class="dbody">
+
+    <div class="dsec">
+      <h3>Фазы</h3>
+      <div class="phase-tl">
+        <span class="seg past">Согласов. 22м</span>
+        <span class="seg past">Выполн. 1ч04м</span>
+        <span class="seg now">Проверка ▸</span>
+        <span class="seg">Сведение</span>
+        <span class="seg">Готово</span>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted)">Раунд проверки 1 из 3 · без исправлений пока</div>
+    </div>
+
+    <div class="dsec">
+      <h3>Расход</h3>
+      <div class="kv"><span class="k">Всего по задаче</span><span class="v">$2.41</span></div>
+      <div class="costbar"><i style="width:24%"></i></div>
+      <div style="font-size:11.5px;color:var(--muted)">лимит не задан · $2.41 из ∞</div>
+      <div class="kv" style="margin-top:6px"><span class="k">backend · 4 сессии</span><span class="v">$1.87 · 412k ток. (38k out)</span></div>
+      <div class="kv"><span class="k">reviewer · 2 сессии</span><span class="v">$0.54 · 118k ток. (12k out)</span></div>
+      <div class="kv"><span class="k">кэш попаданий</span><span class="v">71%</span></div>
+      <div class="kv"><span class="k">критик плана</span><span class="v">$0.03</span></div>
+    </div>
+
+    <div class="dsec">
+      <h3>Коммиты <a href="diff.html" style="font-weight:400">diff →</a></h3>
+      <div class="commit"><span class="h">a3f9c1e</span><span class="m">orders: cancel endpoint + OrderCancelled event</span><span class="t">13:58</span></div>
+      <div class="commit"><span class="h">b21d7aa</span><span class="m">orders: письмо при отмене PAID через outbox</span><span class="t">14:11</span></div>
+      <div class="commit"><span class="h">c04e2f9</span><span class="m">tests: cancel NEW/PAID интеграционные</span><span class="t">14:26</span></div>
+    </div>
+
+    <div class="dsec">
+      <h3>OpenSpec</h3>
+      <div class="kv"><span class="k">change</span><span class="v">add-order-cancel</span></div>
+      <div class="kv"><span class="k">отмечено в папке</span><span class="v">7 / 9 задач</span></div>
+      <div class="kv"><span class="k">backend</span><span class="v">1–6 · сделано 1–5</span></div>
+      <div class="kv"><span class="k">reviewer</span><span class="v">7–9 · сделано 7</span></div>
+    </div>
+
+    <div class="dsec">
+      <h3>Добавлены lead'ом</h3>
+      <div class="commit"><span class="h" style="color:var(--ok)">●</span><span class="m"><b>test-runner</b> · шаблон qwen · «нагрузочный прогон отмены»</span><span class="t">14:02</span></div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:4px">работает · роль «load-tester» из библиотеки</div>
+    </div>
+
+    <div class="dsec">
+      <h3>Замечания к коду</h3>
+      <div class="review-item open"><span class="st2">открыто</span> · <span class="mono" style="font-size:11px">OrderService.java:142</span><div>пустая корзина: NPE при cancel без позиций?</div></div>
+      <div class="review-item fixed"><span class="st2">исправлено</span> · <span class="mono" style="font-size:11px">CancelController.java:31</span><div>статус 409, а не 400 при PAID→CANCEL<div class="note2">lead: поправил в b21d7aa</div></div></div>
+    </div>
+
+    <div class="dsec">
+      <h3>Скиллы в этой задаче</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="badge">spring-boot</span><span class="badge">openspec</span><span class="badge lime">▶ test-containers</span></div>
+    </div>
+
+    <div class="dsec">
+      <h3>Цепочка</h3>
+      <div style="font-size:12.5px">Follow-up задач: 0 из 2 · поручений нет</div>
+    </div>
+
+    <div class="dsec">
+      <h3>Последняя активность <a href="history.html" style="font-weight:400">вся лента →</a></h3>
+      <div class="act-row"><span class="tm">14:32</span><span class="kind tool">tool_use</span><span class="sum">Read src/orders/OrderService.java</span></div>
+      <div class="act-row"><span class="tm">14:31</span><span class="kind ok">tool_result</span><span class="sum">BUILD SUCCESS · 42 tests</span></div>
+      <div class="act-row"><span class="tm">14:30</span><span class="kind think">thinking</span><span class="sum">проверяю граничный случай с пустой корзиной…</span></div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
