@@ -20,7 +20,7 @@ export const PAGE2_HTML = String.raw`<!doctype html>
   --lime:#C8F169; --lime-deep:#9BC53D; --lime-soft:#EFF9D9; --lime-text:#5C7A1E;
   --ok:#3FA972; --ok-soft:#E3F3EA;
   --warn:#D29A2E; --warn-soft:#F8EFD9;
-  --bad:#DC5A55; --bad-soft:#F9E6E4;
+  --bad:#DC5A55; --bad-soft:#F9E6E4; --bad-text:#8F3A34;
   --violet:#8B7CF6;
   --radius:12px; --radius-s:8px;
   --shadow:0 1px 2px rgba(32,33,31,.05),0 6px 20px rgba(32,33,31,.05);
@@ -92,31 +92,37 @@ main{padding:0;min-width:0;display:flex;flex-direction:column}
 .wrap{max-width:720px;width:100%;margin:0 auto;padding:36px 28px 80px}
 .page-h{font:650 26px/1.25 var(--font);letter-spacing:-.02em;margin:0 0 4px}
 .page-sub{color:var(--muted);margin:0 0 26px;font-size:13.5px}
-.coord-guide{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:0 0 22px}
+.coord-wrap{display:flex;flex-direction:column;height:100vh;height:100dvh;padding-bottom:24px}
+#coord-statusbar{flex:none;margin:0 0 12px}
+.coord-guide-det{margin:0 0 4px;font-size:13px;flex:none}
+.coord-guide-det>summary{cursor:pointer;color:var(--muted);font-size:12.5px;padding:5px 0;user-select:none}
+.coord-guide-det>summary:hover{color:var(--text)}
+.coord-guide{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:10px 0 12px}
 .coord-step{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:12px 13px;min-width:0}
 .coord-step b{display:block;font-size:12.5px;margin-bottom:4px}
 .coord-step span{display:block;color:var(--muted);font-size:12px;line-height:1.45}
-.coord-compose{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px;margin-top:8px}
+#project-chat-history{flex:1;min-height:140px;overflow-y:auto;padding:12px 2px 4px;scrollbar-gutter:stable}
+.coord-compose{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px;margin-top:12px;flex:none}
 .coord-compose label{display:block;font-size:13px;font-weight:600;margin-bottom:7px}
-.coord-compose textarea{min-height:90px}
+.coord-compose textarea{min-height:76px}
 .coord-status{font-size:12.5px;color:var(--muted);margin:0 0 12px}
 .coord-proposal{border:1px solid var(--violet);border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow);padding:16px 18px;margin:0 0 12px}
 .coord-proposal .coord-status{margin:10px 0}
-.coord-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;margin:0 0 18px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.coord-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 .coord-toolbar .coord-status{margin:0}
 .coord-thread{display:grid;gap:14px;margin:0 0 14px}
 .coord-turn{display:grid;gap:8px}
-.coord-bubble{max-width:92%;border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:12px 15px;box-shadow:var(--shadow)}
+.coord-bubble{max-width:88%;border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:12px 15px;box-shadow:var(--shadow)}
 .coord-bubble.user{justify-self:end;background:#F0F5E5;border-color:#D9E7BD;border-bottom-right-radius:4px;color:#20211F}
 .coord-bubble.user .coord-meta{color:#667248}
 .coord-bubble.assistant{justify-self:start;border-bottom-left-radius:4px}
 .coord-meta{font-size:11px;font-weight:650;color:var(--muted);margin-bottom:4px}
 .coord-message{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .coord-result{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
-.coord-error{border-left:3px solid var(--bad);background:var(--bad-soft);padding:9px 11px;border-radius:0 8px 8px 0;color:#853B37}
+.coord-error{border-left:3px solid var(--bad);background:var(--bad-soft);padding:9px 11px;border-radius:0 8px 8px 0;color:var(--bad-text)}
 .coord-error p{margin:0}
 .coord-error details{margin-top:6px;font-size:12px;color:var(--muted)}
-.coord-error pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.45 var(--mono);margin:6px 0 0}
+.coord-error pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.45 var(--mono);margin:6px 0 0;color:var(--text)}
 .coord-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .coord-section-title{font-size:14px;margin:22px 0 10px}
 .coord-empty{padding:14px;border:1px dashed var(--line);border-radius:11px;color:var(--muted);background:rgba(255,255,255,.5)}
@@ -549,7 +555,7 @@ pre.jlog{grid-column:1/-1;max-height:420px;margin:0;white-space:pre-wrap;font:11
     --lime:#C8F169; --lime-deep:#A8D24E; --lime-soft:#2A3316; --lime-text:#BFE06A;
     --ok:#6CC48E; --ok-soft:#1E2E24;
     --warn:#E0B054; --warn-soft:#332A15;
-    --bad:#E87B74; --bad-soft:#38211F;
+    --bad:#E87B74; --bad-soft:#38211F; --bad-text:#F0A8A2;
     --violet:#A99BF8;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25);
   }
@@ -1880,25 +1886,30 @@ function renderSettings(){
   main.replaceChildren(wrap)}
 
 /* ── диспетчер рендера ── */
-let projectChatRequest=0;
+let projectChatRequest=0;let coordStickBottom=true;
 function renderProject(){
   const main=$("main");
   const key=String(project||"");
   let wrap=$("project-chat");
   if(!wrap||wrap.dataset.project!==key){
-    wrap=el("div","wrap");wrap.id="project-chat";wrap.dataset.project=key;
+    wrap=el("div","wrap coord-wrap");wrap.id="project-chat";wrap.dataset.project=key;
     wrap.append(el("h1","page-h","Координатор проекта"),el("p","page-sub","Обсудите цель или попросите подготовить задачу для команды."));
+    const statusbar=el("div");statusbar.id="coord-statusbar";wrap.append(statusbar);
+    const guideDet=el("details","coord-guide-det");guideDet.id="coord-guide-det";
+    guideDet.append(el("summary","","Как это работает: 3 шага"));
     const guide=el("div","coord-guide");
     for(const [title,detail] of [["1. Опишите цель","Напишите, что нужно сделать. Например: «Создай задачу: добавь проверку файла…»"],["2. Проверьте предложение","Координатор покажет описание и выберет команду."],["3. Подтвердите создание","Задача появится только после нажатия «Подтвердить и создать задачу». До этого агенты не начинают работу."]]){
       const step=el("div","coord-step");step.append(el("b","",title),el("span","",detail));guide.append(step)}
-    wrap.append(guide);
-    const history=el("div");history.id="project-chat-history";history.setAttribute("aria-live","polite");wrap.append(history);
+    guideDet.append(guide);wrap.append(guideDet);
+    const history=el("div");history.id="project-chat-history";history.setAttribute("aria-live","polite");
+    history.onscroll=()=>{coordStickBottom=history.scrollHeight-history.scrollTop-history.clientHeight<90};wrap.append(history);
     const form=el("form","coord-compose");const label=el("label","","Сообщение координатору");label.htmlFor="project-chat-input";
     const input=el("textarea");input.id="project-chat-input";input.rows=4;input.style.width="100%";input.placeholder="Задайте вопрос или начните с «Создай задачу: …»";
     const draftKey="project-chat-draft:"+key;let pending;
     try{pending=JSON.parse(localStorage.getItem(draftKey)||"null")}catch(e){}
     input.value=pending?.content||"";
     input.oninput=()=>{pending={messageId:crypto.randomUUID(),content:input.value};localStorage.setItem(draftKey,JSON.stringify(pending))};
+    input.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();form.requestSubmit()}};
     const error=el("p","bad");error.id="project-chat-error";error.setAttribute("role","alert");input.setAttribute("aria-describedby",error.id);
     const send=el("button","btn","Отправить координатору");send.type="submit";
     form.append(label,input,send,error);wrap.append(form);
@@ -1944,9 +1955,11 @@ function renderProject(){
     history.dataset.signature=signature;
     const content=el("div");
     const queueNote=state.paused?"Обработка сообщений приостановлена.":state.coordinatorConfigured?"Координатор подключён. Сообщения обрабатываются по очереди.":"Координатор не подключён. Сообщения не будут обработаны, пока его не настроят.";
-    const toolbar=el("div","coord-toolbar");toolbar.append(el("p","coord-status",queueNote));
-    const pause=el("button","ghost small",state.paused?"Продолжить":"Приостановить");
-    pause.onclick=async()=>{try{await post("/api/project/pause",{paused:!state.paused});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};toolbar.append(pause);content.append(toolbar);
+    const statusbar=$("coord-statusbar");if(statusbar){statusbar.replaceChildren();
+      const toolbar=el("div","coord-toolbar");toolbar.append(el("p","coord-status",queueNote));
+      const pause=el("button","ghost small",state.paused?"Продолжить":"Приостановить");
+      pause.onclick=async()=>{try{await post("/api/project/pause",{paused:!state.paused});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};toolbar.append(pause);statusbar.append(toolbar)}
+    const guideDet=$("coord-guide-det");if(guideDet)guideDet.open=!state.messages.length;
     if(!state.messages.length)content.append(el("div","coord-empty","Напишите координатору ниже. Чтобы получить задачу на утверждение, начните сообщение с «Создай задачу:» и опишите результат."));
     const labels={queued:"В очереди",running:"Обрабатывает сообщение",succeeded:"Ответ",failed:"Не удалось ответить",cancelled:"Обработка отменена"};
     const thread=el("div","coord-thread");
@@ -2005,8 +2018,8 @@ function renderProject(){
       const title=label?.firstChild?.textContent?.trim()||node.textContent?.trim()||node.getAttribute("aria-label")||node.tagName;
       const base=[node.tagName,heading,title].join("|");const count=counts.get(base)||0;counts.set(base,count+1);node.dataset.pfocus=base+"|"+count}};
     markFocusables(history);const active=history.contains(document.activeElement)?document.activeElement:null;markFocusables(content);
-    const priorKey=active?.dataset.pfocus;const priorStart=typeof active?.selectionStart==="number"?active.selectionStart:null;const priorEnd=typeof active?.selectionEnd==="number"?active.selectionEnd:null;const scroll=history.scrollTop;
-    history.replaceChildren(content);history.scrollTop=scroll;
+    const priorKey=active?.dataset.pfocus;const priorStart=typeof active?.selectionStart==="number"?active.selectionStart:null;const priorEnd=typeof active?.selectionEnd==="number"?active.selectionEnd:null;const stick=coordStickBottom;
+    history.replaceChildren(content);if(stick)history.scrollTop=history.scrollHeight;
     if(priorKey){const replacement=[...history.querySelectorAll("[data-pfocus]")].find(node=>node.dataset.pfocus===priorKey);
       if(replacement){replacement.focus({preventScroll:true});if(priorStart!==null&&typeof replacement.setSelectionRange==="function")replacement.setSelectionRange(priorStart,priorEnd??priorStart)}}
   }).catch(e=>{const error=$("project-chat-error");if(error&&String(project||"")===key)error.textContent=e.message});
