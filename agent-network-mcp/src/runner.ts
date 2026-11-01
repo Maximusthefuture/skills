@@ -271,6 +271,8 @@ export interface RunnerOptions {
   onSession?: (session: RunningSession | null) => void;
   /** The sessions' activity as it comes (tool calls, results, text): the activity feed on the page. */
   onActivity?: (e: ActivityItem) => void;
+  /** Current context size reported by the CLI after a model call; null when a new session starts. */
+  onContext?: (tokens: number | null) => void;
   /** The operator's urgent messages: interrupt the current session and start the next one with the message first. */
   urgent?: UrgentChannel;
   /**
@@ -511,6 +513,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const sink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
     const startedAt = new Date();
     opts.onSession?.({ taskId: task.id, attempt, startedAt: startedAt.toISOString(), ...(model ? { model } : {}) });
+    opts.onContext?.(null);
     const wantsSystem = command.some((a) => a.includes("{systemPrompt}"));
     const systemText = wantsSystem ? (opts.systemPromptFile ? await readText(opts.systemPromptFile, "system prompt file", log) : undefined) : undefined;
     const system = wantsSystem ? renderPrompt(systemText?.trim() || FALLBACK_SYSTEM_PROMPT, vars) : undefined;
@@ -527,6 +530,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     let contextFull = 0;
     let contextEnded = false;
     const onContext = (tokens: number): void => {
+      opts.onContext?.(tokens);
       if (opts.maxContextTokens && tokens > opts.maxContextTokens && !contextFull) contextFull = tokens;
     };
     const skills: string[] = [];

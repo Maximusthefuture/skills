@@ -137,6 +137,22 @@ describe("runners config", () => {
     expect(given!.freshPhases).toEqual(["SYNC"]);
     await pool.stop("backend");
   });
+
+  it("exposes the current session's context size and configured limit", async () => {
+    const dir = await tmpDir();
+    const pool = new RunnerPool(join(dir, ".agent-network"), [{ id: "backend", command: ["x"], maxContextTokens: 100_000 }], {
+      run: (o) => {
+        o.onSession?.({ taskId: "task-001", attempt: 1, startedAt: new Date().toISOString() });
+        expect(pool.list()[0]).toMatchObject({ contextTokens: null, maxContextTokens: 100_000 });
+        o.onContext?.(42_000);
+        return new Promise((r) => o.signal!.addEventListener("abort", () => r(0)));
+      },
+    });
+    await pool.start("backend");
+    expect(pool.list()[0]).toMatchObject({ contextTokens: 42_000, maxContextTokens: 100_000 });
+    await pool.stop("backend");
+    expect(pool.list()[0]).toMatchObject({ session: null, contextTokens: null });
+  });
 });
 
 describe("instructions file per agent", () => {

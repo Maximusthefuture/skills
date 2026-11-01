@@ -778,6 +778,10 @@ export interface RunnerView {
   models: string[];
   /** The agent session the runner has open right now, if any. */
   session: RunningSession | null;
+  /** Input tokens in the current model call's context; null before the CLI reports them. */
+  contextTokens: number | null;
+  /** Configured restart threshold, not necessarily the model's full context window. */
+  maxContextTokens: number | null;
   /** Added by a task's lead (spawn_agent): the task and the template; it is not in runners.json. */
   spawned: { taskId: string; template: string } | null;
   /** Skills this agent may not load (from its next session). */
@@ -815,6 +819,7 @@ interface Managed {
   lines: string[];
   partial: string;
   session: RunningSession | null;
+  contextTokens?: number | null;
   events: ActivityEvent[];
   /** Urgent messages from the operator for the next session, and how to stop the current one. */
   urgent: string[];
@@ -866,6 +871,8 @@ export class RunnerPool {
       model: usesModel(m.config.command) ? m.config.model ?? null : null,
       models: usesModel(m.config.command) ? [...new Set([...(m.config.models ?? []), ...(m.config.model ? [m.config.model] : [])])] : [],
       session: m.session,
+      contextTokens: m.contextTokens ?? null,
+      maxContextTokens: m.config.maxContextTokens ?? null,
       spawned: m.spawnedFor ?? null,
       disabledSkills: m.config.disabledSkills ?? [],
       disabledSkillsByTask: m.config.disabledSkillsByTask ?? {},
@@ -1048,6 +1055,10 @@ export class RunnerPool {
       disabledSkills: (task) => sessionDisabledSkills(m.config.disabledSkills ?? [], m.config.disabledSkillsByTask, task),
       onSession: (session) => {
         m.session = session;
+        m.contextTokens = null;
+      },
+      onContext: (tokens) => {
+        m.contextTokens = tokens;
       },
       onActivity: (e) => this.record(m, e),
       ...(this.opts.onSessionEnd ? { onSessionEnd: (taskId: string) => this.opts.onSessionEnd!(m.config.id, taskId) } : {}),
@@ -1090,6 +1101,7 @@ export class RunnerPool {
     ).finally(() => {
       m.controller = undefined;
       m.session = null;
+      m.contextTokens = null;
       m.stoppedAt = new Date().toISOString();
     });
     return this.view(id);
