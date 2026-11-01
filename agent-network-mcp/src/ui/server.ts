@@ -65,7 +65,7 @@ export interface UiServer {
 
 /** One project on the page: a network (<project>/.agent-network) and, in control mode, its runners. */
 export interface UiProject {
-  coordinator?: CoordinatorExecutor | { engine: "claude" | "kimi"; model?: string };
+  coordinator?: CoordinatorExecutor | { engine: "claude" | "kimi" | "codex"; model?: string };
   networkDir: string;
   /** Control mode: the page may create tasks and start/stop these runners. Without it the project is read-only. */
   runners?: RunnerPool;

@@ -29,10 +29,30 @@ export function kimiCoordinatorArgv(prompt: string, profileFile: string, model?:
     "--output-format", "stream-json", ...(model ? ["--model", model] : [])];
 }
 
+const projectTools = ["read_history", "read_task_context", "read_proposal", "propose_task", "read_memory", "propose_memory_change"];
+
+/** Codex receives a temporary, allowlisted MCP config and no shell or web tools. */
+export function codexCoordinatorArgv(prompt: string, model: string | undefined, cwd: string, entry: {
+  command: string; args: string[]; env: Record<string, string>;
+}, command = "codex"): string[] {
+  const config = (key: string, value: unknown) => ["-c", `${key}=${JSON.stringify(value)}`];
+  return [command, "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
+    "--sandbox", "read-only", "--disable", "shell_tool", "--cd", cwd,
+    ...config("web_search", "disabled"),
+    ...config("mcp_servers.project.command", entry.command),
+    ...config("mcp_servers.project.args", entry.args),
+    ...config("mcp_servers.project.cwd", cwd),
+    ...Object.entries(entry.env).flatMap(([key, value]) => config(`mcp_servers.project.env.${key}`, value)),
+    ...config("mcp_servers.project.enabled_tools", projectTools),
+    ...config("mcp_servers.project.default_tools_approval_mode", "approve"),
+    ...config("mcp_servers.project.required", true),
+    ...(model ? ["--model", model] : []), prompt];
+}
+
 export function isolatedCoordinatorExecutor(options: {
   snapshot: () => Promise<unknown>;
   model?: string;
-  engine?: "claude" | "kimi";
+  engine?: "claude" | "kimi" | "codex";
   project?: { networkDir: string; projectId: string; resolved: { maxTaskCostUsd?: number; maxCostUsd?: number; verifyCommand?: string } };
   run?: typeof runSession;
 }): CoordinatorExecutor {
@@ -110,6 +130,8 @@ export function isolatedCoordinatorExecutor(options: {
             ? (process.env.PATH ?? "").split(";").map(dir => join(dir, "kimi.cmd")).find(existsSync) ?? "kimi"
             : "kimi";
           argv = kimiCoordinatorArgv(prompt, profile, options.model, command);
+        } else if (options.engine === "codex") {
+          argv = codexCoordinatorArgv(prompt, options.model, cwd, entry);
         } else {
           mcpConfig = join(cwd, "project-mcp.json");
           await writeFile(mcpConfig, JSON.stringify({ mcpServers: { project: entry } }), { encoding: "utf8", mode: 0o600 });

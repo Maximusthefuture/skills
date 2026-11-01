@@ -139,6 +139,9 @@ export class SessionOutput {
   private session: string | undefined;
   /** tool_use id -> its tool and when it was called, to name and time the result. */
   private calls = new Map<string, { tool: string; at: number }>();
+  /** Codex JSONL puts each item inside an item.* event rather than Claude's assistant/user envelopes. */
+  private codexCalls = new Map<string, { tool: string; at: number }>();
+  private codexText = "";
 
   /** onEvent receives the session's activity (see ActivityItem) as it comes. */
   constructor(
@@ -264,6 +267,62 @@ export class SessionOutput {
     if (!e || typeof e !== "object") return null;
     const ev = e as Record<string, unknown>;
     switch (ev.type) {
+      case "thread.started":
+        if (typeof ev.thread_id === "string") this.session = ev.thread_id;
+        this.emit({ kind: "session", summary: "Codex session started", ...(this.session ? { detail: this.session } : {}) });
+        return null;
+      case "turn.started":
+        return null;
+      case "item.started":
+      case "item.updated":
+      case "item.completed": {
+        const item = (ev.item && typeof ev.item === "object" ? ev.item : {}) as Record<string, unknown>;
+        if (item.type === "agent_message" && typeof item.text === "string" && ev.type === "item.completed") {
+          this.codexText = item.text.trim().slice(0, 20_000);
+          this.emit({ kind: "text", summary: cut(firstLine(this.codexText), 300), ...(this.codexText.length > 300 || this.codexText.includes("\n") ? { detail: cut(this.codexText, MAX_DETAIL) } : {}) });
+          return `${this.codexText}\n`;
+        }
+        if (item.type === "mcp_tool_call") {
+          const id = typeof item.id === "string" ? item.id : undefined;
+          const tool = `${String(item.server ?? "mcp")}__${String(item.tool ?? "tool")}`;
+          if (ev.type === "item.started" && id) {
+            this.codexCalls.set(id, { tool, at: this.now() });
+            this.emit({ kind: "tool_use", tool, summary: toolSummary(tool, item.arguments), detail: cut(JSON.stringify(item.arguments ?? {}, null, 2), MAX_DETAIL) });
+          } else if (ev.type === "item.completed") {
+            const call = id ? this.codexCalls.get(id) : undefined;
+            if (id) this.codexCalls.delete(id);
+            const result = item.result && typeof item.result === "object" ? item.result as Record<string, unknown> : undefined;
+            const text = resultText(result?.content ?? item.error?.toString());
+            const failed = item.status === "failed" || !!item.error;
+            this.emit({ kind: "tool_result", tool: call?.tool ?? tool, ...(failed ? { isError: true } : {}), ...(call ? { durationMs: this.now() - call.at } : {}), summary: cut(resultSummary(text) || (failed ? "error" : "(empty)"), 300), ...(text ? { detail: cut(text, MAX_DETAIL) } : {}) });
+          }
+          return null;
+        }
+        if (item.type === "error" && ev.type === "item.completed" && typeof item.message === "string") {
+          this.emit({ kind: "stderr", isError: true, summary: cut(firstLine(item.message), 300), detail: cut(item.message, MAX_DETAIL) });
+        }
+        return null;
+      }
+      case "turn.completed": {
+        const raw = (ev.usage && typeof ev.usage === "object" ? ev.usage : {}) as Record<string, unknown>;
+        const n = (key: string) => typeof raw[key] === "number" ? raw[key] as number : 0;
+        const cacheRead = n("cached_input_tokens");
+        const cacheCreation = n("cache_write_input_tokens");
+        const input = n("input_tokens") + cacheRead + cacheCreation;
+        const output = n("output_tokens");
+        const usage = input || output ? { input, output, cacheRead, cacheCreation, total: input + output } : undefined;
+        this.found = { ...(usage ? { usage } : {}), ...(this.codexText ? { text: this.codexText } : {}) };
+        this.emit({ kind: "result", summary: `${usage ? `${usage.total} tokens` : "turn completed"}${this.codexText ? ` — ${cut(firstLine(this.codexText), 200)}` : ""}`, ...(this.codexText ? { detail: cut(this.codexText, MAX_DETAIL) } : {}) });
+        return null;
+      }
+      case "turn.failed":
+      case "error": {
+        const error = ev.error && typeof ev.error === "object" ? (ev.error as Record<string, unknown>).message : ev.message;
+        const message = typeof error === "string" ? error : "Codex turn failed";
+        this.found = { isError: true, text: message.slice(0, 20_000) };
+        this.emit({ kind: "stderr", isError: true, summary: cut(firstLine(message), 300), detail: cut(message, MAX_DETAIL) });
+        return null;
+      }
       case "system":
         if (ev.subtype === "init" && typeof ev.model === "string") {
           this.model = ev.model;
