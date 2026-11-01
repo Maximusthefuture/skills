@@ -92,6 +92,17 @@ main{padding:0;min-width:0;display:flex;flex-direction:column}
 .wrap{max-width:720px;width:100%;margin:0 auto;padding:36px 28px 80px}
 .page-h{font:650 26px/1.25 var(--font);letter-spacing:-.02em;margin:0 0 4px}
 .page-sub{color:var(--muted);margin:0 0 26px;font-size:13.5px}
+.coord-guide{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:0 0 22px}
+.coord-step{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:12px 13px;min-width:0}
+.coord-step b{display:block;font-size:12.5px;margin-bottom:4px}
+.coord-step span{display:block;color:var(--muted);font-size:12px;line-height:1.45}
+.coord-compose{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px;margin-top:8px}
+.coord-compose label{display:block;font-size:13px;font-weight:600;margin-bottom:7px}
+.coord-compose textarea{min-height:90px}
+.coord-status{font-size:12.5px;color:var(--muted);margin:0 0 12px}
+.coord-proposal{border-color:var(--violet);}
+.coord-proposal .coord-status{margin:10px 0}
+@media(max-width:680px){.coord-guide{grid-template-columns:1fr}.coord-step{padding:10px 12px}}
 .sect-h{font:650 15px var(--font);margin:34px 0 10px;display:flex;align-items:center;gap:8px}
 .sect-h .n{font:600 11px var(--mono);color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:1px 7px}
 
@@ -541,10 +552,10 @@ pre.jlog{grid-column:1/-1;max-height:420px;margin:0;white-space:pre-wrap;font:11
   </div>
   <div class="search"><input id="search" placeholder="Поиск по задачам…" aria-label="Поиск по задачам"></div>
   <div class="side-nav">
-    <a id="nav-project" href="#/project"><span class="ic">◇</span>Обсуждение проекта</a>
+    <a id="nav-project" href="#/project"><span class="ic">◇</span>Координатор проекта</a>
     <a id="nav-inbox" href="#/inbox"><span class="ic">◉</span>Нужно мне<span class="c" id="c-att" hidden></span></a>
   </div>
-  <div class="side-label">Задачи<span class="plus" id="newtask-plus" title="Новая задача">＋</span></div>
+  <div class="side-label">Задачи<span class="plus" id="newtask-plus" title="Создать задачу вручную, без координатора" role="button" tabindex="0" aria-label="Создать задачу вручную, без координатора">＋</span></div>
   <div id="tasklist" role="list"></div>
   <div class="side-label">Ещё</div>
   <div class="side-nav">
@@ -996,8 +1007,8 @@ function renderNew(){
   const selectionEnd=typeof active?.selectionEnd==="number"?active.selectionEnd:null;const selectionDirection=active?.selectionDirection;
   const priorScroll=main.scrollTop;const focusOnMount=!previous;const previousAdv=previous?.querySelector("details.adv");
   const wrap=el("div","wrap");wrap.dataset.newForm="true";
-  wrap.append(el("h1","page-h","Что сделать?"));
-  wrap.append(el("p","page-sub","Опишите своими словами или вставьте тикет — детали можно доверить агенту-черновику."));
+  wrap.append(el("h1","page-h","Новая задача вручную"));
+  wrap.append(el("p","page-sub","Эта форма создаёт задачу напрямую. Чтобы сначала обсудить цель с Coordinator и проверить предложение, откройте «Координатор проекта»."));
   const runners=S&&S.control?S.control.runners:[];
   /* черновик от агента */
   if(controlMode&&S&&S.control.drafter){
@@ -1858,16 +1869,20 @@ function renderProject(){
   let wrap=$("project-chat");
   if(!wrap||wrap.dataset.project!==key){
     wrap=el("div","wrap");wrap.id="project-chat";wrap.dataset.project=key;
-    wrap.append(el("h1","page-h","Обсуждение проекта"),el("p","page-sub","Обсудите цель перед запуском работы. Создание задач потребует отдельного подтверждения."));
+    wrap.append(el("h1","page-h","Координатор проекта"),el("p","page-sub","Обсудите цель или попросите подготовить задачу для команды."));
+    const guide=el("div","coord-guide");
+    for(const [title,detail] of [["1. Опишите цель","Напишите, что нужно сделать. Например: «Создай задачу: добавь проверку файла…»"],["2. Проверьте предложение","Координатор покажет описание и выберет команду."],["3. Подтвердите создание","Задача появится только после нажатия «Подтвердить и создать задачу». До этого агенты не начинают работу."]]){
+      const step=el("div","coord-step");step.append(el("b","",title),el("span","",detail));guide.append(step)}
+    wrap.append(guide);
     const history=el("div");history.id="project-chat-history";history.setAttribute("aria-live","polite");wrap.append(history);
-    const form=el("form");const label=el("label","","Сообщение проекту");label.htmlFor="project-chat-input";
-    const input=el("textarea");input.id="project-chat-input";input.rows=4;input.style.width="100%";
+    const form=el("form","coord-compose");const label=el("label","","Сообщение координатору");label.htmlFor="project-chat-input";
+    const input=el("textarea");input.id="project-chat-input";input.rows=4;input.style.width="100%";input.placeholder="Задайте вопрос или начните с «Создай задачу: …»";
     const draftKey="project-chat-draft:"+key;let pending;
     try{pending=JSON.parse(localStorage.getItem(draftKey)||"null")}catch(e){}
     input.value=pending?.content||"";
     input.oninput=()=>{pending={messageId:crypto.randomUUID(),content:input.value};localStorage.setItem(draftKey,JSON.stringify(pending))};
     const error=el("p","bad");error.id="project-chat-error";error.setAttribute("role","alert");input.setAttribute("aria-describedby",error.id);
-    const send=el("button","btn","Отправить");send.type="submit";
+    const send=el("button","btn","Отправить координатору");send.type="submit";
     form.append(label,input,send,error);wrap.append(form);
     form.onsubmit=async e=>{e.preventDefault();if(!input.value.trim())return;
       if(!pending||pending.content!==input.value)pending={messageId:crypto.randomUUID(),content:input.value};
@@ -1910,11 +1925,12 @@ function renderProject(){
     if(history.contains(document.activeElement)&&document.activeElement.closest("form"))return;
     history.dataset.signature=signature;
     const content=el("div");
-    content.append(el("p","page-sub",state.paused?"Очередь приостановлена.":state.coordinatorConfigured?"Сообщения обрабатываются по очереди. Задачи создаются только после подтверждения.":"Сообщения ожидают подключения Coordinator. Задачи автоматически не запускаются."));
-    const pause=el("button","btn",state.paused?"Продолжить":"Приостановить очередь");
+    const queueNote=state.paused?"Обработка сообщений приостановлена.":state.coordinatorConfigured?"Координатор подключён. Сообщения обрабатываются по очереди.":"Координатор не подключён. Сообщения не будут обработаны, пока его не настроят.";
+    content.append(el("p","coord-status",queueNote));
+    const pause=el("button","btn",state.paused?"Продолжить обработку":"Приостановить обработку");
     pause.onclick=async()=>{try{await post("/api/project/pause",{paused:!state.paused});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};content.append(pause);
-    if(!state.messages.length)content.append(el("p","page-sub","Начните с вопроса или опишите желаемый результат."));
-    const labels={queued:"В очереди",running:"Обрабатывается",succeeded:"Ответ готов",failed:"Не удалось выполнить",cancelled:"Отменено"};
+    if(!state.messages.length)content.append(el("p","page-sub","Напишите координатору ниже. Чтобы получить задачу на утверждение, начните сообщение с «Создай задачу:» и опишите результат."));
+    const labels={queued:"В очереди — координатор ответит автоматически",running:"Координатор обрабатывает сообщение",succeeded:"Ответ координатора",failed:"Координатор не смог ответить",cancelled:"Обработка отменена"};
     for(const message of state.messages){const row=el("section","card");row.append(el("p","",message.content));
       for(const run of state.runs.filter(r=>r.messageId===message.messageId)){row.append(el("p","page-sub",run.cancelRequested&&run.state==="running"?"Останавливается":labels[run.state]));
         if(run.result)row.append(el("p","",run.result));if(run.error)row.append(el("p","bad",run.error));
@@ -1922,21 +1938,23 @@ function renderProject(){
         if(run.state==="queued"||run.state==="running"){const cancel=el("button","btn",run.state==="queued"?"Убрать из очереди":"Остановить ответ");
           cancel.onclick=async()=>{try{await post("/api/project/cancel",{runId:run.runId});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};row.append(cancel)}}content.append(row)}
     content.append(el("p","page-sub","Остановка ответа не останавливает уже запущенные задачи. Управляйте ими в списке задач."));
-    for(const proposal of state.proposals||[]){const card=el("section","card"),payload=proposal.payload;
-      card.append(el("h3","",payload.title),el("p","",proposal.summary),el("p","",payload.description),el("p","page-sub","Команда: "+payload.agents.join(", ")),
-        el("p","page-sub","Стоимость неизвестна. "+(payload.maxCostUsd===undefined?"Лимит не задан.":"Лимит: $"+payload.maxCostUsd+"; это не прогноз.")),el("p","page-sub","Состояние предложения: "+proposal.status));
+    const proposalStates={pending:"Нужно ваше подтверждение",approved:"Подтверждено, создаём задачу",executed:"Задача создана",rejected:"Предложение отклонено",superseded:"Заменено новой версией",failed:"Предложение не удалось сохранить"};
+    for(const proposal of state.proposals||[]){const card=el("section","card coord-proposal"),payload=proposal.payload;
+      card.append(el("h3","","Предложение задачи: "+payload.title),el("p","",proposal.summary),el("p","",payload.description),el("p","page-sub","Команда: "+payload.agents.join(", ")),
+        el("p","page-sub","Стоимость неизвестна. "+(payload.maxCostUsd===undefined?"Лимит не задан.":"Лимит: $"+payload.maxCostUsd+"; это не прогноз.")),el("p","coord-status",proposalStates[proposal.status]||"Статус: "+proposal.status));
+      if(proposal.status==="pending")card.append(el("p","page-sub","Задача пока не создана. Проверьте описание и состав команды, затем подтвердите или измените предложение."));
       const settings=el("details");settings.append(el("summary","","Подробные настройки"),el("pre","",JSON.stringify(payload,null,2)));card.append(settings);
       const result=el("p","page-sub");result.setAttribute("role","status");card.append(result);
       if(proposal.taskId)card.append(taskLink(proposal.taskId,"Создана задача"));
       if(proposal.status==="pending"||proposal.status==="approved"){
         const act=async(action,extra)=>{try{const answer=await post("/api/project/proposals/"+action,{proposalId:proposal.proposalId,hash:proposal.hash,...extra});
-          result.textContent=answer.task?"Задача создана: "+answer.task.id:action==="preflight"?"Проверки пройдены. Создание потребует отдельного действия.":"Сохранено.";if(action!=="preflight")renderProject();return answer}
+          result.textContent=answer.task?"Задача "+answer.task.id+" создана. Она появится в списке «Задачи».":action==="preflight"?"Проверки пройдены. Задача ещё не создана — нажмите «Подтвердить и создать задачу».":"Изменения сохранены.";if(action!=="preflight")renderProject();return answer}
           catch(e){result.textContent=e.message;return null}};
-        const check=el("button","btn","Проверить");check.onclick=()=>act("preflight");card.append(check);
-        const approve=el("button","btn","Создать задачу");approve.onclick=async()=>{approve.disabled=true;await act("approve");approve.disabled=false};card.append(approve);
+        const check=el("button","btn","Проверить предложение");check.onclick=()=>act("preflight");card.append(check);
+        const approve=el("button","btn","Подтвердить и создать задачу");approve.onclick=async()=>{approve.disabled=true;await act("approve");approve.disabled=false};card.append(approve);
         if(proposal.status==="pending"){
-          const reject=el("button","btn","Отклонить");reject.onclick=()=>act("reject");card.append(reject);
-          const edit=el("button","btn","Изменить");edit.onclick=()=>{
+          const reject=el("button","btn","Отклонить предложение");reject.onclick=()=>act("reject");card.append(reject);
+          const edit=el("button","btn","Изменить предложение");edit.onclick=()=>{
             if(card.querySelector("form"))return;
             const form=el("form"),title=el("input"),description=el("textarea"),summary=el("textarea");title.value=payload.title;description.value=payload.description;summary.value=proposal.summary;
             for(const [label,input] of [["Название",title],["Ожидаемый результат и границы",description],["Описание предложения",summary]]){const field=el("label","",label);field.append(input);form.append(field)}
@@ -2455,6 +2473,7 @@ function renderDrawer(){
 $("search").setAttribute("autocomplete","off");
 $("search").oninput=()=>{tasklistSig="";renderSidebar()};
 $("newtask-plus").onclick=()=>{location.hash="#/new"};
+$("newtask-plus").onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();location.hash="#/new"}};
 $("settings-btn").onclick=()=>{location.hash="#/settings"};
 $("proj-switch").onclick=e=>{e.stopPropagation();projectMenu($("proj-switch"))};
 $("bell").onclick=async()=>{if(typeof Notification!=="undefined"&&Notification.permission==="default"){try{await Notification.requestPermission()}catch(e){}}
