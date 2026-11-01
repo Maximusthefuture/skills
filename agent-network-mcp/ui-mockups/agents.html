@@ -16,21 +16,8 @@
   </div>
   <div class="search"><input placeholder="Поиск по задачам…"></div>
   <div class="side-nav">
-    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">5</span></a>
   </div>
-  <div class="side-label">Задачи<span class="plus" title="Новая задача" onclick="location.href='new.html'">＋</span></div>
-  <a class="chat-item" href="task.html">
-    <span class="dot warn"></span>
-    <span class="col"><span class="nm">Частичный возврат заказа по сумме</span>
-    <span class="pv">ждёт ответа: какой шаблон письма?</span></span>
-    <span class="nudge">вы</span>
-  </a>
-  <a class="chat-item" href="task.html">
-    <span class="dot ok"></span>
-    <span class="col"><span class="nm">Отмена заказа: POST /orders/{id}/cancel</span>
-    <span class="pv">проверка, раунд 1 · backend 3/5</span></span>
-    <span class="tm">14:32</span>
-  </a>
   <div class="side-label">Ещё</div>
   <div class="side-nav">
     <a class="on" href="agents.html"><span class="ic">◐</span>Агенты<span class="c mut">2/3</span></a>
@@ -45,34 +32,64 @@
 
 <main>
   <div class="wrap">
-    <h1 class="page-h">Агенты</h1>
-    <p class="page-sub">Кто в команде и чем занят прямо сейчас.</p>
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div>
+        <h1 class="page-h">Агенты</h1>
+        <p class="page-sub">Runner'ы проекта: запуск, модель, инструкции, лог. Нажмите на строку, чтобы раскрыть.</p>
+      </div>
+      <button class="ghost small" style="margin-left:auto" title="Перезапустить всех работающих">↻ всех</button>
+    </div>
 
-    <div class="agent-row">
+    <div class="agent-row" style="border-color:var(--lime-deep)">
       <span class="av">B</span>
       <div style="min-width:0">
-        <h3>backend <span class="badge lime">работает</span></h3>
+        <h3>backend <span class="badge lime">работает · сессия #4</span></h3>
         <div class="now">T-14 · «маппинг OrderCancelled» · действие 20 сек назад · сегодня $1.87</div>
       </div>
-      <div class="acts"><button class="ghost small">Лог</button><button class="ghost small">Стоп</button></div>
+      <div class="acts"><button class="ghost small">Свернуть</button></div>
+    </div>
+    <!-- раскрытая строка: вся механика runner'а из v1 -->
+    <div class="agent-detail">
+      <div class="row3">
+        <label>Модель (список — поле models в runners.json)
+          <select><option>claude-sonnet-4.5</option><option>claude-haiku-4.5</option><option>другая…</option></select></label>
+        <label>Файл инструкций
+          <input value="instructions/backend.md"></label>
+        <label>Команда
+          <input class="mono" value="claude --model {model} --permission-mode auto" readonly style="opacity:.7"></label>
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text);margin-bottom:10px">
+        <input type="checkbox" checked style="width:auto"> Экономить токены: отдавать агенту сокращённые промпты (token saver)
+      </label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="small">Применить</button>
+        <button class="ghost small">Перезапустить</button>
+        <button class="ghost small" onclick="alert('Точно остановить backend? Его сессия в T-14 завершится.')">Остановить</button>
+        <button class="ghost small" style="margin-left:auto">Сырой лог</button>
+      </div>
+      <div style="font:650 10.5px var(--font);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Активность · <a href="history.html" style="font-weight:400">вся лента агента →</a></div>
+      <div class="panel2">
+        <div class="act-row"><span class="tm">14:32</span><span class="kind tool">tool_use</span><span class="sum">Read src/orders/OrderService.java</span></div>
+        <div class="act-row"><span class="tm">14:31</span><span class="kind ok">tool_result</span><span class="sum">BUILD SUCCESS — Tests run: 42</span></div>
+      </div>
     </div>
 
     <div class="agent-row">
       <span class="av v">R</span>
       <div style="min-width:0">
-        <h3>reviewer <span class="badge lime">работает</span></h3>
+        <h3>reviewer <span class="badge lime">работает · сессия #2</span></h3>
         <div class="now">T-14 · ревью раунда 1 · сегодня $0.54</div>
       </div>
-      <div class="acts"><button class="ghost small">Лог</button><button class="ghost small">Стоп</button></div>
+      <div class="acts"><button class="ghost small">Раскрыть</button></div>
     </div>
 
     <div class="agent-row" style="opacity:.65">
       <span class="av" style="background:var(--line);color:var(--muted)">D</span>
       <div style="min-width:0">
-        <h3>devops <span class="badge">спит</span></h3>
-        <div class="now">Проснётся сам, когда появится работа по его шаблону.</div>
+        <h3>devops <span class="badge">остановлен</span></h3>
+        <div class="now">Нет задачи. Запустится сам, когда появится работа по его шаблону.</div>
       </div>
-      <div class="acts"><button class="ghost small">Разбудить</button></div>
+      <div class="acts"><button class="ghost small">Запустить</button></div>
     </div>
 
     <div class="agent-row" style="border-style:dashed;box-shadow:none">
@@ -88,27 +105,48 @@
       <summary>Новый агент из шаблона</summary>
       <div class="in">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px">
-          <label>Имя (id)
-            <input placeholder="kimi-2"></label>
-          <label>Шаблон CLI
-            <select><option>claude-code</option><option>qwen-code</option><option>kimi-cli</option></select></label>
-          <label>Модель
-            <select><option>claude-sonnet-4.5</option><option>claude-haiku</option></select></label>
+          <label>Имя (id)<input placeholder="kimi-2"></label>
+          <label>Шаблон CLI<select><option>claude-code</option><option>qwen-code</option><option>kimi-cli</option></select></label>
+          <label>Модель<select><option>claude-sonnet-4.5</option><option>claude-haiku</option></select></label>
         </div>
         <div><button class="cta small">Добавить агента</button> <span style="font-size:12px;color:var(--muted)">Запишется в runners.json, появится в списке остановленным.</span></div>
       </div>
     </details>
 
-    <details class="adv" style="margin-top:22px">
-      <summary>Скиллы и обслуживание</summary>
+    <div class="sect-h">Агенты в сети <span class="n">MCP-процессы</span></div>
+    <p class="page-sub" style="margin-bottom:10px">Кто подключён к сети прямо сейчас (не путать с runner'ами: runner — это как запустить, агент в сети — кто на связи).</p>
+    <table class="tbl">
+      <tr><th>Агент</th><th>Статус</th><th>Задачи</th><th>Последний ответ</th></tr>
+      <tr><td><b>backend</b></td><td><span class="badge lime">работает</span></td><td class="mono">T-14</td><td class="mono">20 сек назад</td></tr>
+      <tr><td><b>reviewer</b></td><td><span class="badge warn">ждёт</span></td><td class="mono">T-14</td><td class="mono">2 мин назад</td></tr>
+      <tr><td><b>test-runner</b></td><td><span class="badge">в сети</span></td><td class="mono">—</td><td class="mono">14:02</td></tr>
+      <tr><td><b>old-cli</b></td><td><span class="badge bad">пропал</span></td><td class="mono">—</td><td class="mono">2ч назад</td></tr>
+    </table>
+
+    <details class="adv" style="margin-top:22px" open>
+      <summary>Скиллы, роли и обслуживание</summary>
       <div class="in">
-        <label class="checks" style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--text)">
+        <div style="font-size:12.5px;color:var(--muted)">Какие скиллы агент может загружать. Выключенный скилл не тратит токены (его описания нет в промпте). «без: change» / «без: код» — скилл выключен только в задачах этого типа.</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13.5px;color:var(--text)">
           <span><input type="checkbox" checked> spring-boot</span>
-          <span><input type="checkbox" checked> openspec</span>
-          <span><input type="checkbox"> flyway-migrations</span>
+          <span><input type="checkbox" checked> openspec <span class="skill-tag">без: код</span></span>
+          <span><input type="checkbox"> flyway-migrations <span class="skill-tag">без: change</span></span>
           <span><input type="checkbox" checked> test-containers</span>
-        </label>
-        <div><button class="ghost small">Убрать все worktree проекта</button></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input placeholder="выключить по имени, напр. plugin:legacy-helper" style="flex:1;font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 9px">
+          <button class="ghost small">Выключить всем</button>
+        </div>
+
+        <div style="font-size:12.5px;color:var(--muted);margin-top:6px">Роли проекта (.agent-network/roles) — lead даёт их добавляемым агентам по имени:</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:13px">
+          <span class="badge">load-tester <a href="agents.html" title="Переименовать">✎</a> <a href="agents.html" title="Удалить роль">×</a></span>
+          <span class="badge">bug-hunter <a href="agents.html" title="Переименовать">✎</a> <a href="agents.html" title="Удалить роль">×</a></span>
+          <button class="ghost small">+ Роль</button>
+        </div>
+
+        <div style="margin-top:6px"><button class="ghost small">Убрать все worktree проекта</button>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:4px">Без --force папки с незакоммиченными правками и невлитые ветки останутся — ответ скажет почему. Нужные worktree создадутся заново перед задачей.</div></div>
       </div>
     </details>
   </div>

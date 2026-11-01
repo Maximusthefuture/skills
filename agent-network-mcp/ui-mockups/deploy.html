@@ -26,7 +26,11 @@
     <a href="projects.html"><span class="ic">▣</span>Проекты</a>
     <a href="settings.html"><span class="ic">⚙</span>Все настройки</a>
   </div>
-  <div class="side-foot"><span class="who"><span class="me">M</span>Maximus</span></div>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+    <button class="icon-btn" title="Настройки" onclick="location.href='settings.html'">⚙</button>
+  </div>
 </aside>
 
 <main>
@@ -39,11 +43,12 @@
       <select><option>все</option><option>не отправлены</option><option>в ветке</option><option>идёт раскатка</option><option>на стенде</option><option>ошибка</option></select>
     </div>
     <table class="tbl">
-      <tr><th>Задача</th><th>Состояние</th><th>Коммит</th><th></th></tr>
+      <tr><th>Задача</th><th>Состояние</th><th>Коммит</th><th>Влита в</th><th></th></tr>
       <tr>
         <td><b>T-11</b> · Прогреть кэш каталога</td>
-        <td><span class="badge warn">в ветке, ждёт</span><div class="mono" style="font-size:11.5px;color:var(--muted)">feature/t11-cache-warm</div></td>
+        <td><span class="badge warn">в ветке, ждёт</span><div class="mono" style="font-size:11.5px;color:var(--muted)"><a href="https://bitbucket.local/shop-backend/branch/feature/t11-cache-warm">feature/t11-cache-warm</a> · последняя раскатка: —</div></td>
         <td class="mono">e91b2c4</td>
+        <td class="mono">вчера 16:40</td>
         <td><button class="cta small">Раскатить…</button></td>
       </tr>
       <tr style="background:var(--bg)">
@@ -57,15 +62,17 @@
             <b style="font-size:13px">Для раскатки</b>
             <div class="panel2" style="margin-top:8px">
               <table class="tbl" style="border:0">
-                <tr><th>Свойство</th><th>Переменная</th><th>Обязательно</th><th>staging</th><th>prod</th></tr>
-                <tr><td class="mono">cache.warm.batch</td><td class="mono">CACHE_WARM_BATCH</td><td>нет</td><td>✓</td><td>✓</td></tr>
-                <tr><td class="mono">cache.warm.enabled</td><td class="mono">CACHE_WARM_ENABLED</td><td>да</td><td>✓</td><td style="color:var(--bad)">✗ нет</td></tr>
+                <tr><th>Свойство</th><th>Переменная</th><th>По умолчанию</th><th>Обязательно</th><th>Секрет</th><th>staging</th><th>prod</th></tr>
+                <tr><td class="mono">cache.warm.batch</td><td class="mono">CACHE_WARM_BATCH</td><td class="mono">50</td><td>нет</td><td>нет</td><td>✓</td><td>✓</td></tr>
+                <tr><td class="mono">cache.warm.enabled</td><td class="mono">CACHE_WARM_ENABLED</td><td class="mono">—</td><td>да</td><td>нет</td><td>✓</td><td style="color:var(--bad)">✗ нет</td></tr>
+                <tr><td class="mono">cache.warm.token</td><td class="mono">CACHE_WARM_TOKEN</td><td class="mono">—</td><td>да</td><td>да</td><td>✓</td><td>✓</td></tr>
               </table>
             </div>
             <div style="font-size:12px;color:var(--muted);margin-top:8px">Миграций нет · топиков Kafka нет · внешних адресов нет. В prod не задано обязательное CACHE_WARM_ENABLED — сервис не стартует.</div>
-            <div style="margin-top:10px;display:flex;gap:8px">
-              <button class="cta small">Отправить в Bitbucket и раскатить на staging</button>
+            <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+              <button class="cta small" onclick="alert('Подтверждение перед отправкой (как в v1):\n\nОтправить T-11 в Bitbucket (remote origin) и раскатить на staging?\n\nВ prod не задано: CACHE_WARM_ENABLED — сервис может не стартовать.')">Отправить в Bitbucket и раскатить на staging</button>
               <button class="ghost small">Скрыть</button>
+              <span style="font-size:11.5px;color:var(--muted)">перед отправкой — подтверждение со списком незаданных переменных</span>
             </div>
           </div>
         </td>
@@ -107,9 +114,16 @@
           <label>Шаблон ветки<input value="feature/{task}-{slug}"></label>
           <label>Jenkins MCP (адрес)<input value="https://jenkins.local/mcp"></label>
           <label>Job по умолчанию<input value="shop-backend-deploy"></label>
+          <label>MCP command (если локальный)<input class="mono" value="npx jenkins-mcp --url https://jenkins.local"></label>
+          <label>MCP env<input class="mono" value="JENKINS_TOKEN=${JENKINS_TOKEN}"></label>
+          <label>Инструменты MCP<input class="mono" value="run_job, job_status, job_log"></label>
+          <label>Таймаут job, мин<input type="number" value="30"></label>
           <label>Kube-context staging<input value="k8s-staging"></label>
           <label>Kube-context prod<input value="k8s-prod"></label>
         </div>
+        <label>Окружения (имя → values-файл Helm / список заданных ключей)
+          <textarea style="min-height:56px;font:12px var(--mono);color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:7px 10px">staging = deploy/values-staging.yaml
+prod = deploy/values-prod.yaml</textarea></label>
         <div style="font-size:12px;color:var(--muted)">Секреты — через ${ИМЯ} из окружения сервера страницы, в файл не пишутся.</div>
         <div><button class="small">Сохранить</button></div>
       </div>

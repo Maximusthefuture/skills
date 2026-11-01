@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Каталог карточек чата — Agent Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="side-top">
+    <span class="logo">◆</span>
+    <span class="projname">shop-backend<small>main · a3f9c1e</small></span>
+    <button class="icon-btn" title="Сменить проект">⇄</button>
+  </div>
+  <div class="side-nav">
+    <a href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">5</span></a>
+  </div>
+  <div class="side-label">Задачи<span class="plus" title="Новая задача" onclick="location.href='new.html'">＋</span></div>
+  <a class="chat-item on" href="task.html">
+    <span class="dot ok"></span>
+    <span class="col"><span class="nm">Отмена заказа: POST /orders/{id}/cancel</span>
+    <span class="pv">проверка, раунд 1 · backend 3/5</span></span>
+    <span class="tm">14:32</span>
+  </a>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+    <button class="icon-btn" title="Настройки" onclick="location.href='settings.html'">⚙</button>
+  </div>
+</aside>
+
+<main>
+  <div class="chat-head">
+    <div class="wrap2">
+      <a class="back" href="task.html">←</a>
+      <div style="flex:1;min-width:0">
+        <h1>Каталог типов карточек чата</h1>
+        <div class="sub">Все состояния страницы задачи — для разработки page2.ts</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="chat-body">
+    <div class="cat-note">Это служебная страница: каждый тип карточки, который встречается в ленте задачи, на одном экране. В реальном чате они появляются по ходу фаз.</div>
+
+    <div class="daydiv">План на утверждение (thorough / change)</div>
+    <div class="action-card">
+      <h4>План задачи · версия 3 <span class="badge acc">ждёт утверждения</span></h4>
+      <p>Lead написал план: кто что делает, файлы, контракты, риски. Критик нашёл 2 риска («отмена во время оплаты», «гонка с возвратом»). Можно править текст прямо в плане и оставлять замечания к блокам.</p>
+      <div class="opts">
+        <button class="cta small">Открыть и утвердить</button>
+        <button class="ghost small">Замечаний: 2</button>
+        <button class="ghost small">История версий</button>
+      </div>
+    </div>
+
+    <div class="daydiv">OpenSpec change</div>
+    <div class="action-card">
+      <h4>OpenSpec: add-order-cancel <span class="badge">change</span></h4>
+      <p>backend → задачи 1–6 (сделано 1–5) · reviewer → 7–9 (сделано 7) · в папке проекта отмечено 7/9</p>
+      <div class="opts">
+        <button class="ghost small">Открыть change</button>
+        <button class="ghost small" disabled>Архивировать (после вливания)</button>
+      </div>
+    </div>
+
+    <div class="daydiv">Lead добавил агента</div>
+    <div class="action-card">
+      <h4>Lead добавил агента test-runner <span class="badge acc">spawn</span></h4>
+      <p>Шаблон qwen · роль «load-tester» (из библиотеки) · причина: «нужен нагрузочный прогон отмены параллельно с ревью» · runner работает</p>
+      <div class="opts"><button class="ghost small">Роль</button><button class="ghost small">Сохранить роль в библиотеку</button></div>
+    </div>
+
+    <div class="daydiv">Поручение (delegate)</div>
+    <div class="action-card">
+      <h4>Поручение: нагрузочный тест отмены <span class="badge warn">выполняется</span></h4>
+      <p>lead поручил test-runner: 1000 отмен/мин, отчёт по p99. Результат придёт сообщением — lead сольёт коммиты сам.</p>
+      <div class="opts"><button class="ghost small">Подробности поручения</button></div>
+    </div>
+
+    <div class="daydiv">Цепочка follow-up</div>
+    <div class="action-card">
+      <h4>Создана follow-up задача T-15 <span class="badge">цепочка 1/2</span></h4>
+      <p>«Прогреть кэш после отмены заказа» — из замечаний ревью, не блокирует T-14. Начнётся, когда T-14 будет DONE.</p>
+      <div class="opts"><button class="ghost small">Открыть T-15</button></div>
+    </div>
+
+    <div class="daydiv">Вопрос: multiselect + комментарий</div>
+    <div class="msg">
+      <span class="av">B</span>
+      <div class="bubble">
+        <div class="who2">backend · вопрос вам · можно несколько</div>
+        <div class="txt">Какие события публиковать при отмене?</div>
+        <div class="qchips">
+          <button class="qchip sel">OrderCancelled ✓</button>
+          <button class="qchip">OrderRefunded</button>
+          <button class="qchip sel">MetricsEvent ✓</button>
+        </div>
+        <textarea class="qcomment" placeholder="Комментарий к выбору (необязательно)…"></textarea>
+        <div class="qchips" style="align-items:center">
+          <button class="cta small">Ответить</button>
+          <button class="qdismiss">закрыть без ответа</button>
+        </div>
+        <div class="tm2">ждёт · без ответа выберет рекомендованное в 15:40</div>
+      </div>
+    </div>
+
+    <div class="daydiv">Сборка упала</div>
+    <div class="action-card" style="border-color:#EFC4C1">
+      <h4>Сборка T-14 упала <span class="badge bad">BUILD FAILED</span></h4>
+      <p>CancelIT.cancelPaid_emitsEvent — AssertionFailedError: expected CONFLICT, was BAD_REQUEST. Lead уже чинит, вмешательство не нужно.</p>
+      <div class="opts"><button class="ghost small">Лог сборки</button></div>
+    </div>
+
+    <div class="daydiv">Задача готова · вливание</div>
+    <div class="action-card" style="border-color:var(--lime-deep)">
+      <h4>T-14 принята вами · можно вливать <span class="badge lime">DONE</span></h4>
+      <p>Проверка вливания (merge-check) пройдёт отдельно от проекта: сборка и все тесты на слитом результате. Вольётся только зелёная.</p>
+      <div class="opts">
+        <button class="cta small">Влить в проект</button>
+        <button class="ghost small">Сначала посмотреть diff</button>
+      </div>
+    </div>
+    <div class="action-card">
+      <h4>Идёт проверка вливания <span class="badge warn">merge-check</span></h4>
+      <p>Отдельный worktree: merge → ./mvnw verify. Обычно 3–6 минут, сообщим результатом.</p>
+    </div>
+    <div class="action-card" style="border-color:#EFC4C1">
+      <h4>Проверка вливания не прошла <span class="badge bad">merge-check</span></h4>
+      <p>Конфликт в OrderService.java с main (коммит за время работы задачи). Варианты: lead разрулит конфликт или отменить вливание.</p>
+      <div class="opts">
+        <button class="cta small">Lead разрулит</button>
+        <button class="ghost small">Отменить вливание</button>
+      </div>
+    </div>
+
+    <div class="daydiv">Задача BLOCKED в чате</div>
+    <div class="action-card" style="border-color:#EFC4C1">
+      <h4>Задача остановлена <span class="badge bad">BLOCKED</span></h4>
+      <p>Лимит раундов исправлений исчерпан (3/3). Решение за вами — действия как на главной: раунды, lead, отложить, отмена.</p>
+      <div class="opts">
+        <button class="cta small">+1 раунд</button>
+        <button class="ghost small">Ещё…</button>
+      </div>
+    </div>
+
+    <div class="daydiv">Приёмка (acceptance)</div>
+    <div class="action-card">
+      <h4>Готово к приёмке <span class="badge ok">3/3 критерия</span></h4>
+      <p>Каждый критерий подтверждён тестами на слитом коммите + «как проверить руками». Расход $2.41.</p>
+      <div class="opts">
+        <button class="cta small">Принять</button>
+        <button class="ghost small">Вернуть с замечаниями</button>
+        <button class="ghost small">Открыть отчёт</button>
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+</body>
+</html>

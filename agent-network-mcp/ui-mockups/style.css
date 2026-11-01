@@ -257,3 +257,52 @@ details.adv input,details.adv select{font:inherit;color:var(--text);background:v
 .tabs2{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid var(--line);padding-bottom:0}
 .tabs2 a{padding:8px 14px;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
 .tabs2 a.on{color:var(--text);font-weight:650;border-bottom-color:var(--lime-deep)}
+
+/* ── ревизия 4 ── */
+/* тёмная тема: те же токены, до вёрстки страниц */
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#17181A; --panel:#1E2023; --line:#2C2E33;
+    --text:#E8E8E3; --muted:#9A9A90;
+    --ink:#101114; --ink2:#1A1C20; --ink3:#26282E; --ink-line:#30333A;
+    --ink-text:#EDEDE8; --ink-muted:#8E9098;
+    --lime:#C8F169; --lime-deep:#A8D24E; --lime-soft:#2A3316; --lime-text:#BFE06A;
+    --ok:#6CC48E; --ok-soft:#1E2E24;
+    --warn:#E0B054; --warn-soft:#332A15;
+    --bad:#E87B74; --bad-soft:#38211F;
+    --violet:#A99BF8;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25);
+  }
+  .tbl tr:hover td,.act-row:hover{background:#232529}
+  .dpatch .dadd{background:#243318;color:#BFE06A}
+  .dpatch .ddel{background:#3A2220;color:#E87B74}
+}
+
+/* вопрос: комментарий к выбору и multiselect */
+.qcomment{width:100%;min-height:38px;margin-top:8px;font:12.5px var(--font);border:1px solid var(--line);border-radius:8px;padding:6px 9px;resize:vertical;background:var(--bg);color:var(--text)}
+.qchip.sel{background:var(--lime-soft);border-color:var(--lime-deep);color:var(--lime-text);font-weight:650}
+.qdismiss{margin-left:auto;background:transparent;border:0;color:var(--muted);font-size:11.5px;text-decoration:underline;padding:6px 4px}
+/* merge-шапка DONE-задачи */
+.mergebar{display:flex;align-items:center;gap:10px;background:var(--lime-soft);border:1px solid var(--lime-deep);border-radius:10px;padding:10px 14px;margin-top:10px;font-size:13px}
+.mergebar .st{font-weight:650;color:var(--lime-text)}
+/* каталог типов карточек */
+.cat-note{max-width:720px;margin:0 auto 18px;padding:10px 16px;border:1px dashed var(--lime-deep);border-radius:10px;font-size:12.5px;color:var(--muted)}
+/* скиллы: пометки по типам задач */
+.skill-tag{font:600 10px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:0 5px;margin-left:6px}
+/* агент раскрыт */
+.agent-detail{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px 18px;margin:-4px 0 12px;font-size:13px}
+.agent-detail .row3{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:10px}
+.agent-detail label{display:grid;gap:4px;font-size:11.5px;color:var(--muted)}
+.agent-detail select,.agent-detail input{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 9px}
+/* KPI-полоса */
+.kpi2{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:18px}
+.kpi2 .k2{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.kpi2 .k2 .l{font:650 10.5px var(--font);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.kpi2 .k2 .v{font:650 19px var(--mono);margin-top:3px}
+.kpi2 .k2 .v small{font-size:11px;color:var(--muted);font-weight:400}
+/* драфтер */
+.drafter{border:1px dashed var(--violet);border-radius:12px;padding:14px 18px;margin-bottom:14px;background:var(--panel)}
+.drafter .st{display:flex;align-items:center;gap:10px;font-size:13px}
+.drafter .spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--violet);animation:sp 0.9s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.drafter .spin{animation:none}}

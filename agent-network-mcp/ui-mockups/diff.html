@@ -13,6 +13,7 @@
     <h2>Изменения · T-14 «Отмена заказа» · 3 коммита</h2>
     <span class="badge warn">замечаний открыто: 1</span>
     <button class="cta small">Отправить замечания lead'у</button>
+    <button class="ghost small" title="Для принятой (DONE) задачи: замечания станут новой задачей" disabled style="opacity:.55">Создать задачу по замечаниям (после DONE)</button>
   </div>
   <div class="diffbody">
     <div class="diffmain">
@@ -37,6 +38,7 @@
       <h3 style="margin:0 0 10px;font:650 11px var(--font);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Замечания · 2</h3>
       <div class="review-item open"><span class="st2">открыто</span> · <span class="mono" style="font-size:11px">OrderService.java:144</span><div>пустая корзина — легальный случай после частичного возврата</div></div>
       <div class="review-item fixed"><span class="st2">исправлено</span> · <span class="mono" style="font-size:11px">CancelController.java:30</span><div>409 вместо 400<div class="note2">lead: поправил в b21d7aa</div></div></div>
+      <div class="review-item declined"><span class="st2">отклонено</span> · <span class="mono" style="font-size:11px">OrderService.java:148</span><div>вынести publish в отдельный метод<div class="note2">lead: не делаем — events.publish единый по проекту, вынос усложнит тесты</div></div></div>
       <p style="font-size:11.5px;color:var(--muted)">Lead не сдаст задачу, пока каждое замечание не исправлено или не отклонено с причиной.</p>
     </div>
   </div>

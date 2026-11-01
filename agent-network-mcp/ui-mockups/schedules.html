@@ -26,7 +26,11 @@
     <a href="projects.html"><span class="ic">▣</span>Проекты</a>
     <a href="settings.html"><span class="ic">⚙</span>Все настройки</a>
   </div>
-  <div class="side-foot"><span class="who"><span class="me">M</span>Maximus</span></div>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+    <button class="icon-btn" title="Настройки" onclick="location.href='settings.html'">⚙</button>
+  </div>
 </aside>
 
 <main>
@@ -44,15 +48,15 @@
           <td class="mono">17 3 * * *</td>
           <td class="mono">завтра 03:17</td>
           <td class="mono"><span class="badge ok">ок · 6ч назад</span></td>
-          <td style="white-space:nowrap"><button class="ghost small">Запустить</button> <button class="ghost small">✎</button></td>
+          <td style="white-space:nowrap"><button class="ghost small">Запустить</button> <button class="ghost small">✎</button> <button class="ghost small" title="Удалить расписание">🗑</button></td>
         </tr>
         <tr>
           <td><input type="checkbox" checked style="width:auto"></td>
           <td><b>Отчёт о расходе</b><div style="font-size:12px;color:var(--muted)">сводка по агентам и задачам за неделю</div></td>
           <td class="mono">43 9 * * 1</td>
-          <td class="mono">пн 09:43</td>
+          <td class="mono">пн 09:43<div style="font-size:11px;color:var(--warn)">пропустится, если T-14 ещё открыта</div></td>
           <td class="mono"><span class="badge warn">пропущен · выкл. машина</span></td>
-          <td style="white-space:nowrap"><button class="ghost small">Запустить</button> <button class="ghost small">✎</button></td>
+          <td style="white-space:nowrap"><button class="ghost small">Запустить</button> <button class="ghost small">✎</button> <button class="ghost small" title="Удалить">🗑</button></td>
         </tr>
         <tr style="opacity:.55">
           <td><input type="checkbox" style="width:auto"></td>
@@ -60,7 +64,7 @@
           <td class="mono">*/30 * * * *</td>
           <td class="mono">—</td>
           <td class="mono"><span class="badge bad">ошибка · 2д назад</span></td>
-          <td style="white-space:nowrap"><button class="ghost small">Запустить</button> <button class="ghost small">✎</button></td>
+          <td style="white-space:nowrap"><button class="ghost small">Запустить</button> <button class="ghost small">✎</button> <button class="ghost small" title="Удалить">🗑</button></td>
         </tr>
       </table>
     </div>
@@ -72,16 +76,21 @@
         <label>Что делать (текст задачи для агентов)
           <input placeholder="Прогнать полный набор тестов и сообщить о падениях"></label>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+          <label>Название (плейсхолдеры {date} {time} подставятся сами)
+            <input value="Ночные тесты {date}"></label>
           <label>cron
             <input class="mono" value="17 3 * * *">
             <span style="font-size:11.5px;color:var(--ok)">ближайшие: завтра 03:17 · чт 03:17 · пт 03:17</span></label>
           <label>Ведёт
             <select><option>backend</option><option>reviewer</option></select></label>
+          <label>Раундов исправлений
+            <input type="number" value="3" min="0" max="20"></label>
           <label>Проверка сборкой
             <input placeholder="./mvnw verify"></label>
           <label>Лимит расхода, $
             <input type="number" placeholder="без лимита"></label>
         </div>
+        <label style="display:flex;gap:8px;align-items:center;color:var(--text);font-size:13px"><input type="checkbox" checked style="width:auto"> Включено сразу после создания</label>
         <div><button class="cta small">Добавить расписание</button></div>
       </div>
     </details>

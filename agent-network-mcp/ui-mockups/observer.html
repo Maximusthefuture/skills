@@ -26,7 +26,11 @@
     <a href="projects.html"><span class="ic">▣</span>Проекты</a>
     <a href="settings.html"><span class="ic">⚙</span>Все настройки</a>
   </div>
-  <div class="side-foot"><span class="who"><span class="me">M</span>Maximus</span></div>
+  <div class="side-foot">
+    <span class="who"><span class="me">M</span>Maximus</span>
+    <button class="icon-btn" title="Уведомления">◔</button>
+    <button class="icon-btn" title="Настройки" onclick="location.href='settings.html'">⚙</button>
+  </div>
 </aside>
 
 <main>
@@ -42,23 +46,32 @@
     <div class="sect-h">Предложения <span class="n">2 новых</span></div>
 
     <div class="need plan">
-      <div class="k">Предложение · из отчёта вчера</div>
+      <div class="k">Предложение · приоритет высокий · из отчёта вчера</div>
       <h3>Ограничивать размер читаемых логов в инструкциях runner'ов</h3>
-      <div class="body">В 3 из 5 падений за месяц агент читал лог >50 МБ целиком и упирался в контекст. Правило для роли: читать хвост лога, по необходимости — grep.</div>
+      <div class="body">
+        <b>Проблема:</b> в 3 из 5 падений за месяц агент читал лог >50 МБ целиком и упирался в контекст.<br>
+        <b>Где видно:</b> T-07, T-02 (септябрь), падения runner'а reviewer.<br>
+        <b>Во что обходится:</b> ~$0.40 и 40 минут простоя на падение.<br>
+        <b>Что сделать:</b> правило в роль и шаблоны runner'ов — читать хвост лога, по необходимости grep.
+      </div>
       <div class="opts">
         <button class="cta">Принять → задача рою</button>
-        <button class="ghost">Отклонить</button>
-        <button class="ghost">Обсудить</button>
+        <button class="ghost">Отклонить с причиной…</button>
       </div>
+      <div class="meta">При приёме станет задачей: агенты — backend, reviewer · цель — правила в .agent-network/roles и runnerTemplates</div>
     </div>
 
     <div class="need plan">
-      <div class="k">Предложение · из отчёта вчера</div>
+      <div class="k">Предложение · приоритет средний · из отчёта вчера</div>
       <h3>Статус «ждёт dependsOn» показывать вам сразу</h3>
-      <div class="body">Задачи простаивали в среднем 14 минут, пока агент ждал зависимость. Наблюдатель предлагает пинговать вас, если ожидание >10 минут.</div>
+      <div class="body">
+        <b>Проблема:</b> задачи простаивали в среднем 14 минут, пока агент ждал зависимость.<br>
+        <b>Где видно:</b> T-12, T-09 — полосы «ждёт backend» без уведомления.<br>
+        <b>Что сделать:</b> пинговать вас, если ожидание dependsOn >10 минут.
+      </div>
       <div class="opts">
         <button class="cta">Принять → задача рою</button>
-        <button class="ghost">Отклонить</button>
+        <button class="ghost">Отклонить с причиной…</button>
       </div>
     </div>
 

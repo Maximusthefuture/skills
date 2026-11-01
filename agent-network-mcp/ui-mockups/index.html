@@ -16,13 +16,19 @@
   </div>
   <div class="search"><input placeholder="Поиск по задачам…"></div>
   <div class="side-nav">
-    <a class="on" href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">3</span></a>
+    <a class="on" href="index.html"><span class="ic">◉</span>Нужно мне<span class="c">5</span></a>
   </div>
   <div class="side-label">Задачи<span class="plus" title="Новая задача" onclick="location.href='new.html'">＋</span></div>
   <a class="chat-item" href="task.html">
-    <span class="dot warn"></span>
-    <span class="col"><span class="nm">Частичный возврат заказа по сумме</span>
-    <span class="pv">ждёт ответа: какой шаблон письма?</span></span>
+    <span class="dot bad"></span>
+    <span class="col"><span class="nm">Валидация корзины</span>
+    <span class="pv">остановлена · решить до 14:15 (38 мин)</span></span>
+    <span class="nudge">вы</span>
+  </a>
+  <a class="chat-item" href="task.html">
+    <span class="dot bad"></span>
+    <span class="col"><span class="nm">Прогрев кэша</span>
+    <span class="pv">runner сдался: 3 перезапуска, OOM</span></span>
     <span class="nudge">вы</span>
   </a>
   <a class="chat-item" href="task.html">
@@ -32,16 +38,16 @@
     <span class="nudge">вы</span>
   </a>
   <a class="chat-item" href="task.html">
+    <span class="dot warn"></span>
+    <span class="col"><span class="nm">Частичный возврат заказа по сумме</span>
+    <span class="pv">ждёт ответа: какой шаблон письма?</span></span>
+    <span class="nudge">вы</span>
+  </a>
+  <a class="chat-item" href="task.html">
     <span class="dot ok"></span>
     <span class="col"><span class="nm">Отмена заказа: POST /orders/{id}/cancel</span>
-    <span class="pv">проверка, раунд 1 · backend 3/5</span></span>
-    <span class="tm">14:32</span>
-  </a>
-  <a class="chat-item" href="task.html" style="opacity:.55">
-    <span class="dot"></span>
-    <span class="col"><span class="nm">Прогреть кэш каталога после деплоя</span>
-    <span class="pv">принята · влита в проект</span></span>
-    <span class="tm">вчера</span>
+    <span class="pv">приёмка: готова · ждёт вас</span></span>
+    <span class="nudge">вы</span>
   </a>
   <div class="side-label">Ещё</div>
   <div class="side-nav">
@@ -58,7 +64,7 @@
 <main>
   <div class="wrap">
     <h1 class="page-h">Нужно ваше решение</h1>
-    <p class="page-sub">Три вещи ждут вас. Остальное агенты делают сами.</p>
+    <p class="page-sub">Пять вещей ждут вас. Остальное агенты делают сами.</p>
 
     <div class="need q">
       <div class="k">Вопрос · T-12 · ждёт 40 мин</div>
@@ -79,6 +85,7 @@
       <div class="body">3 критерия из 3 подтверждены тестами, сборка зелёная. Расход $2.41 · 6 сессий.</div>
       <div class="opts">
         <button class="cta">Принять</button>
+        <button class="ghost">Вернуть с замечаниями</button>
         <button class="ghost">Критерии</button>
         <button class="ghost">Замечания к коду</button>
       </div>
@@ -98,30 +105,24 @@
     </div>
 
     <div class="need blocked">
-      <div class="k">Остановлена · T-07 · runner сдался · <span class="count">решить до 14:15 (38 мин)</span></div>
+      <div class="k">Остановлена · T-07 · runner сдался</div>
       <h3>«Прогрев кэша»: runner reviewer сдался — 3 перезапуска, падает на OOM</h3>
       <div class="body">Диагностика надзора: сессия падает на чтении большого лога, похоже на лимит памяти CLI. <a href="history.html">Лог и 3 попытки →</a></div>
       <div class="opts">
         <button class="cta">Попробовать снова</button>
-        <button class="ghost">Отдать lead'у сейчас</button>
-        <button class="ghost">Отложить, взять следующую</button>
-        <button class="ghost">Отменить</button>
+        <button class="ghost">Отменить задачу</button>
       </div>
-      <div class="meta">Если не решить до <b>14:15</b>, исправление возьмёт lead backend</div>
     </div>
 
     <div class="need blocked">
-      <div class="k">Остановлена · T-05 · кончились раунды исправлений (3/3)</div>
+      <div class="k">Остановлена · T-05 · кончились раунды исправлений (3/3) · <span class="count">решить до 14:15 (38 мин)</span></div>
       <h3>«Валидация корзины»: ревью снова нашло ошибку</h3>
-      <div class="body">Раунд 3 закончился NEEDS_FIX: граничный случай с пустой корзиной. Можно дать ещё раундов или закрыть.</div>
+      <div class="body">Раунд 3 закончился NEEDS_FIX: граничный случай с пустой корзиной.</div>
       <div class="opts">
         <button class="cta">+1 раунд</button>
-        <button class="ghost">+2</button>
-        <button class="ghost">+3</button>
-        <button class="ghost">Отдать lead'у</button>
-        <button class="ghost">Отложить, взять следующую</button>
-        <button class="ghost">Отменить</button>
+        <button class="ghost">Ещё: +2 · +3 · отдать lead'у · отложить, взять следующую · отменить</button>
       </div>
+      <div class="meta">Если не решить до <b>14:15</b>, исправление возьмёт lead backend — ему отдадут файлы застрявших агентов на один раунд</div>
     </div>
 
     <div class="sect-h">Что происходит <span class="n">живое</span></div>
