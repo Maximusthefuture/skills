@@ -6,6 +6,8 @@ import type { GitContext, Task } from "../types.js";
 import { assertTaskId } from "../validation.js";
 
 export interface NewTask {
+  projectInput?: Task["projectInput"];
+  projectOrigin?: { projectId: string; operationId: string };
   title: string;
   description: string;
   agents: string[];
@@ -43,6 +45,8 @@ export class TaskStore {
     const now = new Date().toISOString();
     const task: Task = {
       id,
+      ...(input.projectInput ? { projectInput: input.projectInput } : {}),
+      ...(input.projectOrigin ? { projectOrigin: input.projectOrigin } : {}),
       title: input.title,
       description: input.description,
       phase: "DISCUSS",

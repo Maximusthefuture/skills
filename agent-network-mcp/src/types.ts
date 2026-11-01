@@ -23,6 +23,8 @@ export interface GitContext {
 }
 
 export interface Task {
+  projectInput?: { state: "pending" | "ready"; expected: string[]; inputSnapshotHash?: string };
+  projectOrigin?: { projectId: string; operationId: string };
   id: string;
   title: string;
   description: string;
@@ -291,6 +293,7 @@ export const MESSAGE_TYPES = ["QUESTION", "PROPOSAL", "INFORMATION", "REQUEST", 
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 
 export interface Message {
+  projectOrigin?: { projectId: string; operationId: string };
   id: string;
   taskId: string;
   from: string;

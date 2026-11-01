@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createObserverServer } from "./observer/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createProjectServer } from "./project/mcp.js";
 import { createInterface } from "node:readline/promises";
 import { runCli, type Ask } from "./cli.js";
 import { loadConfig } from "./config.js";
@@ -30,6 +31,14 @@ const ask: Ask | undefined =
     : undefined;
 
 async function main(): Promise<void> {
+  if (process.argv[2] === "project-mcp") {
+    const required = (key: string) => { const value = process.env[key]; if (!value) throw new Error(`${key} is required for project-mcp`); return value; };
+    const server = await createProjectServer({ networkDir: required("NETWORK_DIR"), projectId: required("PROJECT_ID"),
+      runId: required("PROJECT_RUN_ID"), ownerToken: required("PROJECT_OWNER_TOKEN"),
+      resolved: JSON.parse(process.env.PROJECT_RESOLVED ?? "{}") });
+    await server.connect(new StdioServerTransport());
+    return;
+  }
   if (process.argv[2] === "supervisor-mcp") {
     // the supervisor's own tools, for its CLI session (see src/supervisor); it is no agent of the network
     const server = createSupervisorServer(supervisorOptionsFromEnv(process.env));

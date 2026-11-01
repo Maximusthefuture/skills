@@ -4,6 +4,7 @@ import type { Message, MessageType, QuestionChoices } from "../types.js";
 import { assertMessageId, assertTaskId } from "../validation.js";
 
 export interface NewMessage {
+  projectOrigin?: { projectId: string; operationId: string };
   urgent?: boolean;
   taskId: string;
   from: string;
@@ -33,6 +34,7 @@ export class MessageStore {
   async create(input: NewMessage): Promise<Message> {
     return this.fs.createNumbered(this.dir(input.taskId), "msg", (id) => ({
       id,
+      ...(input.projectOrigin ? { projectOrigin: input.projectOrigin } : {}),
       taskId: input.taskId,
       from: input.from,
       to: input.to,

@@ -1,0 +1,20 @@
+import { expect, it } from "vitest";
+import { ProjectStore } from "../../src/project/store.js";
+import { FileStore } from "../../src/storage/fileStore.js";
+import { tmpDir } from "../helpers/tmp.js";
+it("retains the original message and proposals and forbids new proposals during retry", async () => {
+  const store = new ProjectStore(await FileStore.open(await tmpDir()));
+  const run = await store.enqueue("m1", "original");
+  await store.claim("first");
+  const proposal = await store.propose({ runId: run.runId, ownerToken: "first", operationId: "p1", summary: "Task", payload: { title: "Task", description: "Goal", agents: ["a", "b"] } });
+  await store.finish(run.runId, "first", { error: "failed" });
+  const retry = await store.retry(run.runId, "retry-one");
+  expect((await store.retry(run.runId, "retry-one")).runId).toBe(retry.runId);
+  await expect(store.retry(run.runId, "retry-two")).rejects.toThrow("already queued");
+  await store.claim("second");
+  await expect(store.propose({ runId: retry.runId, ownerToken: "second", operationId: "p2", summary: "New task", payload: proposal.payload })).rejects.toThrow("previously saved");
+  const state = await store.read();
+  expect(state.messages).toHaveLength(1);
+  expect(state.proposals.map(p => p.proposalId)).toEqual([proposal.proposalId]);
+  expect(retry.retryOfRunId).toBe(run.runId);
+});

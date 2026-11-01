@@ -24,6 +24,7 @@ import { SubtaskStore } from "./stores/subtaskStore.js";
 import { SyncStore } from "./stores/syncStore.js";
 import { TaskStore } from "./stores/taskStore.js";
 import { pickTask } from "./pick.js";
+import { finalizeProjectInput } from "./project/inputManifest.js";
 import { CONTRACT_PREFIX, contractPath, inspectContract, isContractFile, openContractWorktree, type TaskContract } from "./contract.js";
 import type {
   Agent,
@@ -330,8 +331,28 @@ export class NetworkService {
    * Task creation from outside the LLM (CLI / operator). The creator is not an agent and the task agents
    * do not have to be registered yet: they register when their MCP processes start.
    */
-  async createTaskAsOperator(input: NewTaskInput): Promise<Task> {
-    return this.createTaskCore("operator", input, false);
+  async createTaskAsOperator(input: NewTaskInput, projectOrigin?: { projectId: string; operationId: string }): Promise<Task> {
+    return this.createTaskCore("operator", input, false, projectOrigin);
+  }
+
+  async validateTaskAsOperator(input: NewTaskInput): Promise<void> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator validates project tasks");
+    await this.createTaskCore("operator", input, false, undefined, true);
+  }
+
+  /** Reconcile a correlated creation before reporting success or making its input runnable. */
+  async finalizeProjectTask(taskId: string, origin: { projectId: string; operationId: string }, from: string[]): Promise<Task> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator finalizes project tasks");
+    return this.fs.withLock(this.tasks.lockPath(assertTaskId(taskId)), async () => {
+      const task = await this.tasks.get(taskId);
+      if (task.projectOrigin?.projectId !== origin.projectId || task.projectOrigin.operationId !== origin.operationId) throw new AppError("FORBIDDEN", "Project task correlation mismatch");
+      if (!task.projectInput) {
+        if (from.length) throw new AppError("INVALID_INPUT", "Project input metadata missing; manual recovery required");
+        return task;
+      }
+      const manifest = await finalizeProjectInput(this.fs, task.id, task.projectInput.expected, () => collectInput(from, this.projectDir));
+      return this.tasks.save({ ...task, projectInput: { ...task.projectInput, state: "ready", inputSnapshotHash: manifest.inputSnapshotHash } });
+    });
   }
 
   /** The project the network belongs to (<project>/.agent-network): OpenSpec changes are read from there. */
@@ -339,7 +360,9 @@ export class NetworkService {
     return dirname(this.fs.root);
   }
 
-  private async createTaskCore(createdBy: string, input: NewTaskInput, asAgent: boolean): Promise<Task> {
+  private createTaskCore(createdBy: string, input: NewTaskInput, asAgent: boolean, projectOrigin?: { projectId: string; operationId: string }, validateOnly?: false): Promise<Task>;
+  private createTaskCore(createdBy: string, input: NewTaskInput, asAgent: boolean, projectOrigin: undefined, validateOnly: true): Promise<null>;
+  private async createTaskCore(createdBy: string, input: NewTaskInput, asAgent: boolean, projectOrigin?: { projectId: string; operationId: string }, validateOnly = false): Promise<Task | null> {
     const change = input.openspec?.trim() ? await readChange(this.projectDir, input.openspec.trim()) : null;
     const proposes = input.proposes?.trim() ? await this.checkNewChange(input.proposes.trim(), !!change) : undefined;
     if (proposes && input.planReview) throw new AppError("INVALID_INPUT", "A task that writes an OpenSpec change has no separate plan: the change itself is what you review");
@@ -369,8 +392,11 @@ export class NetworkService {
     if (contract && (proposes || change)) throw new AppError("INVALID_INPUT", "A contract project goes with a task that changes code, not with an OpenSpec change task");
     const git = await readGitContext(this.projectDir);
     const description = change ? openspecDescription(change.name, input.description) : proposes ? proposeDescription(proposes, input.description) : input.description;
+    if (validateOnly) return null;
     const task = await this.tasks.create({
       title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps,
+      ...(projectOrigin ? { projectOrigin } : {}),
+      ...(projectOrigin && inputFiles.length ? { projectInput: { state: "pending" as const, expected: inputFiles.map(f => f.rel) } } : {}),
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}), ...(change ? { openspec: change.name } : {}), ...(proposes ? { proposes } : {}),
       ...(inputFiles.length ? { proposesInput: inputFiles.map((f) => f.rel) } : {}),
       ...(input.clarify ? { clarify: true } : {}),
@@ -381,8 +407,12 @@ export class NetworkService {
       ...(parent ? { parentTaskId: parent.id, rootTaskId: parent.rootTaskId ?? parent.id } : {}),
       ...(input.baseCommit ? { baseCommit: assertCommit(input.baseCommit) } : {}),
     });
-    if (inputFiles.length) await copyInput(inputFiles, join(this.fs.root, "tasks", task.id, "input"));
-    const created = contract ? await this.tasks.save({ ...task, contract: await this.contractFor(task.id, contract) }) : task;
+    let finalized = task;
+    if (inputFiles.length && projectOrigin) {
+      const manifest = await finalizeProjectInput(this.fs, task.id, task.projectInput!.expected, async () => inputFiles);
+      finalized = await this.tasks.save({ ...task, projectInput: { ...task.projectInput!, state: "ready", inputSnapshotHash: manifest.inputSnapshotHash } });
+    } else if (inputFiles.length) await copyInput(inputFiles, join(this.fs.root, "tasks", task.id, "input"));
+    const created = contract ? await this.tasks.save({ ...finalized, contract: await this.contractFor(task.id, contract) }) : finalized;
     await this.emit({ type: "TASK_CREATED", taskId: task.id, sourceAgent: createdBy, payload: { title, agents } });
     return created;
   }
@@ -1182,7 +1212,7 @@ export class NetworkService {
    * crossing the lead's plan. An ordinary message, so a waiting lead wakes up with it and a busy one gets it through
    * its hooks. (Answers to an agent's own question still go to that agent: answerQuestion.)
    */
-  async messageLead(input: { taskId: string; content: string; urgent?: boolean }): Promise<Message> {
+  async messageLead(input: { taskId: string; content: string; urgent?: boolean }, projectOrigin?: { projectId: string; operationId: string }): Promise<Message> {
     if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator writes to the lead this way");
     const task = await this.tasks.get(assertTaskId(input.taskId));
     if (task.status === "COMPLETED" || task.status === "CANCELLED") throw new AppError("ALREADY_COMPLETED", `Task ${task.id} is ${task.status}`);
@@ -1192,7 +1222,7 @@ export class NetworkService {
     const note = others.length
       ? `[From the operator to you, the lead of ${task.id}: act on it, and pass on to ${others.join(", ")} with send_message what they need to do. No reply needed; if you reply, use fyi: true.]\n`
       : `[From the operator. No reply needed; if you reply, use fyi: true.]\n`;
-    const message = await this.messages.create({ taskId: task.id, from: OPERATOR, to, type: "INFORMATION", content: `${note}${input.content.trim()}`, ...(input.urgent ? { urgent: true } : {}) });
+    const message = await this.messages.create({ taskId: task.id, from: OPERATOR, to, type: "INFORMATION", content: `${note}${input.content.trim()}`, ...(input.urgent ? { urgent: true } : {}), ...(projectOrigin ? { projectOrigin } : {}) });
     await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: to, sourceAgent: OPERATOR, payload: { messageId: message.id, from: OPERATOR, type: message.type } });
     return message;
   }

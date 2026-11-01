@@ -155,6 +155,7 @@ export interface RunnersConfig {
   notify?: NotifyConfig;
   /** «Составить черновик» in the task form (src/drafter.ts): a read-only session drafts a task from the operator's idea. */
   drafter?: ObserverConfig;
+  coordinator?: { engine: "claude" | "kimi"; model?: string };
   /** "runnerTemplates": the CLIs with their models the page's «Добавить runner» form creates a runner from. */
   runnerTemplates?: RunnerTemplate[];
 }
@@ -506,6 +507,15 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
   if (raw.mergeStrategy !== undefined && raw.mergeStrategy !== "squash" && raw.mergeStrategy !== "merge") throw new AppError("INVALID_CONFIG", `${file}: "mergeStrategy" is "squash" (one commit per task) or "merge"`);
   const mergeCheck = raw.mergeCheck === undefined ? undefined : parseMergeCheck(raw.mergeCheck, file);
   const notify = raw.notify === undefined ? undefined : parseNotify(raw.notify, file);
+  let coordinator: { engine: "claude" | "kimi"; model?: string } | undefined;
+  const coordinatorRaw = (raw as typeof raw & { coordinator?: unknown }).coordinator;
+  if (coordinatorRaw !== undefined && coordinatorRaw !== false) {
+    if (!coordinatorRaw || typeof coordinatorRaw !== "object" || Array.isArray(coordinatorRaw) || Object.keys(coordinatorRaw).some(key => key !== "model" && key !== "engine")) throw new AppError("INVALID_CONFIG", "coordinator must contain only engine and model");
+    const { model, engine = "claude" } = coordinatorRaw as { model?: unknown; engine?: unknown };
+    if (engine !== "claude" && engine !== "kimi") throw new AppError("INVALID_CONFIG", "coordinator.engine must be claude or kimi");
+    if (model !== undefined && (typeof model !== "string" || !model.trim())) throw new AppError("INVALID_CONFIG", "coordinator.model must be a nonempty string");
+    coordinator = { engine, ...(typeof model === "string" ? { model } : {}) };
+  }
   const drafter = raw.drafter === undefined ? undefined : await parseObserver({ ...(raw.drafter as object), cron: undefined }, "drafter");
   const prices = parsePrices(raw.prices, file);
   const maxTaskCostUsd = raw.maxTaskCostUsd === undefined || raw.maxTaskCostUsd === null ? undefined : costLimit(raw.maxTaskCostUsd, `${file}: "maxTaskCostUsd"`);
@@ -525,6 +535,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     ...(mergeCheck ? { mergeCheck } : {}),
     ...(notify ? { notify } : {}),
     ...(drafter ? { drafter } : {}),
+    ...(coordinator ? { coordinator } : {}),
     ...(runnerTemplates?.length ? { runnerTemplates } : {}),
   };
 }

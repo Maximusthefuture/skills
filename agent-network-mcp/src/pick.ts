@@ -11,7 +11,7 @@ const open = (t: Task | undefined): boolean => !!t && (t.status === "ACTIVE" || 
 export function pickTask(tasks: Task[], agent: string): Task | null {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   return [...tasks].sort((a, b) => seq(a) - seq(b)).find((t) => {
-    if (!t.agents.includes(agent) || !open(t)) return false;
+    if (!t.agents.includes(agent) || !open(t) || t.projectInput?.state === "pending") return false;
     const next = t.setAside?.next[agent];
     return !(next && open(byId.get(next)));
   }) ?? null;

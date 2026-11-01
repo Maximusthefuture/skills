@@ -98,6 +98,7 @@ export function assembleProject(networkDir: string, config: RunnersConfig | unde
     ...(config?.mergeCheck?.setup ? { mergeSetup: config.mergeCheck.setup } : {}),
     ...(config?.notify ? { notify: config.notify } : {}),
     ...(runners && config?.drafter ? { drafter: config.drafter } : {}),
+    ...(runners && config?.coordinator ? { coordinator: config.coordinator } : {}),
     ...(config?.path ? { configPath: config.path } : {}),
     start, stop,
   };

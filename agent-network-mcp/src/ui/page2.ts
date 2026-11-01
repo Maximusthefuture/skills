@@ -541,6 +541,7 @@ pre.jlog{grid-column:1/-1;max-height:420px;margin:0;white-space:pre-wrap;font:11
   </div>
   <div class="search"><input id="search" placeholder="Поиск по задачам…" aria-label="Поиск по задачам"></div>
   <div class="side-nav">
+    <a id="nav-project" href="#/project"><span class="ic">◇</span>Обсуждение проекта</a>
     <a id="nav-inbox" href="#/inbox"><span class="ic">◉</span>Нужно мне<span class="c" id="c-att" hidden></span></a>
   </div>
   <div class="side-label">Задачи<span class="plus" id="newtask-plus" title="Новая задача">＋</span></div>
@@ -604,7 +605,7 @@ function toast(kind,title,text,taskId){const box=$("toasts");const d=el("div","t
   return d}
 
 /* ── роутер: #/inbox · #/tasks/<id> · #/new · #/agents · #/history/<tab> · #/settings/<sub> ── */
-const ROUTES=["inbox","tasks","new","agents","history","settings"];
+const ROUTES=["project","inbox","tasks","new","agents","history","settings"];
 let route=parseHash();
 function parseHash(){const parts=location.hash.replace(/^#\/?/,"").split("/").map(x=>decodeURIComponent(x));
   const name=ROUTES.includes(parts[0])?parts[0]:"inbox";
@@ -1839,7 +1840,121 @@ function renderSettings(){
   main.replaceChildren(wrap)}
 
 /* ── диспетчер рендера ── */
+let projectChatRequest=0;
+function renderProject(){
+  const main=$("main");
+  const key=String(project||"");
+  let wrap=$("project-chat");
+  if(!wrap||wrap.dataset.project!==key){
+    wrap=el("div","wrap");wrap.id="project-chat";wrap.dataset.project=key;
+    wrap.append(el("h1","page-h","Обсуждение проекта"),el("p","page-sub","Обсудите цель перед запуском работы. Создание задач потребует отдельного подтверждения."));
+    const history=el("div");history.id="project-chat-history";history.setAttribute("aria-live","polite");wrap.append(history);
+    const form=el("form");const label=el("label","","Сообщение проекту");label.htmlFor="project-chat-input";
+    const input=el("textarea");input.id="project-chat-input";input.rows=4;input.style.width="100%";
+    const draftKey="project-chat-draft:"+key;let pending;
+    try{pending=JSON.parse(localStorage.getItem(draftKey)||"null")}catch(e){}
+    input.value=pending?.content||"";
+    input.oninput=()=>{pending={messageId:crypto.randomUUID(),content:input.value};localStorage.setItem(draftKey,JSON.stringify(pending))};
+    const error=el("p","bad");error.id="project-chat-error";error.setAttribute("role","alert");input.setAttribute("aria-describedby",error.id);
+    const send=el("button","btn","Отправить");send.type="submit";
+    form.append(label,input,send,error);wrap.append(form);
+    form.onsubmit=async e=>{e.preventDefault();if(!input.value.trim())return;
+      if(!pending||pending.content!==input.value)pending={messageId:crypto.randomUUID(),content:input.value};
+      localStorage.setItem(draftKey,JSON.stringify(pending));const submitted=pending;send.disabled=true;error.textContent="";
+      try{await post("/api/project/messages",submitted);if(input.value===submitted.content){input.value="";pending=null;localStorage.removeItem(draftKey)}renderProject()}
+      catch(e){error.textContent=e.message}finally{send.disabled=false}};
+    const follow=el("details");follow.append(el("summary","","Отправить уточнение в задачу"));
+    const followForm=el("form"),target=el("select"),text=el("textarea"),preview=el("pre"),notice=el("p","page-sub");
+    target.id="project-follow-target";text.id="project-follow-text";text.rows=3;text.style.width="100%";
+    const targetLabel=el("label","","Выберите задачу");targetLabel.htmlFor=target.id;
+    const textLabel=el("label","","Точный текст уточнения");textLabel.htmlFor=text.id;
+    const draftKeyFollow="project-follow-draft:"+key;let followDraft={operationId:crypto.randomUUID(),taskId:"",content:""};
+    try{followDraft=JSON.parse(localStorage.getItem(draftKeyFollow)||"null")||followDraft}catch(e){}
+    target.dataset.saved=followDraft.taskId;text.value=followDraft.content;
+    const update=()=>{const option=target.selectedOptions[0];preview.textContent=(option?.value?"Адресат: "+option.textContent:"Выберите адресата")+"\\n\\n"+text.value};
+    const edit=()=>{followDraft={operationId:crypto.randomUUID(),taskId:target.value,content:text.value};localStorage.setItem(draftKeyFollow,JSON.stringify(followDraft));update()};
+    target.onchange=edit;text.oninput=edit;
+    const submit=el("button","btn","Отправить в выбранную задачу");submit.type="submit";
+    followForm.append(targetLabel,target,textLabel,text,preview,submit,notice);follow.append(followForm);wrap.append(follow);
+    followForm.onsubmit=async e=>{e.preventDefault();if(!target.value||!text.value.trim()){notice.textContent="Выберите задачу и введите текст.";return}
+      if(followDraft.taskId!==target.value||followDraft.content!==text.value)edit();
+      if(!confirm("Отправить уточнение?\\n\\n"+preview.textContent))return;
+      const submitted={...followDraft};submit.disabled=true;notice.textContent="Отправляется…";
+      try{await post("/api/project/send-to-task",submitted);notice.textContent="Доставлено в очередь задачи. Исполнение ещё не подтверждено.";
+        if(text.value===submitted.content&&target.value===submitted.taskId){text.value="";localStorage.removeItem(draftKeyFollow);followDraft={operationId:crypto.randomUUID(),taskId:target.value,content:""};update()}}
+      catch(e){notice.textContent=e.message}finally{submit.disabled=false}};
+    main.replaceChildren(wrap);
+  }
+  const request=++projectChatRequest;
+  getJSON(q("/api/project")).then(state=>{
+    if(request!==projectChatRequest||route.name!=="project"||String(project||"")!==key)return;
+    const history=$("project-chat-history");if(!history)return;
+    const target=$("project-follow-target");if(target){const value=target.value||target.dataset.saved||"";
+      const available=S.tasks.filter(t=>state.tasks.some(link=>link.taskId===t.id)&&["ACTIVE","BLOCKED"].includes(t.status));
+      const sig=JSON.stringify(available.map(t=>[t.id,t.title]));if(target.dataset.signature!==sig){target.dataset.signature=sig;
+        const empty=el("option","","Выберите задачу");empty.value="";target.replaceChildren(empty);
+        for(const task of available){const option=el("option","",task.title+" · "+task.id);option.value=task.id;target.append(option)}target.value=value;
+        target.dataset.saved="";}}
+    const signature=JSON.stringify(state);if(history.dataset.signature===signature)return;
+    if(history.contains(document.activeElement)&&document.activeElement.closest("form"))return;
+    history.dataset.signature=signature;
+    const content=el("div");
+    content.append(el("p","page-sub",state.paused?"Очередь приостановлена.":state.coordinatorConfigured?"Сообщения обрабатываются по очереди. Задачи создаются только после подтверждения.":"Сообщения ожидают подключения Coordinator. Задачи автоматически не запускаются."));
+    const pause=el("button","btn",state.paused?"Продолжить":"Приостановить очередь");
+    pause.onclick=async()=>{try{await post("/api/project/pause",{paused:!state.paused});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};content.append(pause);
+    if(!state.messages.length)content.append(el("p","page-sub","Начните с вопроса или опишите желаемый результат."));
+    const labels={queued:"В очереди",running:"Обрабатывается",succeeded:"Ответ готов",failed:"Не удалось выполнить",cancelled:"Отменено"};
+    for(const message of state.messages){const row=el("section","card");row.append(el("p","",message.content));
+      for(const run of state.runs.filter(r=>r.messageId===message.messageId)){row.append(el("p","page-sub",run.cancelRequested&&run.state==="running"?"Останавливается":labels[run.state]));
+        if(run.result)row.append(el("p","",run.result));if(run.error)row.append(el("p","bad",run.error));
+        if(run.state==="failed"){const retry=el("button","btn","Повторить ответ");retry.onclick=async()=>{retry.disabled=true;try{await post("/api/project/retry",{runId:run.runId,retryRunId:crypto.randomUUID()});renderProject()}catch(e){$("project-chat-error").textContent=e.message}finally{retry.disabled=false}};row.append(retry)}
+        if(run.state==="queued"||run.state==="running"){const cancel=el("button","btn",run.state==="queued"?"Убрать из очереди":"Остановить ответ");
+          cancel.onclick=async()=>{try{await post("/api/project/cancel",{runId:run.runId});renderProject()}catch(e){$("project-chat-error").textContent=e.message}};row.append(cancel)}}content.append(row)}
+    content.append(el("p","page-sub","Остановка ответа не останавливает уже запущенные задачи. Управляйте ими в списке задач."));
+    for(const proposal of state.proposals||[]){const card=el("section","card"),payload=proposal.payload;
+      card.append(el("h3","",payload.title),el("p","",proposal.summary),el("p","",payload.description),el("p","page-sub","Команда: "+payload.agents.join(", ")),
+        el("p","page-sub","Стоимость неизвестна. "+(payload.maxCostUsd===undefined?"Лимит не задан.":"Лимит: $"+payload.maxCostUsd+"; это не прогноз.")),el("p","page-sub","Состояние предложения: "+proposal.status));
+      const settings=el("details");settings.append(el("summary","","Подробные настройки"),el("pre","",JSON.stringify(payload,null,2)));card.append(settings);
+      const result=el("p","page-sub");result.setAttribute("role","status");card.append(result);
+      if(proposal.taskId)card.append(taskLink(proposal.taskId,"Создана задача"));
+      if(proposal.status==="pending"||proposal.status==="approved"){
+        const act=async(action,extra)=>{try{const answer=await post("/api/project/proposals/"+action,{proposalId:proposal.proposalId,hash:proposal.hash,...extra});
+          result.textContent=answer.task?"Задача создана: "+answer.task.id:action==="preflight"?"Проверки пройдены. Создание потребует отдельного действия.":"Сохранено.";if(action!=="preflight")renderProject();return answer}
+          catch(e){result.textContent=e.message;return null}};
+        const check=el("button","btn","Проверить");check.onclick=()=>act("preflight");card.append(check);
+        const approve=el("button","btn","Создать задачу");approve.onclick=async()=>{approve.disabled=true;await act("approve");approve.disabled=false};card.append(approve);
+        if(proposal.status==="pending"){
+          const reject=el("button","btn","Отклонить");reject.onclick=()=>act("reject");card.append(reject);
+          const edit=el("button","btn","Изменить");edit.onclick=()=>{
+            if(card.querySelector("form"))return;
+            const form=el("form"),title=el("input"),description=el("textarea"),summary=el("textarea");title.value=payload.title;description.value=payload.description;summary.value=proposal.summary;
+            for(const [label,input] of [["Название",title],["Ожидаемый результат и границы",description],["Описание предложения",summary]]){const field=el("label","",label);field.append(input);form.append(field)}
+            const save=el("button","btn","Сохранить новую версию");save.type="submit";form.append(save);card.append(form);title.focus();
+            form.onsubmit=async e=>{e.preventDefault();save.disabled=true;save.blur();await act("revise",{payload:{...payload,title:title.value,description:description.value},summary:summary.value});save.disabled=false};};card.append(edit);
+        }
+      }content.append(card)}
+    const related=el("details");related.append(el("summary","","Задачи в обсуждении"));
+    const attentionLabels={question:"Ждёт вашего ответа",blocked:"Нужно решение по блокировке",plan:"Ждёт утверждения плана",acceptance:"Ждёт приёмки",merge:"Ждёт проверки вливания",supervisor:"Ждёт решения",observer:"Ждёт решения"};
+    for(const task of S.tasks){const link=state.tasks.find(t=>t.taskId===task.id);const row=el("div");row.append(taskLink(task.id,task.title));
+      if(link){const items=(ATT?.projects.find(p=>p.id===project)?.items||[]).filter(item=>item.taskId===task.id);for(const item of items){const status=el("span","page-sub",attentionLabels[item.kind]||"Ждёт вас");row.append(status,taskLink(task.id,"Открыть"))}}
+      const button=el("button","btn",link?"Отключить от обсуждения":"Добавить в обсуждение");button.disabled=!!link&&["ACTIVE","BLOCKED"].includes(task.status);
+      button.onclick=async()=>{if(link&&!confirm("Coordinator потеряет доступ к контексту этой задачи. Отключить?"))return;button.disabled=true;
+        try{await post(link?"/api/project/detach":"/api/project/attach",{taskId:task.id,operationId:crypto.randomUUID()});renderProject()}catch(e){$("project-chat-error").textContent=e.message}finally{button.disabled=false}};row.append(button);related.append(row)}content.append(related);
+    if(state.memory){const memory=el("details");memory.append(el("summary","","Память проекта"),el("pre","",state.memory.content||"Договорённостей пока нет."));content.append(memory);
+      for(const change of state.memory.changes.filter(c=>c.status==="pending")){const card=el("section","card");card.append(el("h3","","Предлагаемое изменение памяти"),el("pre","",change.content));
+        for(const approve of [true,false]){const button=el("button","btn",approve?"Подтвердить память":"Отклонить изменение");button.onclick=async()=>{button.disabled=true;try{await post("/api/project/memory/decide",{changeId:change.changeId,approve});renderProject()}catch(e){$("project-chat-error").textContent=e.message}finally{button.disabled=false}};card.append(button)}content.append(card)}}
+    const markFocusables=root=>{const counts=new Map();for(const node of root.querySelectorAll("button,input,textarea,select,a[href],[tabindex]")){const card=node.closest("section.card"),label=node.closest("label");const heading=card?.querySelector("h3")?.textContent||"";
+      const title=label?.firstChild?.textContent?.trim()||node.textContent?.trim()||node.getAttribute("aria-label")||node.tagName;
+      const base=[node.tagName,heading,title].join("|");const count=counts.get(base)||0;counts.set(base,count+1);node.dataset.pfocus=base+"|"+count}};
+    markFocusables(history);const active=history.contains(document.activeElement)?document.activeElement:null;markFocusables(content);
+    const priorKey=active?.dataset.pfocus;const priorStart=typeof active?.selectionStart==="number"?active.selectionStart:null;const priorEnd=typeof active?.selectionEnd==="number"?active.selectionEnd:null;const scroll=history.scrollTop;
+    history.replaceChildren(content);history.scrollTop=scroll;
+    if(priorKey){const replacement=[...history.querySelectorAll("[data-pfocus]")].find(node=>node.dataset.pfocus===priorKey);
+      if(replacement){replacement.focus({preventScroll:true});if(priorStart!==null&&typeof replacement.setSelectionRange==="function")replacement.setSelectionRange(priorStart,priorEnd??priorStart)}}
+  }).catch(e=>{const error=$("project-chat-error");if(error&&String(project||"")===key)error.textContent=e.message});
+}
 function renderMain(){
+  if(route.name==="project")return renderProject();
   if(route.name==="inbox")return renderInbox();
   if(route.name==="tasks")return renderTask();
   if(route.name==="new")return renderNew();

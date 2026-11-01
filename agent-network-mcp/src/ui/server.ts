@@ -6,10 +6,21 @@ import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { AppError, isAppError } from "../errors.js";
-import { readGitContext } from "../git.js";
+import { readGitContext, resolveCommit } from "../git.js";
 import { assertChangeName, changePath, hasChange, listChanges, type Exec } from "../openspec.js";
 import { injectSdk, PLAN_CSP } from "../plan.js";
 import { NetworkService, OPERATOR_TIMEOUT_MS, depthFlags } from "../service.js";
+import { ProjectStore } from "../project/store.js";
+import { ProjectMemory } from "../project/memory.js";
+import { historyPage } from "../project/history.js";
+import { ProjectCommandService } from "../project/commands.js";
+import { projectTaskSchema } from "../project/payload.js";
+import { projectPreflight } from "../project/preflight.js";
+import type { EffectivePayload } from "../project/payload.js";
+import type { ProjectState } from "../project/store.js";
+import { ProjectCoordinator, type CoordinatorExecutor } from "../project/coordinator.js";
+import { isolatedCoordinatorExecutor } from "../project/executor.js";
+import { projectSnapshot } from "../project/snapshot.js";
 import type { Prices } from "../stats.js";
 import { FileStore } from "../storage/fileStore.js";
 import { MessageStore } from "../stores/messageStore.js";
@@ -54,6 +65,7 @@ export interface UiServer {
 
 /** One project on the page: a network (<project>/.agent-network) and, in control mode, its runners. */
 export interface UiProject {
+  coordinator?: CoordinatorExecutor | { engine: "claude" | "kimi"; model?: string };
   networkDir: string;
   /** Control mode: the page may create tasks and start/stop these runners. Without it the project is read-only. */
   runners?: RunnerPool;
@@ -119,6 +131,7 @@ export interface UiOptions {
 }
 
 interface Project {
+  coordinator?: ProjectCoordinator;
   id: string;
   name: string;
   networkDir: string;
@@ -360,6 +373,36 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       });
     }
     if (p.pool) p.notifier = new Notifier(sender, spec.notify ?? {});
+    if (spec.coordinator) {
+      const projectState = await new ProjectStore(p.fs).read();
+      const executor = typeof spec.coordinator === "function" ? spec.coordinator : isolatedCoordinatorExecutor({
+        engine: spec.coordinator.engine,
+        model: spec.coordinator.model,
+        project: { networkDir: p.networkDir, projectId: projectState.projectId,
+          resolved: { ...(p.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: p.maxTaskCostUsd, maxCostUsd: p.maxTaskCostUsd } : {}), ...(p.verifyCommand ? { verifyCommand: p.verifyCommand } : {}) } },
+        snapshot: async () => {
+          const state = await new ProjectStore(p.fs).read();
+          const memory = await new ProjectMemory(p.fs, state.projectId).read();
+          const tasks = await new TaskStore(p.fs).list();
+          return projectSnapshot(state, { goal: state.name, memory: memory.content,
+            proposals: state.proposals.filter(item => item.status === "pending" || item.status === "failed").map(item => ({ proposalId: item.proposalId, status: item.status as "pending" | "failed", summary: item.summary })),
+            tasks: tasks.map(task => ({ taskId: task.id, title: task.title, status: task.status, waitingForUser: task.status === "BLOCKED", href: "#/tasks/" + task.id })),
+          });
+        },
+      });
+      p.coordinator = new ProjectCoordinator(p.fs, executor, 250, async previousRunId => {
+        const state = await new ProjectStore(p.fs).read();
+        const previous = state.runs.find(run => run.runId === previousRunId);
+        if (!previous || previous.state !== "failed") throw new AppError("INVALID_INPUT", "Only a failed run can be reconciled for retry");
+        const memory = await new ProjectMemory(p.fs, state.projectId).read();
+        return {
+          previousRunId, result: previous.result,
+          proposals: state.proposals.filter(proposal => proposal.runId === previousRunId).slice(-10).map(proposal => ({ proposalId: proposal.proposalId, status: proposal.status, summary: proposal.summary.slice(0, 512) })),
+          memoryChanges: memory.changes.filter(change => change.runId === previousRunId).slice(-5).map(change => ({ changeId: change.changeId, status: change.status, content: change.content.slice(0, 1024) })),
+        };
+      });
+      await p.coordinator.start();
+    }
     projects.push(p);
     return p;
   }
@@ -574,6 +617,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       if (at < 0) throw new AppError("INVALID_INPUT", `No project '${id}' on this page`);
       if (projects.length === 1) throw new AppError("INVALID_INPUT", "It is the page's only project: open another one first, or stop `ui`");
       const [gone] = projects.splice(at, 1);
+      await gone!.coordinator?.stop();
       await gone!.stop?.();
       gone!.operator?.close();
       if (opts.registry) await releaseProjects([gone!.projectDir], process.pid, opts.registry);
@@ -600,6 +644,14 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     if (!p) return json(404, { error: "PROJECT_NOT_FOUND", message: `No project '${wanted}' on this page`, projects: projects.map((x) => x.id) });
 
     if (method === "GET") {
+      if (path === "/api/project/history") return json(200, historyPage(await new ProjectStore(p.fs).read(), {
+        message: Number(url.searchParams.get("message") ?? 0), offset: Number(url.searchParams.get("offset") ?? 0),
+      }));
+      if (path === "/api/project") {
+        const state = await new ProjectStore(p.fs).read();
+        const memory = await new ProjectMemory(p.fs, state.projectId).read();
+        return json(200, { ...state, memory, coordinatorConfigured: !!p.coordinator, runs: state.runs.map(({ ownerToken: _owner, ...run }) => run) });
+      }
       if (path === "/" || path === "/v2") return { status: 200, type: "text/html; charset=utf-8", body: PAGE2_HTML };
       if (path === "/v1") return { status: 200, type: "text/html; charset=utf-8", body: PAGE_HTML };
       if (path === "/api/projects") return json(200, { projects: await Promise.all(projects.map(summary)), known: await knownProjects(), canOpen: !!opts.openProject && !!opts.registry });
@@ -772,6 +824,85 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       if (refused) return refused;
       if (req.headers["x-agent-network-actor"] === "supervisor") throw new AppError("FORBIDDEN", "Opening and closing projects is the operator's");
       return projectAction(path.slice("/api/projects/".length), (await readJson(req)) as Record<string, unknown>);
+    }
+    if (method === "POST" && path.startsWith("/api/project/")) {
+      const refused = crossSite(req, hostHeader);
+      if (refused) return refused;
+      if (req.headers["x-agent-network-actor"] === "supervisor") return json(403, { error: "FORBIDDEN", message: "Project conversation is the operator's" });
+      const body = await readJson(req) as Record<string, unknown>;
+      const field = (key: string): string => {
+        if (typeof body[key] !== "string" || !body[key].trim()) throw new AppError("INVALID_INPUT", `${key} is required`);
+        return body[key] as string;
+      };
+      const store = new ProjectStore(p.fs);
+      if (path === "/api/project/proposals/preflight" || path === "/api/project/proposals/approve") {
+        if (!p.pool || !p.operator) throw new AppError("INVALID_INPUT", "Configure at least two agent runners before creating tasks");
+        const operator = p.operator;
+        const preflight = async (state: ProjectState, payload: EffectivePayload) => {
+          const runners = p.pool!.list();
+          await projectPreflight(state, payload, {
+            tasks: await operator.tasks.list(), availableAgents: runners.map(r => r.id),
+            checkAgentFolders: (change, agents) => checkAgentFolders(p, change, agents),
+            verifyParentBase: async (parent, base) => {
+              if (!base || !parent.merged || parent.merged.reverted || base !== parent.merged.commit || !await resolveCommit(p.projectDir, base))
+                throw new AppError("INVALID_INPUT", "Choose a verified parent result commit before continuing");
+            },
+            checkSharedFolder: async (next, open) => {
+              if (next.proposes) return;
+              const folder = (id: string) => {
+                const cwd = resolve(runners.find(r => r.id === id)?.cwd ?? p.projectDir);
+                return process.platform === "win32" ? cwd.toLowerCase() : cwd;
+              };
+              const selected = new Set(next.agents.map(folder));
+              if (open.some(task => task.agents.some(id => selected.has(folder(id))))) throw new AppError("INVALID_INPUT", "Another Coordinator code task is open in the same folder");
+            },
+            validateTask: payload => {
+              if (payload.maxTaskCostUsd !== p.maxTaskCostUsd || (p.verifyCommand && !payload.verifyCommand)) throw new AppError("INVALID_INPUT", "Resolved project settings changed; revise the proposal");
+              return operator.validateTaskAsOperator(payload);
+            },
+          });
+        };
+        const state = await store.read();
+        const proposal = state.proposals.find(item => item.proposalId === field("proposalId"));
+        if (!proposal || proposal.hash !== field("hash")) throw new AppError("INVALID_INPUT", "Proposal payload mismatch");
+        if (path.endsWith("/preflight")) { await preflight(state, proposal.payload); return json(200, { ok: true, payload: proposal.payload, hash: proposal.hash }); }
+        await store.decideProposal(proposal.proposalId, proposal.hash, true, payload => preflight(state, payload));
+        return json(200, { task: await new ProjectCommandService(p.fs, operator).createFromProposal(proposal.proposalId, proposal.hash, preflight) });
+      }
+      if (path === "/api/project/proposals/reject") return json(200, { proposal: await store.decideProposal(field("proposalId"), field("hash"), false, async () => {}) });
+      if (path === "/api/project/proposals/revise") {
+        const parsed = projectTaskSchema.parse(body.payload);
+        return json(200, { proposal: await store.reviseProposal(field("proposalId"), field("hash"), parsed, field("summary")) });
+      }
+      if (path === "/api/project/retry") return json(200, { run: await store.retry(field("runId"), field("retryRunId")) });
+      if (path === "/api/project/send-to-task") {
+        const operator = p.operator ?? await NetworkService.create(p.networkDir, { id: "operator", type: "ui" });
+        try {
+          const message = await new ProjectCommandService(p.fs, operator).sendToTask({ taskId: field("taskId"), content: field("content"), operationId: field("operationId") });
+          return json(200, { message, delivery: "queued", executed: false });
+        } finally { if (!p.operator) operator.close(); }
+      }
+      if (path === "/api/project/attach" || path === "/api/project/detach") {
+        const tasks = new TaskStore(p.fs);
+        const taskId = field("taskId");
+        if (path.endsWith("/attach")) return json(200, { link: await store.attach(taskId, field("operationId"), async id => { await tasks.get(id); }) });
+        await store.detach(taskId, async id => (await tasks.get(id)).status);
+        return json(200, { ok: true });
+      }
+      if (path === "/api/project/memory/decide") {
+        if (typeof body.approve !== "boolean") throw new AppError("INVALID_INPUT", "approve must be boolean");
+        const state = await store.read();
+        return json(200, { change: await new ProjectMemory(p.fs, state.projectId).decide(field("changeId"), body.approve) });
+      }
+      if (path === "/api/project/messages") return json(200, { run: await store.enqueue(field("messageId"), field("content")) });
+      if (path === "/api/project/replace") return json(200, { run: await store.replaceQueued(field("runId"), field("messageId"), field("content")) });
+      if (path === "/api/project/cancel") { await store.cancel(field("runId")); return json(200, { ok: true }); }
+      if (path === "/api/project/pause") {
+        if (typeof body.paused !== "boolean") throw new AppError("INVALID_INPUT", "paused must be boolean");
+        await store.setPaused(body.paused);
+        return json(200, { ok: true });
+      }
+      return text(404, "not found");
     }
     const pool = p.pool;
     const operator = p.operator;
@@ -1313,6 +1444,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         closing = true;
         clearInterval(attentionTimer);
         await looking?.catch(() => undefined);
+        await Promise.all(projects.map(p => p.coordinator?.stop().catch(() => undefined)));
         await Promise.all(projects.map((p) => p.stop?.().catch(() => undefined)));
         if (opts.registry) await releaseProjects(projects.map((p) => p.projectDir), process.pid, opts.registry).catch(() => undefined);
         for (const p of projects) p.operator?.close();
