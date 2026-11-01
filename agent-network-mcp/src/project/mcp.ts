@@ -4,13 +4,14 @@ import { FileStore } from "../storage/fileStore.js";
 import { defineTool, errorResult } from "../mcp/toolkit.js";
 import { ProjectStore } from "./store.js";
 import { historyPage } from "./history.js";
-import { normalizeProjectTask } from "./payload.js";
+import { normalizeProjectTask, projectTaskFields } from "./payload.js";
 import { AppError } from "../errors.js";
 import { ProjectMemory } from "./memory.js";
 import { projectTaskContextPage } from "./taskContext.js";
 
 export async function createProjectServer(options: {
   networkDir: string; projectId: string; runId: string; ownerToken: string;
+  agentIds?: string[];
   resolved: { maxTaskCostUsd?: number; maxCostUsd?: number; verifyCommand?: string };
 }): Promise<McpServer> {
   const fs = await FileStore.open(options.networkDir);
@@ -55,8 +56,17 @@ export async function createProjectServer(options: {
     if (!state.tasks.some(item => item.taskId === taskId)) throw new AppError("FORBIDDEN", "Task is not linked to this project");
     return projectTaskContextPage(fs, taskId, cursor);
   });
-  defineTool(server, onError, "propose_task", "Save a task proposal for explicit human approval. Does not create a task. Reuse operationId for delivery retry.", {
-    operationId: z.string().min(1), payload: z.record(z.string(), z.unknown()), summary: z.string().min(1).max(2048), supersedes: z.string().optional(),
+  const agentIds = options.agentIds ?? [];
+  const { agents: _agents, ...taskFields } = projectTaskFields;
+  const agentSchema = agentIds.length
+    ? z.enum(agentIds as [string, ...string[]])
+    : z.string().trim().min(1).describe("Runner ID from this project's configured agents");
+  const proposalPayload = z.object({
+    ...taskFields,
+    agents: z.array(agentSchema).min(2).describe(`Required team: choose at least two distinct runner IDs. Available IDs: ${agentIds.join(", ") || "none configured"}. The first ID is the lead.`),
+  }).strict().describe("Task fields. title and description explain the work; agents must contain at least two configured runner IDs.");
+  defineTool(server, onError, "propose_task", `Save a task proposal for explicit human approval; this never creates or starts a task. payload must include title, description, and agents: an array of at least two distinct configured runner IDs. Available IDs: ${agentIds.join(", ") || "none configured"}. The first agent is the lead. Reuse operationId for delivery retry.`, {
+    operationId: z.string().min(1), payload: proposalPayload, summary: z.string().min(1).max(2048), supersedes: z.string().optional(),
   }, async input => {
     await authorize();
     const proposal = await store.propose({ ...input, runId: options.runId, ownerToken: options.ownerToken,

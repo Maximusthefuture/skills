@@ -378,7 +378,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const executor = typeof spec.coordinator === "function" ? spec.coordinator : isolatedCoordinatorExecutor({
         engine: spec.coordinator.engine,
         model: spec.coordinator.model,
-        project: { networkDir: p.networkDir, projectId: projectState.projectId,
+        project: { networkDir: p.networkDir, projectId: projectState.projectId, agentIds: p.pool?.ids() ?? [],
           resolved: { ...(p.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: p.maxTaskCostUsd, maxCostUsd: p.maxTaskCostUsd } : {}), ...(p.verifyCommand ? { verifyCommand: p.verifyCommand } : {}) } },
         snapshot: async () => {
           const state = await new ProjectStore(p.fs).read();

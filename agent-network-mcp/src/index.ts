@@ -35,6 +35,7 @@ async function main(): Promise<void> {
     const required = (key: string) => { const value = process.env[key]; if (!value) throw new Error(`${key} is required for project-mcp`); return value; };
     const server = await createProjectServer({ networkDir: required("NETWORK_DIR"), projectId: required("PROJECT_ID"),
       runId: required("PROJECT_RUN_ID"), ownerToken: required("PROJECT_OWNER_TOKEN"),
+      agentIds: JSON.parse(process.env.PROJECT_AGENT_IDS ?? "[]"),
       resolved: JSON.parse(process.env.PROJECT_RESOLVED ?? "{}") });
     await server.connect(new StdioServerTransport());
     return;

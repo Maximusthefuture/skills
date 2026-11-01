@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { NewTaskInput } from "../service.js";
 
 /** Strict: newly supported task fields must be consciously added to the approval contract. */
-export const projectTaskSchema = z.object({
+export const projectTaskFields = {
   title: z.string().trim().min(1), description: z.string().trim().min(1),
   agents: z.array(z.string().trim().min(1)).min(2).refine(a => new Set(a).size === a.length, "Agents must be distinct"),
   maxFixRounds: z.number().int().nonnegative().optional(),
@@ -16,7 +16,9 @@ export const projectTaskSchema = z.object({
   clarify: z.boolean().optional(), grill: z.boolean().optional(), planReview: z.boolean().optional(),
   parentTaskId: z.string().min(1).optional(), baseCommit: z.string().min(1).optional(),
   contract: z.string().min(1).optional(), allowSpawn: z.boolean().optional(),
-}).strict().superRefine((value, ctx) => {
+};
+
+export const projectTaskSchema = z.object(projectTaskFields).strict().superRefine((value, ctx) => {
   const invalid = (message: string) => ctx.addIssue({ code: "custom", message });
   if (value.openspec && value.proposes) invalid("openspec and proposes cannot be combined");
   if (value.from && !value.proposes) invalid("from requires proposes");

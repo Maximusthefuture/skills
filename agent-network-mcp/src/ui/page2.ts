@@ -989,7 +989,13 @@ function composer(t){
 /* ── новая задача (#/new): одно поле + вся форма v1 в «Настройках» ── */
 let draft=null,draftTimer=null;
 function renderNew(){
-  const main=$("main");const wrap=el("div","wrap");
+  const main=$("main");const previous=main.querySelector("[data-new-form]");const saved=new Map();
+  if(previous)for(const node of previous.querySelectorAll("[data-new-key]"))saved.set(node.dataset.newKey,node.type==="checkbox"?node.checked:node.value);
+  const active=previous&&previous.contains(document.activeElement)?document.activeElement:null;
+  const activeKey=active?.dataset.newKey;const selectionStart=typeof active?.selectionStart==="number"?active.selectionStart:null;
+  const selectionEnd=typeof active?.selectionEnd==="number"?active.selectionEnd:null;const selectionDirection=active?.selectionDirection;
+  const priorScroll=main.scrollTop;const focusOnMount=!previous;const previousAdv=previous?.querySelector("details.adv");
+  const wrap=el("div","wrap");wrap.dataset.newForm="true";
   wrap.append(el("h1","page-h","Что сделать?"));
   wrap.append(el("p","page-sub","Опишите своими словами или вставьте тикет — детали можно доверить агенту-черновику."));
   const runners=S&&S.control?S.control.runners:[];
@@ -1011,49 +1017,49 @@ function renderNew(){
       const again=el("button","ghost small","Составить заново");again.type="button";again.style.marginTop="8px";again.onclick=()=>{draft=null;render()};db.append(again)}
     wrap.append(db)}
   /* одно большое поле + примеры */
-  const nb=el("div","newbox");const idea=el("textarea");idea.placeholder="Например: частичный возврат заказа по сумме; письмо клиенту после возврата…";idea.autofocus=true;
+  const nb=el("div","newbox");const idea=el("textarea");idea.dataset.newKey="idea";idea.placeholder="Например: частичный возврат заказа по сумме; письмо клиенту после возврата…";
   const hint=el("div","hint");hint.append(el("span","","Примеры:"));
   for(const h of HINTS){const c=el("button","hint-chip",h);c.type="button";c.onclick=()=>{idea.value=h;idea.focus()};hint.append(c)}
   nb.append(idea,hint);wrap.append(nb);
   /* полная форма — все поля v1 */
-  const adv=el("details","adv");adv.open=true;const sum=el("summary","","Форма задачи — проверьте и поправьте");adv.append(sum);
+  const adv=el("details","adv");adv.open=previousAdv?previousAdv.open:true;const sum=el("summary","","Форма задачи — проверьте и поправьте");adv.append(sum);
   const form=el("div","in");adv.append(form);
   const F=(label,node,title)=>{const l=el("label","",label);if(title)l.title=title;l.append(node);form.append(l);return node};
-  const titleI=F("Название (можно оставить пустым)",document.createElement("input"));titleI.name="title";titleI.maxLength=200;titleI.placeholder="Отмена заказа: POST /orders/{id}/cancel";
-  const descI=F("Описание — конкретно: что сделать, где, ожидаемое поведение, кто что делает",document.createElement("textarea"));descI.rows=4;
+  const titleI=F("Название (можно оставить пустым)",document.createElement("input"));titleI.name="title";titleI.dataset.newKey="title";titleI.maxLength=200;titleI.placeholder="Отмена заказа: POST /orders/{id}/cancel";
+  const descI=F("Описание — конкретно: что сделать, где, ожидаемое поведение, кто что делает",document.createElement("textarea"));descI.name="description";descI.dataset.newKey="description";descI.rows=4;
   const grid1=el("div");grid1.style.cssText="display:grid;grid-template-columns:1fr 1fr;gap:11px";form.append(grid1);
-  const leadS=document.createElement("select");leadS.name="lead";
+  const leadS=document.createElement("select");leadS.name="lead";leadS.dataset.newKey="lead";
   for(const r of runners){const o=el("option","",r.id);o.value=r.id;leadS.append(o)}
   if(!runners.length&&S)for(const a of S.agents){const o=el("option","",a.id);o.value=a.id;leadS.append(o)}
   const l1=el("label","","Ведёт задачу (lead)");l1.append(leadS);grid1.append(l1);
   const others=el("div");others.style.cssText="display:flex;gap:12px;padding-top:8px;font-size:13px;color:var(--text);flex-wrap:wrap";
   const othersById=new Map();
   for(const r of runners){if(leadS.options.length&&r.id===leadS.options[0].value)continue;
-    const lb=el("label","",);lb.style.cssText="display:flex;gap:5px;align-items:center";const cb=el("input");cb.type="checkbox";cb.value=r.id;othersById.set(r.id,cb);
+    const lb=el("label","",);lb.style.cssText="display:flex;gap:5px;align-items:center";const cb=el("input");cb.type="checkbox";cb.value=r.id;cb.dataset.newKey="agent:"+r.id;othersById.set(r.id,cb);
     lb.append(cb,document.createTextNode(r.id));others.append(lb)}
   const l2=el("label","","Участники");l2.append(others);grid1.append(l2);
   leadS.onchange=()=>{for(const[id2,cb]of othersById)cb.disabled=id2===leadS.value};
-  const openS=F("OpenSpec change (необязательно): агенты делят его tasks.md по номерам — или пишут новый",document.createElement("select"));
+  const openS=F("OpenSpec change (необязательно): агенты делят его tasks.md по номерам — или пишут новый",document.createElement("select"));openS.dataset.newKey="openspec";
   openS.append(el("option","","— без OpenSpec —"));const oNew=el("option","","+ написать новый change…");oNew.value="__new__";openS.append(oNew);
   for(const c of CHANGES||[]){const o=el("option","",c.name||c);o.value=c.name||c;openS.append(o)}
   const folders=el("div");folders.style.cssText="font-size:11.5px;color:var(--warn)";form.append(folders);
-  const proposesI=F("Имя нового change (латиница, цифры, -): lead пишет его, остальные ревьюят; код не меняется",document.createElement("input"));proposesI.name="proposes";proposesI.maxLength=60;proposesI.placeholder="add-partial-refund";
+  const proposesI=F("Имя нового change (латиница, цифры, -): lead пишет его, остальные ревьюят; код не меняется",document.createElement("input"));proposesI.name="proposes";proposesI.dataset.newKey="proposes";proposesI.maxLength=60;proposesI.placeholder="add-partial-refund";
   proposesI.parentElement.hidden=true;
-  const fromI=F("Артефакты аналитиков (необязательно): путь к папке или .md-файлам, по одному на строку",document.createElement("textarea"));fromI.rows=2;fromI.placeholder="D:\\specs\\refund-draft\\";
+  const fromI=F("Артефакты аналитиков (необязательно): путь к папке или .md-файлам, по одному на строку",document.createElement("textarea"));fromI.dataset.newKey="from";fromI.rows=2;fromI.placeholder="D:\\specs\\refund-draft\\";
   openS.onchange=()=>{proposesI.parentElement.hidden=openS.value!=="__new__";
     if(openS.value&&openS.value!=="__new__")checkSpecFolders(openS.value,folders,()=>[leadS.value,...[...othersById].filter(([id2,cb])=>cb.checked&&!cb.disabled).map(([id2])=>id2)]);
     else folders.textContent=""};
   if(pendingChange){if([...openS.options].some(o=>o.value===pendingChange)){openS.value=pendingChange;openS.onchange()}
     else{openS.value="__new__";openS.onchange();proposesI.value=pendingChange}pendingChange=null}
   const grid2=el("div");grid2.style.cssText="display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px";form.append(grid2);
-  const verifyI=document.createElement("input");verifyI.name="verifyCommand";verifyI.placeholder="без проверки сборки";grid2.append(el("label","","Сборка и тесты (--verify)",).appendChild(verifyI).parentElement);
-  const fuI=document.createElement("input");fuI.type="number";fuI.min=0;fuI.max=20;fuI.value="0";grid2.append(el("label","","Follow-up задач на цепочку").appendChild(fuI).parentElement);
-  const frI=document.createElement("input");frI.type="number";frI.min=0;frI.max=20;frI.value="3";grid2.append(el("label","","Раундов исправлений").appendChild(frI).parentElement);
-  const costI=F("Лимит расхода, $ (достигнут — задача встанет, решите вы; пусто — без лимита)",document.createElement("input"));costI.type="number";costI.min=0;costI.step=0.5;costI.placeholder="без лимита";costI.style.maxWidth="200px";
-  const depthS=F("Подготовка",document.createElement("select"));
+  const verifyI=document.createElement("input");verifyI.name="verifyCommand";verifyI.dataset.newKey="verifyCommand";verifyI.placeholder="без проверки сборки";grid2.append(el("label","","Сборка и тесты (--verify)",).appendChild(verifyI).parentElement);
+  const fuI=document.createElement("input");fuI.name="maxFollowUps";fuI.dataset.newKey="maxFollowUps";fuI.type="number";fuI.min=0;fuI.max=20;fuI.value="0";grid2.append(el("label","","Follow-up задач на цепочку").appendChild(fuI).parentElement);
+  const frI=document.createElement("input");frI.name="maxFixRounds";frI.dataset.newKey="maxFixRounds";frI.type="number";frI.min=0;frI.max=20;frI.value="3";grid2.append(el("label","","Раундов исправлений").appendChild(frI).parentElement);
+  const costI=F("Лимит расхода, $ (достигнут — задача встанет, решите вы; пусто — без лимита)",document.createElement("input"));costI.name="maxCostUsd";costI.dataset.newKey="maxCostUsd";costI.type="number";costI.min=0;costI.step=0.5;costI.placeholder="без лимита";costI.style.maxWidth="200px";
+  const depthS=F("Подготовка",document.createElement("select"));depthS.dataset.newKey="depth";
   for(const[d,label]of[["fast","быстро — сразу к соглашению"],["standard","стандарт — lead уточнит постановку"],["thorough","тщательно — допрос, план на утверждение, критик"],["custom","своя настройка (галочки ниже)"]]){const o=el("option","",label);o.value=d;if(d==="standard")o.selected=true;depthS.append(o)}
   const prep=el("div");prep.style.cssText="display:grid;gap:6px;font-size:13px;color:var(--text)";form.append(prep);
-  const mkCheck=(name,label,on)=>{const lb=el("label","",);lb.style.cssText="display:flex;gap:8px;align-items:center";const cb=el("input");cb.type="checkbox";cb.name=name;cb.checked=!!on;lb.append(cb,document.createTextNode(label));prep.append(lb);return cb};
+  const mkCheck=(name,label,on)=>{const lb=el("label","",);lb.style.cssText="display:flex;gap:8px;align-items:center";const cb=el("input");cb.type="checkbox";cb.name=name;cb.dataset.newKey="check:"+name;cb.checked=!!on;lb.append(cb,document.createTextNode(label));prep.append(lb);return cb};
   const clarifyC=mkCheck("clarify","Сначала уточнить постановку (вопросы с вариантами)",true);
   const grillC=mkCheck("grill","Допрос (grill-me): раунды вопросов, в конце подтверждаете понимание");
   const planC=mkCheck("planReview","План на утверждение: lead пишет план страницей, вы правите и утверждаете");
@@ -1061,7 +1067,7 @@ function renderNew(){
   depthS.onchange=applyDepth;
   for(const cb of[clarifyC,grillC,planC])cb.onchange=()=>{depthS.value="custom"};
   const spawnC=mkCheck("allowSpawn","Lead может добавлять агентов (spawn, каждый — отдельная сессия по стоимости)");
-  const contractI=F("Проект контракта OpenAPI (абсолютный путь к Maven-проекту со спекой)",document.createElement("input"));contractI.placeholder="D:\\Projects\\shop-api";contractI.autocomplete="off";
+  const contractI=F("Проект контракта OpenAPI (абсолютный путь к Maven-проекту со спекой)",document.createElement("input"));contractI.name="contract";contractI.dataset.newKey="contract";contractI.placeholder="D:\\Projects\\shop-api";contractI.autocomplete="off";
   const cnote=el("div");cnote.style.cssText="font-size:11.5px";form.append(cnote);
   contractI.onchange=async()=>{const v=contractI.value.trim();if(!v){cnote.textContent="";return}
     const d=await getJSON(q("/api/contract/inspect?path="+encodeURIComponent(v))).catch(e=>({error:e.message}));
@@ -1094,7 +1100,12 @@ function renderNew(){
     catch(e){note2.style.color="var(--bad)";note2.textContent=e.message;create.disabled=false}};
   if(controlMode&&S&&S.control.drafter)row.append(draftBtn);
   row.append(create,note2);wrap.append(row);
-  main.replaceChildren(wrap)}
+  for(const node of wrap.querySelectorAll("[data-new-key]")){if(!saved.has(node.dataset.newKey))continue;const value=saved.get(node.dataset.newKey);if(node.type==="checkbox")node.checked=value;else node.value=value}
+  if(saved.has("lead"))leadS.onchange();if(saved.has("openspec"))openS.onchange();
+  main.replaceChildren(wrap);main.scrollTop=priorScroll;
+  const focusTarget=activeKey?[...wrap.querySelectorAll("[data-new-key]")].find(node=>node.dataset.newKey===activeKey):null;
+  if(focusTarget){focusTarget.focus({preventScroll:true});if(selectionStart!==null&&typeof focusTarget.setSelectionRange==="function")focusTarget.setSelectionRange(selectionStart,selectionEnd??selectionStart,selectionDirection||"none")}
+  else if(focusOnMount)idea.focus({preventScroll:true})}
 async function pollDraft(){if(!draft||draft.status!=="running")return;
   try{const d=await getJSON(q("/api/drafts/"+encodeURIComponent(draft.id)));if(d.draft.status!=="running"){clearInterval(draftTimer);draft=d.draft;render()}}catch(e){clearInterval(draftTimer)}}
 let draftFill=null;

@@ -10,6 +10,7 @@ import type { CoordinatorExecutor } from "./coordinator.js";
 const system = "You are a Project Coordinator. Discuss the user's goal and agreements. " +
   "You cannot inspect code, run commands, create tasks, or send instructions to agents. " +
   "Use project tools to read history, linked task context and saved proposals; save task and memory proposals for separate human approval. " +
+  "When proposing a task, provide title, description, and agents as an array of at least two distinct configured runner IDs; the first ID is the lead. " +
   "Never claim an action happened without server evidence. Code research needs a separately approved analysis task. " +
   "Memory is agreements, not evidence about code. Explain when supplied context is truncated. " +
   "Reply in the user's language.";
@@ -53,7 +54,7 @@ export function isolatedCoordinatorExecutor(options: {
   snapshot: () => Promise<unknown>;
   model?: string;
   engine?: "claude" | "kimi" | "codex";
-  project?: { networkDir: string; projectId: string; resolved: { maxTaskCostUsd?: number; maxCostUsd?: number; verifyCommand?: string } };
+  project?: { networkDir: string; projectId: string; agentIds: string[]; resolved: { maxTaskCostUsd?: number; maxCostUsd?: number; verifyCommand?: string } };
   run?: typeof runSession;
 }): CoordinatorExecutor {
   return async ({ message, run, signal, retryContext }) => {
@@ -72,7 +73,8 @@ export function isolatedCoordinatorExecutor(options: {
         if (!run.ownerToken) throw new Error("Project run owner token missing");
         const entry = { command: process.execPath, args: [fileURLToPath(new URL("../index.js", import.meta.url)), "project-mcp"],
           env: { NETWORK_DIR: options.project.networkDir, PROJECT_ID: options.project.projectId,
-            PROJECT_RUN_ID: run.runId, PROJECT_OWNER_TOKEN: run.ownerToken, PROJECT_RESOLVED: JSON.stringify(options.project.resolved) } };
+            PROJECT_RUN_ID: run.runId, PROJECT_OWNER_TOKEN: run.ownerToken, PROJECT_AGENT_IDS: JSON.stringify(options.project.agentIds),
+            PROJECT_RESOLVED: JSON.stringify(options.project.resolved) } };
         if (options.engine === "kimi") {
           const home = join(cwd, ".kimi-code");
           await mkdir(home, { recursive: true });
