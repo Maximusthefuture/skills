@@ -107,7 +107,8 @@ main{padding:0;min-width:0;display:flex;flex-direction:column}
 .coord-thread{display:grid;gap:14px;margin:0 0 14px}
 .coord-turn{display:grid;gap:8px}
 .coord-bubble{max-width:92%;border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:12px 15px;box-shadow:var(--shadow)}
-.coord-bubble.user{justify-self:end;background:#F0F5E5;border-color:#D9E7BD;border-bottom-right-radius:4px}
+.coord-bubble.user{justify-self:end;background:#F0F5E5;border-color:#D9E7BD;border-bottom-right-radius:4px;color:#20211F}
+.coord-bubble.user .coord-meta{color:#667248}
 .coord-bubble.assistant{justify-self:start;border-bottom-left-radius:4px}
 .coord-meta{font-size:11px;font-weight:650;color:var(--muted);margin-bottom:4px}
 .coord-message{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
