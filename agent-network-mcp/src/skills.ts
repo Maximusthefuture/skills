@@ -1,5 +1,5 @@
-import { readdir, readFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { readdir, readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
@@ -80,6 +80,32 @@ export function disabledSkillsNote(disabled: readonly string[]): string {
   return disabled.length
     ? `\n\nSkills the operator switched off for you: ${disabled.join(", ")}. Do not load them (the call is refused); do that part of the work without them.`
     : "";
+}
+
+/** Qwen has no Claude-style inline settings flag. Use a private per-session system layer,
+ * retaining the existing system policy and never editing user/project settings. */
+export async function withQwenSkillSettings<T>(command: readonly string[], off: readonly string[], env: NodeJS.ProcessEnv,
+  run: (env: NodeJS.ProcessEnv, hidden: boolean) => Promise<T>): Promise<T> {
+  if (!/(^|[/\\])qwen(\.exe|\.cmd|\.ps1)?$/i.test(command[0] ?? "") || !off.length) return run(env, false);
+  const systemPath = env.QWEN_CODE_SYSTEM_SETTINGS_PATH ?? (process.platform === "win32"
+    ? join(env.ProgramData ?? "C:/ProgramData", "qwen-code", "settings.json")
+    : process.platform === "darwin" ? "/Library/Application Support/QwenCode/settings.json" : "/etc/qwen-code/settings.json");
+  let settings: Record<string, unknown> = {};
+  try { settings = JSON.parse(await readFile(systemPath, "utf8")); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) throw new Error("Qwen system settings must be an object");
+  const skills = settings.skills as Record<string, unknown> | undefined;
+  if (skills !== undefined && (!skills || typeof skills !== "object" || Array.isArray(skills))) throw new Error("Qwen skills settings must be an object");
+  const existing = skills?.disabled ?? [];
+  if (!Array.isArray(existing) || existing.some(name => typeof name !== "string")) throw new Error("Qwen skills.disabled must be a string array");
+  // Qwen matches literal names only; masks still require the existing prompt/hook fallback.
+  const literal = off.filter(name => !name.endsWith(":*"));
+  const folder = await mkdtemp(join(tmpdir(), "agent-network-qwen-skills-"));
+  try {
+    const file = join(folder, "settings.json");
+    await writeFile(file, JSON.stringify({ ...settings, skills: { ...skills, disabled: [...new Set([...existing, ...literal])] } }), { mode: 0o600 });
+    return await run({ ...env, QWEN_CODE_SYSTEM_SETTINGS_PATH: file }, literal.length === off.length);
+  } finally { await rm(folder, { recursive: true, force: true }); }
 }
 
 export interface SkillInfo {

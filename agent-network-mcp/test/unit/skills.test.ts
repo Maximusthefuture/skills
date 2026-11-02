@@ -1,9 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { preSkillDecision, runHookCli } from "../../src/hook.js";
-import { disabledFromEnv, isDisabled, listSkills, sessionDisabledSkills, withSkillOverrides } from "../../src/skills.js";
+import { disabledFromEnv, isDisabled, listSkills, sessionDisabledSkills, withSkillOverrides, withQwenSkillSettings } from "../../src/skills.js";
 import { loadRunnersConfig, RunnerPool } from "../../src/ui/runners.js";
 import { tmpDir } from "../helpers/tmp.js";
 
@@ -13,6 +13,45 @@ function skill(root: string, folder: string, front: string) {
 }
 
 describe("skills switched off for an agent", () => {
+  it("hides Qwen skills per session, preserves system policy and removes temporary settings", async () => {
+    const folder = await tmpDir(), file = join(folder, "system.json");
+    const original = { permissions: { deny: ["shell(rm)"] }, skills: { disabled: ["old"], directories: ["/skills"] }, mcp: { allowed: ["agent-network"] } };
+    await writeFile(file, JSON.stringify(original));
+    const env = { QWEN_CODE_SYSTEM_SETTINGS_PATH: file, AGENT_ID: "a" };
+    let temporary = "";
+    const answer = await withQwenSkillSettings(["C:/bin/qwen.cmd", "-p", "{prompt}"], ["pdf", "plugin:review", "pdf"], env, async (sessionEnv, hidden) => {
+      expect(hidden).toBe(true);
+      expect(sessionEnv.AGENT_ID).toBe("a");
+      temporary = sessionEnv.QWEN_CODE_SYSTEM_SETTINGS_PATH!;
+      expect(temporary).not.toBe(file);
+      expect(JSON.parse(await readFile(temporary, "utf8"))).toEqual({ ...original, skills: { ...original.skills, disabled: ["old", "pdf", "plugin:review"] } });
+      return "done";
+    });
+    expect(answer).toBe("done");
+    await expect(stat(temporary)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual(original);
+    expect(env.QWEN_CODE_SYSTEM_SETTINGS_PATH).toBe(file);
+  });
+
+  it("cleans Qwen settings after failure and keeps masks on the fallback path", async () => {
+    const folder = await tmpDir(), missing = join(folder, "missing.json");
+    let temporary = "";
+    await expect(withQwenSkillSettings(["qwen"], ["pdf", "plugin:*"], { QWEN_CODE_SYSTEM_SETTINGS_PATH: missing }, async (env, hidden) => {
+      temporary = env.QWEN_CODE_SYSTEM_SETTINGS_PATH!;
+      expect(hidden).toBe(false);
+      expect(JSON.parse(await readFile(temporary, "utf8")).skills.disabled).toEqual(["pdf"]);
+      throw new Error("session failed");
+    })).rejects.toThrow("session failed");
+    await expect(stat(temporary)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not change other CLIs or replace invalid existing Qwen policy", async () => {
+    const env = { QWEN_CODE_SYSTEM_SETTINGS_PATH: "/missing" };
+    await withQwenSkillSettings(["codex"], ["pdf"], env, async (next, hidden) => { expect(next).toBe(env); expect(hidden).toBe(false); });
+    const folder = await tmpDir(), file = join(folder, "settings.json");
+    await writeFile(file, "invalid json");
+    await expect(withQwenSkillSettings(["qwen"], ["pdf"], { QWEN_CODE_SYSTEM_SETTINGS_PATH: file }, async () => { throw new Error("must not launch"); })).rejects.toBeInstanceOf(SyntaxError);
+  });
   it("a name covers its plugin-prefixed form; plugin:* covers the whole plugin", () => {
     expect(isDisabled("java-tdd", ["java-tdd"])).toBe(true);
     expect(isDisabled("backend-design-java:migration-safety", ["migration-safety"])).toBe(true);

@@ -1732,9 +1732,17 @@ runner'а скиллы не нужны: всё это приходит в `swarm
   `"skillOverrides": {"java-tdd": "off"}`, и скилл пропадает из списка сессии. Его описание больше не читается на
   каждом ходе. Отказ хука такого не даёт: отклонённый скилл в списке остаётся. Если у claude нет `--settings`, runner
   добавляет его сам;
+- **Qwen Code скрывает конкретные имена через `skills.disabled`.** Для каждой сессии runner создаёт временный
+  JSON и передаёт его через `QWEN_CODE_SYSTEM_SETTINGS_PATH`, сохраняя существующие системные настройки,
+  ограничения MCP и ранее отключённые скиллы. Пользовательские и проектные файлы не меняются; временный файл
+  удаляется после завершения, включая ошибку запуска. Требуется версия Qwen с поддержкой `skills.disabled`.
+  Поддерживаются команды `qwen`, `qwen.cmd`, `qwen.exe`, `qwen.ps1`, в том числе с абсолютным путём;
 - иначе runner называет их в промпте («Skills the operator switched off for you: …»), чтобы агент не тратил ход на
-  отказ. Так бывает для Qwen, для `--settings` с путём к файлу и для маски `плагин:*`: её через `skillOverrides` не
+  отказ. Так бывает для `--settings` с путём к файлу и для маски `плагин:*`: её через `skillOverrides` не
   выключить;
+- Qwen также не поддерживает маски в `skills.disabled`: для `плагин:*` остаются инструкция и хук. Это изменение
+  применяет существующие `disabledSkills` и `disabledSkillsByTask`, но не добавляет автоматический выбор ресурсов
+  координатором. MCP можно ограничивать в команде Qwen через `--allowed-mcp-server-names`;
 - в любом случае runner передаёт список сессии (`AGENT_NETWORK_DISABLED_SKILLS`), и хук `PreToolUse` `hook pre-skill`
   отклоняет вызов `Skill` и чтение `SKILL.md` такого скилла. В примере для Claude хук стоит в `--settings` (matcher
   `Skill`), для Qwen — в [`examples/qwen-hooks/settings.json`](examples/qwen-hooks/settings.json) (`skill` и `read_file`).

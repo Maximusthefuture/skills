@@ -10,7 +10,7 @@ import { SessionOutput, type ActivityItem, type SessionResult } from "./sessionO
 import { FileStore } from "./storage/fileStore.js";
 import { AgentStore, defaultIsProcessAlive } from "./stores/agentStore.js";
 import { MessageStore } from "./stores/messageStore.js";
-import { DISABLED_SKILLS_ENV, disabledSkillsNote, withSkillOverrides } from "./skills.js";
+import { DISABLED_SKILLS_ENV, disabledSkillsNote, withSkillOverrides, withQwenSkillSettings } from "./skills.js";
 import { SessionStore } from "./stores/sessionStore.js";
 import { TaskStore } from "./stores/taskStore.js";
 import type { Phase, Task } from "./types.js";
@@ -499,7 +499,6 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       (urgent ? URGENT.replace("{message}", urgent) : "") +
       withInstructions(renderPrompt(template, vars), instructions, vars) +
       (opts.tokenSaver ? `\n\n${TOKEN_SAVER}` : "") +
-      (skillsOff.hidden ? "" : disabledSkillsNote(offSkills)) +
       (brief ? `\n\nYour folder right now (from the runner, no need to run git log or git status for this):\n${brief}` : "") +
       (contractDir ? `\n\nThe API contract's worktree of this task, yours to edit: ${contractDir}${dirs.added ? "" : " (your CLI may ask before writing outside your folder)"}.` : "");
     const env = {
@@ -542,7 +541,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
         session.abort();
       }
     };
-    const { code, result } = await runSession(buildArgv(withModel(skillsOff.command, model), prompt, system), env, opts.cwd, sink, signal?.aborted ? signal : session.signal, onActivity, onContext);
+    const { code, result } = await withQwenSkillSettings(skillsOff.command, offSkills, env, (sessionEnv, qwenHidden) =>
+      runSession(buildArgv(withModel(skillsOff.command, model), prompt + (skillsOff.hidden || qwenHidden ? "" : disabledSkillsNote(offSkills)), system), sessionEnv, opts.cwd, sink, signal?.aborted ? signal : session.signal, onActivity, onContext));
     opts.urgent?.attach(null);
     signal?.removeEventListener("abort", stopAll);
     const endedAt = new Date();
