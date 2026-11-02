@@ -1,6 +1,7 @@
 import { readdir, readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Skills the operator switches off for an agent ("disabledSkills" in runners.json, or on the page), and per kind of task
@@ -85,8 +86,8 @@ export function disabledSkillsNote(disabled: readonly string[]): string {
 /** Qwen has no Claude-style inline settings flag. Use a private per-session system layer,
  * retaining the existing system policy and never editing user/project settings. */
 export async function withQwenSkillSettings<T>(command: readonly string[], off: readonly string[], env: NodeJS.ProcessEnv,
-  run: (env: NodeJS.ProcessEnv, hidden: boolean) => Promise<T>): Promise<T> {
-  if (!/(^|[/\\])qwen(\.exe|\.cmd|\.ps1)?$/i.test(command[0] ?? "") || !off.length) return run(env, false);
+  run: (env: NodeJS.ProcessEnv, hidden: boolean) => Promise<T>, pluginsOnly = false, mcpServers?: readonly string[]): Promise<T> {
+  if (!/(^|[/\\])qwen(\.exe|\.cmd|\.ps1)?$/i.test(command[0] ?? "") || (!off.length && !pluginsOnly)) return run(env, false);
   const systemPath = env.QWEN_CODE_SYSTEM_SETTINGS_PATH ?? (process.platform === "win32"
     ? join(env.ProgramData ?? "C:/ProgramData", "qwen-code", "settings.json")
     : process.platform === "darwin" ? "/Library/Application Support/QwenCode/settings.json" : "/etc/qwen-code/settings.json");
@@ -103,7 +104,15 @@ export async function withQwenSkillSettings<T>(command: readonly string[], off: 
   const folder = await mkdtemp(join(tmpdir(), "agent-network-qwen-skills-"));
   try {
     const file = join(folder, "settings.json");
-    await writeFile(file, JSON.stringify({ ...settings, skills: { ...skills, disabled: [...new Set([...existing, ...literal])] } }), { mode: 0o600 });
+    await writeFile(file, JSON.stringify({ ...settings,
+      ...(mcpServers ? { mcp: { ...(settings.mcp as object ?? {}), allowed: [...new Set(mcpServers)] } } : {}),
+      ...(pluginsOnly ? { mcpServers: { ...(settings.mcpServers as object ?? {}), "agent-network": {
+        ...((settings.mcpServers as Record<string, object> | undefined)?.["agent-network"] ?? {}),
+        command: process.execPath, args: [fileURLToPath(new URL("./index.js", import.meta.url))],
+        env: { NETWORK_DIR: env.NETWORK_DIR ?? "", AGENT_ID: env.AGENT_ID ?? "" },
+      } } } : {}),
+      skills: { ...skills, disabled: [...new Set([...existing, ...literal])],
+      ...(pluginsOnly ? { disabledLevels: [...new Set([...(Array.isArray(skills?.disabledLevels) ? skills.disabledLevels : []), "user", "project", "bundled"])] } : {}) } }), { mode: 0o600 });
     return await run({ ...env, QWEN_CODE_SYSTEM_SETTINGS_PATH: file }, literal.length === off.length);
   } finally { await rm(folder, { recursive: true, force: true }); }
 }

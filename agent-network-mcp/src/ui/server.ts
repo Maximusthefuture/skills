@@ -21,6 +21,7 @@ import type { ProjectState } from "../project/store.js";
 import { ProjectCoordinator, type CoordinatorExecutor } from "../project/coordinator.js";
 import { isolatedCoordinatorExecutor } from "../project/executor.js";
 import { projectSnapshot } from "../project/snapshot.js";
+import { validatePlugins } from "../plugins.js";
 import type { Prices } from "../stats.js";
 import { FileStore } from "../storage/fileStore.js";
 import { MessageStore } from "../stores/messageStore.js";
@@ -379,6 +380,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         engine: spec.coordinator.engine,
         model: spec.coordinator.model,
         project: { networkDir: p.networkDir, projectId: projectState.projectId, agentIds: p.pool?.ids() ?? [],
+          plugins: async () => p.pool ? p.pool.pluginContext() : { plugins: [], qwenAgents: [] },
           resolved: { ...(p.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: p.maxTaskCostUsd, maxCostUsd: p.maxTaskCostUsd } : {}), ...(p.verifyCommand ? { verifyCommand: p.verifyCommand } : {}) } },
         snapshot: async () => {
           const state = await new ProjectStore(p.fs).read();
@@ -644,6 +646,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     if (!p) return json(404, { error: "PROJECT_NOT_FOUND", message: `No project '${wanted}' on this page`, projects: projects.map((x) => x.id) });
 
     if (method === "GET") {
+      if (path === "/api/plugins") return json(200, p.pool ? await p.pool.pluginContext() : { plugins: [], qwenAgents: [] });
       if (path === "/api/project/history") return json(200, historyPage(await new ProjectStore(p.fs).read(), {
         message: Number(url.searchParams.get("message") ?? 0), offset: Number(url.searchParams.get("offset") ?? 0),
       }));
@@ -819,6 +822,15 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       if (log && p.pool) return json(200, { id: log[1], lines: p.pool.log(decodeURIComponent(log[1]!)) });
       return text(404, "not found");
     }
+    if (method === "POST" && path === "/api/plugins/enabled") {
+      const refused = crossSite(req, hostHeader); if (refused) return refused;
+      if (req.headers["x-agent-network-actor"] === "supervisor") throw new AppError("FORBIDDEN", "Plugin choices belong to the operator");
+      if (!p.pool) throw new AppError("INVALID_INPUT", "Runners are not configured");
+      const body = await readJson(req) as { id?: unknown; enabled?: unknown };
+      if (typeof body.id !== "string" || typeof body.enabled !== "boolean") throw new AppError("INVALID_INPUT", "id and enabled are required");
+      await p.pool.setPluginEnabled(body.id, body.enabled);
+      return json(200, await p.pool.pluginContext());
+    }
     if (method === "POST" && path.startsWith("/api/projects/")) {
       const refused = crossSite(req, hostHeader);
       if (refused) return refused;
@@ -839,6 +851,8 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         if (!p.pool || !p.operator) throw new AppError("INVALID_INPUT", "Configure at least two agent runners before creating tasks");
         const operator = p.operator;
         const preflight = async (state: ProjectState, payload: EffectivePayload) => {
+          const resources = await p.pool!.pluginContext();
+          validatePlugins(payload, resources.plugins, resources.qwenAgents);
           const runners = p.pool!.list();
           await projectPreflight(state, payload, {
             tasks: await operator.tasks.list(), availableAgents: runners.map(r => r.id),

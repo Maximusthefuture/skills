@@ -17,6 +17,7 @@ import { assertAgentId } from "../validation.js";
 import { listSkills, sessionDisabledSkills, SKILL_NAME, TASK_KINDS, type SkillInfo, type SkillsByTask } from "../skills.js";
 import { detectStack, onPath, withBuildPermissions, type ProjectStack } from "../stack.js";
 import { buildTools, parseBuildCommand } from "../build.js";
+import { pluginCatalog, setPluginEnabled, validatePlugins, isQwen, qwenPluginCommand } from "../plugins.js";
 
 /**
  * runners.json — the agents the UI keeps working:
@@ -947,6 +948,14 @@ export class RunnerPool {
   }
 
   /** list() plus a look into each instructions file, for the page. */
+  async pluginContext() {
+    return { plugins: await pluginCatalog(this.networkDir, this.opts.home),
+      qwenAgents: [...this.managedAgentsForPlugins()] };
+  }
+  async setPluginEnabled(id: string, enabled: boolean) { await setPluginEnabled(this.networkDir, id, enabled, this.opts.home); }
+  private *managedAgentsForPlugins(): Generator<string> {
+    for (const id of this.ids()) if (isQwen(this.get(id).config.command)) yield id;
+  }
   async details(): Promise<RunnerDetails[]> {
     return Promise.all(
       this.list().map(async (v) => {
@@ -1064,6 +1073,13 @@ export class RunnerPool {
       model: (task) => (task?.proposes && m.config.proposeModel) || m.config.model,
       ...(m.config.tokenSaver ? { tokenSaver: true } : {}),
       disabledSkills: (task) => sessionDisabledSkills(m.config.disabledSkills ?? [], m.config.disabledSkillsByTask, task),
+      ...(isQwen(m.config.command) ? { pluginCommand: async (task: Task) => {
+        const { plugins, qwenAgents } = await this.pluginContext();
+        validatePlugins(task, plugins, qwenAgents);
+        const selected = task.pluginsByAgent?.[m.config.id] ?? [];
+        const assigned = selected.map(id => plugins.find(plugin => plugin.id === id)!);
+        return { command: qwenPluginCommand(m.config.command, assigned), mcpServers: ["agent-network", ...assigned.flatMap(plugin => plugin.mcpServers)] };
+      } } : {}),
       onSession: (session) => {
         m.session = session;
         m.contextTokens = null;

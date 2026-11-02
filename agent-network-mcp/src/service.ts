@@ -83,6 +83,8 @@ export interface NewTaskInput {
   title: string;
   description: string;
   agents: string[];
+  pluginsByAgent?: Record<string, string[]>;
+  pluginLocks?: Record<string, string>;
   /** Default 3. */
   maxFixRounds?: number;
   verifyCommand?: string;
@@ -395,6 +397,7 @@ export class NetworkService {
     if (validateOnly) return null;
     const task = await this.tasks.create({
       title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps,
+      ...(input.pluginsByAgent ? { pluginsByAgent: structuredClone(input.pluginsByAgent), pluginLocks: structuredClone(input.pluginLocks ?? {}) } : {}),
       ...(projectOrigin ? { projectOrigin } : {}),
       ...(projectOrigin && inputFiles.length ? { projectInput: { state: "pending" as const, expected: inputFiles.map(f => f.rel) } } : {}),
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}), ...(change ? { openspec: change.name } : {}), ...(proposes ? { proposes } : {}),

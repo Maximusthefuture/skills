@@ -6,6 +6,8 @@ import type { NewTaskInput } from "../service.js";
 export const projectTaskFields = {
   title: z.string().trim().min(1), description: z.string().trim().min(1),
   agents: z.array(z.string().trim().min(1)).min(2).refine(a => new Set(a).size === a.length, "Agents must be distinct"),
+  pluginsByAgent: z.record(z.string().min(1), z.array(z.string().min(1)).max(20)).optional(),
+  pluginLocks: z.record(z.string().min(1), z.string().regex(/^[a-f0-9]{64}$/)).optional(),
   maxFixRounds: z.number().int().nonnegative().optional(),
   maxFollowUps: z.number().int().nonnegative().optional(),
   verifyCommand: z.string().min(1).optional(),
@@ -24,6 +26,10 @@ export const projectTaskSchema = z.object(projectTaskFields).strict().superRefin
   if (value.from && !value.proposes) invalid("from requires proposes");
   if (value.proposes && value.planReview) invalid("proposes and planReview cannot be combined");
   if (value.baseCommit && !value.parentTaskId) invalid("baseCommit requires parentTaskId");
+  for (const [agent, ids] of Object.entries(value.pluginsByAgent ?? {})) {
+    if (!value.agents.includes(agent)) invalid("Plugin assignment is outside the task team");
+    if (new Set(ids).size !== ids.length) invalid("Plugin assignments must be distinct");
+  }
 });
 export type EffectivePayload = z.infer<typeof projectTaskSchema>;
 // Compile-time coverage: adding a NewTaskInput key requires extending this schema.

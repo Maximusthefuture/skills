@@ -31,6 +31,8 @@ export interface Task {
   phase: Phase;
   status: TaskStatus;
   agents: string[];
+  pluginsByAgent?: Record<string, string[]>;
+  pluginLocks?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
   /** Extension: who created the task. */

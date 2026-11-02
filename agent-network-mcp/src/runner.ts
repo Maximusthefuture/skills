@@ -247,6 +247,7 @@ export interface RunnerOptions {
    * (skillOverrides in --settings), other CLIs get them named in the prompt; the hook "pre-skill" refuses them.
    */
   disabledSkills?: (task?: Task) => readonly string[];
+  pluginCommand?: (task: Task) => Promise<{ command: string[]; mcpServers: string[] }>;
   /** Extra sessions for one task after the first before the runner gives up until the task changes. Default 3. */
   maxRestarts?: number;
   /**
@@ -493,7 +494,8 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const offSkills = [...(opts.disabledSkills?.(task) ?? [])];
     // the lead of a task that changes the API contract writes the contract's worktree too: the CLI is told so
     const contractDir = task.contract && task.agents[0] === agent ? task.contract.worktree : undefined;
-    const dirs = contractDir ? withExtraDir(command, contractDir) : { command, added: false };
+    const resources = opts.pluginCommand ? await opts.pluginCommand(task) : { command, mcpServers: undefined };
+    const dirs = contractDir ? withExtraDir(resources.command, contractDir) : { command: resources.command, added: false };
     const skillsOff = withSkillOverrides(dirs.command, offSkills);
     const prompt =
       (urgent ? URGENT.replace("{message}", urgent) : "") +
@@ -542,7 +544,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       }
     };
     const { code, result } = await withQwenSkillSettings(skillsOff.command, offSkills, env, (sessionEnv, qwenHidden) =>
-      runSession(buildArgv(withModel(skillsOff.command, model), prompt + (skillsOff.hidden || qwenHidden ? "" : disabledSkillsNote(offSkills)), system), sessionEnv, opts.cwd, sink, signal?.aborted ? signal : session.signal, onActivity, onContext));
+      runSession(buildArgv(withModel(skillsOff.command, model), prompt + (skillsOff.hidden || qwenHidden ? "" : disabledSkillsNote(offSkills)), system), sessionEnv, opts.cwd, sink, signal?.aborted ? signal : session.signal, onActivity, onContext), !!opts.pluginCommand, resources.mcpServers);
     opts.urgent?.attach(null);
     signal?.removeEventListener("abort", stopAll);
     const endedAt = new Date();

@@ -11,6 +11,8 @@ export interface NewTask {
   title: string;
   description: string;
   agents: string[];
+  pluginsByAgent?: Record<string, string[]>;
+  pluginLocks?: Record<string, string>;
   createdBy: string;
   git: GitContext | null;
   maxFixRounds?: number;
@@ -52,6 +54,7 @@ export class TaskStore {
       phase: "DISCUSS",
       status: "ACTIVE",
       agents: input.agents,
+      ...(input.pluginsByAgent ? { pluginsByAgent: input.pluginsByAgent, pluginLocks: input.pluginLocks ?? {} } : {}),
       createdAt: now,
       updatedAt: now,
       createdBy: input.createdBy,

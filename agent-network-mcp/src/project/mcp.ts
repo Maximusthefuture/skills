@@ -8,10 +8,13 @@ import { normalizeProjectTask, projectTaskFields } from "./payload.js";
 import { AppError } from "../errors.js";
 import { ProjectMemory } from "./memory.js";
 import { projectTaskContextPage } from "./taskContext.js";
+import { validatePlugins, type PluginInfo } from "../plugins.js";
 
 export async function createProjectServer(options: {
   networkDir: string; projectId: string; runId: string; ownerToken: string;
   agentIds?: string[];
+  plugins?: PluginInfo[];
+  qwenAgents?: string[];
   resolved: { maxTaskCostUsd?: number; maxCostUsd?: number; verifyCommand?: string };
 }): Promise<McpServer> {
   const fs = await FileStore.open(options.networkDir);
@@ -57,7 +60,7 @@ export async function createProjectServer(options: {
     return projectTaskContextPage(fs, taskId, cursor);
   });
   const agentIds = options.agentIds ?? [];
-  const { agents: _agents, ...taskFields } = projectTaskFields;
+  const { agents: _agents, pluginLocks: _locks, ...taskFields } = projectTaskFields;
   const agentSchema = agentIds.length
     ? z.enum(agentIds as [string, ...string[]])
     : z.string().trim().min(1).describe("Runner ID from this project's configured agents");
@@ -69,8 +72,13 @@ export async function createProjectServer(options: {
     operationId: z.string().min(1), payload: proposalPayload, summary: z.string().min(1).max(2048), supersedes: z.string().optional(),
   }, async input => {
     await authorize();
+    const selected = new Set(Object.values(input.payload.pluginsByAgent ?? {}).flat());
+    const catalog = options.plugins ?? [];
+    const pluginLocks = Object.fromEntries(catalog.filter(plugin => selected.has(plugin.id)).map(plugin => [plugin.id, plugin.fingerprint]));
+    const payload = normalizeProjectTask({ ...input.payload, ...(input.payload.pluginsByAgent ? { pluginLocks } : {}) }, options.resolved);
+    validatePlugins(payload, catalog, options.qwenAgents ?? []);
     const proposal = await store.propose({ ...input, runId: options.runId, ownerToken: options.ownerToken,
-      payload: normalizeProjectTask(input.payload, options.resolved) });
+      payload });
     return { proposalId: proposal.proposalId, status: proposal.status, hash: proposal.hash, createdTask: false };
   });
   return server;

@@ -28,7 +28,8 @@ it("passes the shared role to Codex separately from untrusted user context", asy
   const executor = isolatedCoordinatorExecutor({
     engine: "codex", model: "gpt-6-luna",
     snapshot: async () => ({ projectId: "p1", memory: "project data" }),
-    project: { networkDir: "test-network", projectId: "p1", agentIds: ["lead", "reviewer"], resolved: {} },
+    project: { networkDir: "test-network", projectId: "p1", agentIds: ["lead", "reviewer"], resolved: {},
+      plugins: async () => ({ plugins: [], qwenAgents: ["lead"] }) },
     run: async argv => {
       const instructions = argv.find(arg => arg.startsWith("developer_instructions="));
       expect(instructions).toBe("developer_instructions=" + JSON.stringify(COORDINATOR_INSTRUCTIONS));
@@ -36,6 +37,8 @@ it("passes the shared role to Codex separately from untrusted user context", asy
       const request = JSON.parse(argv.at(-1)!);
       expect(request.request.content).toBe(content);
       expect(request.context.memory).toBe("project data");
+      expect(request.context.resources).toEqual({ plugins: [], qwenAgents: ["lead"] });
+      expect(argv).toContain('mcp_servers.project.env.PROJECT_QWEN_AGENTS="[\\"lead\\"]"');
       expect(argv).toContain("read-only");
       expect(argv).toContain("shell_tool");
       expect(argv).toContain('mcp_servers.project.enabled_tools=["read_history","read_task_context","read_proposal","propose_task","read_memory","propose_memory_change"]');

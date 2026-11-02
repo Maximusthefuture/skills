@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { runSession } from "../runner.js";
 import type { CoordinatorExecutor } from "./coordinator.js";
 import { COORDINATOR_INSTRUCTIONS as system } from "./prompt.js";
+import type { PluginInfo } from "../plugins.js";
 
 
 /** Fixed argv: caller configuration cannot re-enable coding tools or repository hooks. */
@@ -49,12 +50,13 @@ export function isolatedCoordinatorExecutor(options: {
   snapshot: () => Promise<unknown>;
   model?: string;
   engine?: "claude" | "kimi" | "codex";
-  project?: { networkDir: string; projectId: string; agentIds: string[]; resolved: { maxTaskCostUsd?: number; maxCostUsd?: number; verifyCommand?: string } };
+  project?: { networkDir: string; projectId: string; agentIds: string[]; plugins?: () => Promise<{ plugins: PluginInfo[]; qwenAgents: string[] }>; resolved: { maxTaskCostUsd?: number; maxCostUsd?: number; verifyCommand?: string } };
   run?: typeof runSession;
 }): CoordinatorExecutor {
   return async ({ message, run, signal, retryContext }) => {
     if (signal.aborted) throw new Error("Coordinator cancelled");
-    const snapshot = JSON.stringify(await options.snapshot());
+    const resources = await options.project?.plugins?.();
+    const snapshot = JSON.stringify({ ...await options.snapshot() as object, ...(resources ? { resources } : {}) });
     if (Buffer.byteLength(snapshot) > 65536) throw new Error("Project snapshot exceeds 64 KiB");
     const cwd = await mkdtemp(join(tmpdir(), "agent-network-coordinator-"));
     try {
@@ -69,7 +71,8 @@ export function isolatedCoordinatorExecutor(options: {
         const entry = { command: process.execPath, args: [fileURLToPath(new URL("../index.js", import.meta.url)), "project-mcp"],
           env: { NETWORK_DIR: options.project.networkDir, PROJECT_ID: options.project.projectId,
             PROJECT_RUN_ID: run.runId, PROJECT_OWNER_TOKEN: run.ownerToken, PROJECT_AGENT_IDS: JSON.stringify(options.project.agentIds),
-            PROJECT_RESOLVED: JSON.stringify(options.project.resolved) } };
+            PROJECT_RESOLVED: JSON.stringify(options.project.resolved),
+            PROJECT_PLUGINS: JSON.stringify(resources?.plugins ?? []), PROJECT_QWEN_AGENTS: JSON.stringify(resources?.qwenAgents ?? []) } };
         if (options.engine === "kimi") {
           const home = join(cwd, ".kimi-code");
           await mkdir(home, { recursive: true });

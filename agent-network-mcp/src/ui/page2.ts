@@ -1405,70 +1405,33 @@ function renderHistory(){
     if(!evs.length)wrap.append(el("p","page-sub","Событий нет — поправьте фильтры."))}
   main.replaceChildren(wrap)}
 
-/* ── плагины: интерактивный прототип в духе Claude Code ── */
-const PLUGIN_SEED=[
-  {id:"java-toolkit",name:"Java Toolkit",version:"1.4.2",description:"Проверка архитектуры, ревью Spring Boot и единый TDD-процесс для Java-команд.",author:"Agent Network",enabled:true,scope:"project",skills:["java-tdd","java-code-review","java-conventions"],agents:["reviewer"],hooks:2,mcp:0},
-  {id:"git-workflows",name:"Git Workflows",version:"0.9.1",description:"Безопасные команды для коммитов, веток и подготовки pull request.",author:"Community",enabled:false,scope:"user",skills:["commit","create-pr"],agents:[],hooks:1,mcp:0}
-];
-const PLUGIN_CATALOG=[
-  {id:"serena-code",name:"Serena Code",version:"2.3.0",description:"Семантическая навигация по коду: символы, ссылки и точечное редактирование.",author:"OraiOS",skills:["code-navigation"],agents:[],hooks:0,mcp:1},
-  {id:"web-research",name:"Web Research",version:"1.1.0",description:"Поиск источников, проверка фактов и подготовка исследования с цитатами.",author:"Community",skills:["deep-research"],agents:["researcher"],hooks:0,mcp:1},
-  {id:"database-tools",name:"Database Tools",version:"0.8.4",description:"Инспекция PostgreSQL, объяснение запросов и безопасная работа с миграциями.",author:"Community",skills:["migration-safety"],agents:["db-reviewer"],hooks:1,mcp:1}
-];
-let pluginState=null,pluginTab="installed",pluginInstallOpen=false;
-function pluginsData(){if(pluginState)return pluginState;try{pluginState=JSON.parse(store("an2.plugins")||"null")}catch(e){}if(!pluginState)pluginState=PLUGIN_SEED.map(p=>({...p}));return pluginState}
-function savePlugins(){store("an2.plugins",JSON.stringify(pluginsData()))}
-function pluginCard(p,installed){
-  const card=el("article","plugin-card"+(p.enabled?"":" off"));
-  const top=el("div","plugin-top");const icon=el("span","plugin-icon",p.name.slice(0,1));const mid=el("div","plugin-main");
-  const title=el("div","plugin-title");title.append(el("h3","",p.name),el("span","plugin-version","v"+p.version));
-  if(installed&&p.enabled)title.append(el("span","badge lime","включён"));
-  mid.append(title,el("p","plugin-desc",p.description),el("div","plugin-meta",p.author+" · "+(installed?(p.scope==="project"?"этот проект":"все проекты"):"каталог сообщества")));
-  top.append(icon,mid);card.append(top);
-  const components=[p.skills.length+" skills",p.agents.length+" agents",p.hooks+" hooks",p.mcp+" MCP"];
-  const chips=el("div","plugin-components");for(const c of components)chips.append(el("span","",c));card.append(chips);
-  const actions=el("div","plugin-actions");
-  if(installed){
-    const toggle=el("button","small "+(p.enabled?"ghost":"cta"),p.enabled?"Отключить":"Включить");toggle.type="button";toggle.onclick=()=>{p.enabled=!p.enabled;savePlugins();toast("ok",p.name,p.enabled?"Плагин включён для новых сессий":"Плагин отключён; пакет остался установленным");render()};
-    const details=el("button","ghost small","Состав пакета");details.type="button";details.onclick=()=>openPluginDetails(p);
-    const remove=el("button","ghost small","Удалить");remove.type="button";remove.onclick=async()=>{if(await ask("Удалить «"+p.name+"»? Это только демонстрация: файлы проекта не меняются.")){pluginState=pluginsData().filter(x=>x.id!==p.id);savePlugins();toast("",p.name,"Удалён из демонстрационного списка");render()}};
-    actions.append(toggle,details,remove);
-  }else{
-    const install=el("button","cta small","Установить");install.type="button";install.onclick=()=>{pluginsData().push({...p,enabled:true,scope:"project",skills:[...p.skills],agents:[...p.agents]});savePlugins();pluginTab="installed";toast("ok",p.name,"Добавлен в демонстрационный список и включён");render()};
-    const details=el("button","ghost small","Подробнее");details.type="button";details.onclick=()=>openPluginDetails(p);actions.append(install,details);
-  }
-  card.append(actions);return card}
-function openPluginDetails(p){
-  const overlay=el("div","askov plugin-overlay");overlay.setAttribute("role","dialog");overlay.setAttribute("aria-label","Состав плагина "+p.name);
-  const box=el("div","plugin-detail");const close=el("button","icon-btn","×");close.type="button";close.title="Закрыть";close.onclick=()=>overlay.remove();
-  const head=el("div","plugin-detail-head");head.append(el("span","plugin-icon",p.name.slice(0,1)),el("div","",),close);head.children[1].append(el("h2","",p.name),el("div","plugin-meta","v"+p.version+" · "+p.author));
-  box.append(head,el("p","plugin-desc",p.description));
-  const list=el("div","plugin-file-list");
-  const rows=[[".claude-plugin/plugin.json","манифест и метаданные"],...p.skills.map(s=>["skills/"+s+"/SKILL.md","инструкции агента"]),...p.agents.map(a=>["agents/"+a+".md","роль сабагента"])];
-  for(let i=0;i<p.hooks;i++)rows.push(["hooks/hooks.json","обработчики событий"]);
-  if(p.mcp)rows.push([".mcp.json","подключаемый MCP-сервер"]);
-  for(const [file,what]of rows){const row=el("div","plugin-file");row.append(el("code","",file),el("span","",what));list.append(row)}
-  box.append(el("h3","","Что войдёт в пакет"),list,el("p","plugin-security","Перед реальной установкой здесь будут показаны разрешения, источник, версия и предупреждения безопасности."));
-  overlay.append(box);overlay.onclick=e=>{if(e.target===overlay)overlay.remove()};document.body.append(overlay)}
-function pluginInstallForm(){
-  const details=el("details","adv plugin-install");details.open=pluginInstallOpen;details.ontoggle=()=>{pluginInstallOpen=details.open};details.append(el("summary","","＋ Установить из локального каталога"));
-  const inside=el("div","in");const input=el("input");input.placeholder="D:\\Plugins\\my-plugin";input.setAttribute("aria-label","Путь к плагину");
-  const hint=el("div","plugin-security","Ожидается каталог с .claude-plugin/plugin.json. В прототипе файлы не читаются — создаётся демонстрационная карточка.");
-  const button=el("button","cta small","Проверить и установить");button.type="button";button.onclick=()=>{const path=input.value.trim();if(!path){input.focus();return}const id="local-plugin-"+Date.now();pluginsData().push({id,name:path.split(/[\\/]/).pop()||"Local Plugin",version:"0.1.0",description:"Локальный плагин. В рабочей версии описание будет прочитано из манифеста.",author:"Локальный источник",enabled:true,scope:"project",skills:["example-skill"],agents:[],hooks:0,mcp:0});savePlugins();pluginInstallOpen=false;toast("ok","Плагин добавлен","Демонстрационная карточка: "+path);render()};
-  inside.append(el("label","","Путь к каталогу плагина"),input,hint,button);details.append(inside);return details}
+/* ── плагины: серверный каталог Qwen extensions ── */
+let pluginRequest=0;
 function renderPlugins(){
-  const main=$("main");const wrap=el("div","wrap plugins-wrap");main.replaceChildren(wrap);
-  const top=el("div","plugin-heading");const texts=el("div");texts.append(el("h1","page-h","Плагины"),el("p","page-sub","Skills, агенты, hooks и MCP — одним устанавливаемым пакетом, как в Claude Code."));
-  top.append(texts,el("span","badge acc","интерактивный макет"));wrap.append(top);
-  wrap.append(el("div","plugin-demo-note","Можно включать, устанавливать и удалять пакеты. Состояние сохраняется только в этом браузере; runners.json и файлы проекта не изменяются."));
-  const tabs=el("div","tabs2");for(const[id,label]of[["installed","Установленные · "+pluginsData().length],["discover","Добавить из каталога"]]){const a=el("a",pluginTab===id?"on":"",label);a.href="#";a.onclick=e=>{e.preventDefault();pluginTab=id;render()};tabs.append(a)}wrap.append(tabs);
-  if(pluginTab==="installed"){
-    wrap.append(pluginInstallForm());
-    const grid=el("div","plugin-grid");for(const p of pluginsData())grid.append(pluginCard(p,true));if(!pluginsData().length)grid.append(el("p","page-sub","Плагинов пока нет. Откройте каталог или установите локальный пакет."));wrap.append(grid);
-  }else{
-    wrap.append(el("p","page-sub","Примеры пакетов. Установка показывает будущий пользовательский сценарий, но не скачивает код."));
-    const grid=el("div","plugin-grid");for(const p of PLUGIN_CATALOG.filter(c=>!pluginsData().some(x=>x.id===c.id)))grid.append(pluginCard(p,false));wrap.append(grid);
-  }
+  const main=$("main"),key=String(project||"");let wrap=main.querySelector(".plugins-wrap");
+  if(!wrap){wrap=el("div","wrap plugins-wrap");wrap.append(el("h1","page-h","Плагины"),el("p","page-sub","Загрузка установленных плагинов…"));main.replaceChildren(wrap)}
+  const request=++pluginRequest;
+  getJSON(q("/api/plugins")).then(data=>{
+    if(request!==pluginRequest||route.name!=="settings"||route.sub!=="plugins"||String(project||"")!==key)return;
+    const signature=JSON.stringify(data);if(wrap.dataset.signature===signature)return;wrap.dataset.signature=signature;
+    const top=el("div","plugin-heading");top.append(el("h1","page-h","Плагины"),el("span","badge acc","Qwen extensions"));
+    const note=el("p","page-sub","Координатор выбирает плагины для каждого агента. Их skills, MCP и инструкции подключаются только после подтверждения задачи.");
+    const team=el("p","page-sub",data.qwenAgents.length?"Доступны Qwen runners: "+data.qwenAgents.join(", "):"Qwen runners пока не настроены. Назначение плагинов доступно только для Qwen.");
+    const grid=el("div","plugin-grid");
+    for(const p of data.plugins){
+      const card=el("article","plugin-card"+(p.enabled?"":" off"));
+      const title=el("div","plugin-title");title.append(el("h3","",p.name),el("span","plugin-version",p.version),badge(p.enabled?"lime":"",p.enabled?"доступен координатору":"отключён"));
+      card.append(title,el("p","plugin-desc",p.description||"Описание не указано в манифесте."));
+      const chips=el("div","plugin-components");chips.append(el("span","",p.skills.length+" skills"),el("span","",p.mcpServers.length+" MCP"));card.append(chips);
+      const details=el("details","coord-disclosure");details.append(el("summary","","Состав плагина"),el("pre","","Skills: "+(p.skills.join(", ")||"нет")+"\nMCP: "+(p.mcpServers.join(", ")||"нет")));card.append(details);
+      const toggle=el("button","ghost small",p.enabled?"Отключить":"Включить");toggle.disabled=!S.control;
+      toggle.onclick=async()=>{toggle.disabled=true;try{await post("/api/plugins/enabled",{id:p.id,enabled:!p.enabled});renderPlugins()}catch(e){toast("bad","Не удалось изменить плагин",e.message);toggle.disabled=false}};
+      card.append(toggle);grid.append(card);
+    }
+    if(!data.plugins.length)grid.append(el("div","coord-empty","Установленных Qwen-плагинов не найдено. Установите расширение через Qwen CLI — оно появится здесь автоматически."));
+    const install=el("details","coord-disclosure");install.append(el("summary","","Как добавить плагин"),el("pre","","qwen extensions install <путь или источник>\n\nКаталог читает ~/.qwen/extensions/*/qwen-extension.json. Включение здесь разрешает выбор плагина в задачах этого проекта. Существующие сессии не меняются."));
+    wrap.replaceChildren(top,note,team,grid,install);
+  }).catch(e=>{if(request===pluginRequest&&wrap.isConnected)toast("bad","Не удалось загрузить плагины",e.message)});
 }
 
 /* ── расписания (#/settings/schedules, #28): порт v1 — список, форма, превью cron ── */
@@ -2006,6 +1969,8 @@ function renderProject(){
       card.append(el("h3","","Предложение задачи: "+payload.title),el("p","",proposal.summary),el("p","",payload.description),el("p","page-sub","Команда: "+payload.agents.join(", ")),
         el("p","page-sub","Стоимость неизвестна. "+(payload.maxCostUsd===undefined?"Лимит не задан.":"Лимит: $"+payload.maxCostUsd+"; это не прогноз.")),el("p","coord-status",proposalStates[proposal.status]||"Статус: "+proposal.status));
       if(proposal.status==="pending")card.append(el("p","page-sub","Задача пока не создана. Проверьте описание и состав команды, затем подтвердите или измените предложение."));
+      if(payload.pluginsByAgent){const resources=el("div","coord-disclosure");resources.append(el("h4","","Плагины команды"));
+        for(const [agent,ids] of Object.entries(payload.pluginsByAgent))resources.append(el("p","coord-status",agent+": "+(ids.join(", ")||"Без дополнительных плагинов")));card.append(resources)}
       const settings=el("details","coord-disclosure");settings.dataset.disclosure="proposal-"+proposal.proposalId;settings.append(el("summary","","Подробные настройки"),el("pre","",JSON.stringify(payload,null,2)));card.append(settings);
       const result=el("p","page-sub");result.setAttribute("role","status");card.append(result);
       if(proposal.taskId)card.append(taskLink(proposal.taskId,"Создана задача"));
@@ -2470,6 +2435,7 @@ function renderDrawer(){
    for(const id of agents){const runner=runners?.find(item=>item.id===id),active=working?.some(item=>item.id===id);
      const status=active?"Работает":!runner?"Нет данных о сессии":runner.session?"Занят другой задачей":runner.running?"Ожидает":"Остановлен";
      const row=el("div","kv");row.append(el("span","k",id+(id===t.agents[0]?" · ведущий":"")),badge(active?"lime":"",status));sec.append(row)}
+   if(t.pluginsByAgent)for(const [agent,ids] of Object.entries(t.pluginsByAgent))sec.append(el("div","note",agent+" · плагины: "+(ids.join(", ")||"без дополнительных плагинов")));
    if(working)sec.append(el("div","note","Счётчик показывает запущенные сессии этой задачи, включая ожидание ответов команды. Обновляется автоматически."));
    body.append(sec)}
   /* Фазы */
