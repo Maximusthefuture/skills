@@ -11,6 +11,7 @@ import { FileStore } from "../storage/fileStore.js";
 import { PACKAGE_DIR, type ObserverConfig } from "../ui/runners.js";
 import { collectDigests, readDigests, unreported } from "./digest.js";
 import { ObserverStore } from "./store.js";
+import { OBSERVER_FOCUS } from "./focus.js";
 
 export interface ObserverRun {
   at: string;
@@ -147,7 +148,7 @@ export class Observer {
     const before = (await store.reports()).at(-1)?.id;
     const instructions = (await readFile(cfg.promptFile, "utf8").catch(() => "")).trim() || "You are the observer of an agent-network swarm. Use digests and history, then save_report.";
     const brief = { networkDir: this.opts.networkDir, agentNetworkSource: PACKAGE_DIR, newClosedTasks: await this.uncovered() };
-    const prompt = `${instructions}\n\nThis run (JSON):\n${JSON.stringify(brief, null, 2)}`;
+    const prompt = `${instructions}\n\n${OBSERVER_FOCUS}\n\nThis run (JSON):\n${JSON.stringify(brief, null, 2)}`;
     const system = cfg.command.some((a) => a.includes("{systemPrompt}")) ? (cfg.systemPromptFile ? (await readFile(cfg.systemPromptFile, "utf8").catch(() => "")).trim() : "") || FALLBACK_SYSTEM_PROMPT : undefined;
     // {networkDir}: the network folder (e.g. --add-dir {networkDir}), so its read tools reach the logs
     const argv = buildArgv(withModel(cfg.command, this.model).map((a) => a.replaceAll("{networkDir}", this.opts.networkDir)), prompt, system);

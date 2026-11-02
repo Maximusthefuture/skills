@@ -4,6 +4,10 @@ import { AppError, isAppError } from "../errors.js";
 import { defineTool, errorResult } from "../mcp/toolkit.js";
 import { readDigests, unreported } from "./digest.js";
 import { ObserverStore } from "./store.js";
+import { OBSERVER_FOCUS } from "./focus.js";
+import { pluginCatalog } from "../plugins.js";
+import { listSkills } from "../skills.js";
+import { dirname } from "node:path";
 
 /**
  * The observer's MCP server (`agent-network-mcp observer-mcp`), started by its CLI session: the digests of closed tasks,
@@ -13,7 +17,7 @@ import { ObserverStore } from "./store.js";
 export const OBSERVER_INSTRUCTIONS =
   "You are the observer of an agent-network swarm: you look back across finished tasks for problems of the system itself " +
   "(protocol, prompts, runners, configuration), not of the project's code. Start with digests, then history; read logs and " +
-  "the agent-network source when a digest points at something; end with exactly one save_report.";
+  "the agent-network source when a digest points at something; end with exactly one save_report.\n\n" + OBSERVER_FOCUS;
 
 const issue = z.object({
   id: z.string().optional().describe("issue-NNN from history when it is a known issue; omit for a new one"),
@@ -51,6 +55,10 @@ export function createObserverServer(networkDir: string): McpServer {
       return { digests: all ? digests : news, total: digests.length, newSinceLastReport: news.length };
     },
   );
+  tool("resources", "Installed skills and Qwen plugins available for reuse. Metadata only, not proof of use. Check before recommending a new or existing skill. No resources are enabled or installed by this call.", {}, async () => ({
+    skills: await listSkills([dirname(networkDir)]), plugins: await pluginCatalog(networkDir),
+    limitations: "Skill discovery covers user and project .claude/.qwen folders. Plugin assignments are distinct from recorded use; missing usage is not proof of non-use.",
+  }));
   tool("history", "What you found and proposed before: the issues you track, your proposals with the operator's decisions (accepted: the task that implements it; rejected: why — do not propose it again), your last reports' titles.", {}, async () => {
     const s = await store();
     return {

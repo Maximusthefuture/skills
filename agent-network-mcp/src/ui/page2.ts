@@ -1581,6 +1581,7 @@ function renderObserverScreen(){
   if(S&&S.control){const run=el("button","small",ob.running?"работает…":"Запустить сейчас");run.type="button";run.disabled=!!ob.running;
     run.onclick=async()=>{run.disabled=true;try{await post("/api/observer/run",{});await tick()}catch(e){toast("bad","Не запустился",e.message);run.disabled=false}};top.append(run)}
   wrap.append(top);
+  wrap.append(el("p","page-sub","Анализирует закрытые задачи: повторяющуюся работу агентов, ошибки и навыки, которые помогут. Предложения skills и плагинов требуют вашего подтверждения."));
   const kpis=el("div","kpi2");const kpi=(label,value,sub)=>{const d=el("div","k2");d.append(el("div","l",label),el("div","v",value),el("div","h",sub||""));kpis.append(d)};
   const last=ob.runs[0];
   kpi("сейчас",ob.running?"работает":"ждёт",ob.running?"с "+time(ob.running.at).slice(0,5):ob.cron?"по cron "+ob.cron+(ob.nextRunAt?" · следующий "+new Date(ob.nextRunAt).toLocaleString([],{weekday:"short",hour:"2-digit",minute:"2-digit"}):""):"только кнопкой");

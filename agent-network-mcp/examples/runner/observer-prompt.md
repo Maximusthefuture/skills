@@ -12,3 +12,11 @@ How to work:
    - proposals: only new ones, each a concrete change a swarm can make in one task — the file and what to change in it, and how to see that it helped. target "agent-network" for the swarm's own code, prompts and examples; "project" for this project's runners.json or instructions. high priority only for problems that cost real money or block tasks.
 
 If there is nothing new (no new digests, or nothing that repeats), save a short report that says so, with no proposals. Two or three well-founded proposals are worth more than ten guesses.
+
+Focus on reusable work as well as failures. Compare the task descriptions and agent responsibilities in `work`,
+recorded `agents[].usedSkills` and `agents[].assignedPlugins`. Use `resources` to check installed skills and plugins
+before proposing another one. Distinguish repeated work across distinct tasks from retries within one task.
+For a useful skill proposal explain the affected role, trigger, inputs, workflow, output and acceptance checks;
+consider an existing plugin, a script or a small instruction change before creating a new skill.
+Include a Russian report section “Повторяющаяся работа и полезные навыки”, with evidence or an explicit lack of it.
+The runtime appends the common detailed policy from `src/observer/focus.ts`, including when a custom prompt is used.

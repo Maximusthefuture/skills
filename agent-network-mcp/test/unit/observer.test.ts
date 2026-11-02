@@ -60,12 +60,29 @@ describe("digests of closed tasks", () => {
     expect(await collectDigests(networkDir)).toEqual([]); // once
     const [d] = await readDigests(networkDir);
     expect(d).toMatchObject({
+      schemaVersion: 2, work: { description: "partial refunds", assignments: [] },
       taskId: task.id, status: "CANCELLED", kind: "code", costUsd: 0.25,
       agents: [{ id: "backend", sessions: 1, failed: 0, costUsd: 0.2 }, { id: "reviewer", sessions: 1, failed: 1, costUsd: 0.05 }],
       blocks: [{ kind: "runner", reason: expect.stringContaining("reviewer's runner gave up") }],
       questions: { asked: 1, answered: 1, withChoices: 1 },
       protocolErrors: { "propose:CLARIFY_FIRST": 1 },
     });
+  });
+
+  it("records assigned plugins separately from observed skills and upgrades old digests", async () => {
+    const { networkDir, task, operator } = await closedTask();
+    const storage = await fs(networkDir);
+    await operator.tasks.save({ ...await operator.tasks.get(task.id), pluginsByAgent: { backend: ["web-kit"] } });
+    await new SessionStore(storage).create({ taskId: task.id, agentId: "backend", attempt: 2, startedAt: "now", endedAt: "now", durationMs: 1000, exitCode: 0, skills: ["web-kit:forms", "web-kit:forms"] });
+    await collectDigests(networkDir);
+    const digest = (await readDigests(networkDir))[0]!;
+    expect(digest.agents[0]).toMatchObject({ assignedPlugins: ["web-kit"], usedSkills: ["web-kit:forms"] });
+    expect(digest.agents[1]).toMatchObject({ assignedPlugins: [], usedSkills: [] });
+    delete digest.schemaVersion;
+    await storage.writeJson(["observer", "digests", task.id + ".json"], digest);
+    expect(await collectDigests(networkDir)).toEqual([task.id]);
+    expect((await readDigests(networkDir))[0]!.schemaVersion).toBe(2);
+    operator.close();
   });
 
   it("counts a session's cost/sessions in a task it only finished via alsoFinished, even with no sessions of its own", async () => {
@@ -129,6 +146,7 @@ describe("the observer's store and tools", () => {
     const call = async (name: string, args: Record<string, unknown> = {}) => JSON.parse(((await client.callTool({ name, arguments: args })).content as { text: string }[])[0]!.text);
 
     expect(await call("digests")).toMatchObject({ newSinceLastReport: 1, digests: [{ taskId: "task-001" }] });
+    expect(await call("resources")).toMatchObject({ skills: expect.any(Array), plugins: expect.any(Array), limitations: expect.any(String) });
     const { networkDir: _n, ...first } = run(networkDir);
     expect(await call("save_report", first)).toEqual({ report: "report-001", proposals: ["prop-001"], issues: 1 });
     expect(await call("digests")).toMatchObject({ newSinceLastReport: 0, digests: [] });
@@ -166,6 +184,8 @@ describe("the observer's runs", () => {
     expect(started.by).toBe("button");
     expect(seen[0]!.argv).toEqual(["claude", "-p", expect.stringContaining('"newClosedTasks": 1'), "--model", "sonnet", "--add-dir", networkDir]);
     expect(seen[0]!.argv[2]).toContain("Look back.");
+    expect(seen[0]!.argv[2]).toContain("REPEATED WORK AND SKILL OPPORTUNITIES");
+    expect(seen[0]!.argv[2]).toContain("At least two distinct tasks");
     expect(seen[0]!.env.NETWORK_DIR).toBe(networkDir);
     const status = await observer.status();
     expect(status).toMatchObject({ running: null, model: "sonnet", digests: { total: 1, uncovered: 0 }, runs: [{ by: "button", exitCode: 0, costUsd: 0.31, reportId: "report-001" }] });

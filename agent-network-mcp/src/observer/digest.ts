@@ -14,6 +14,8 @@ import type { ReviewComment, Task } from "../types.js";
 
 /** One closed task in short: what the observer reads to find the system's problems across tasks (no model needed). */
 export interface TaskDigest {
+  schemaVersion?: number;
+  work?: { description: string; assignments: { agentId: string; responsibility: string; files: string[] }[] };
   taskId: string;
   title: string;
   status: Task["status"];
@@ -23,7 +25,7 @@ export interface TaskDigest {
   phases: Record<string, number>;
   fixRounds: { used: number; max: number };
   costUsd: number | null;
-  agents: { id: string; model: string | null; sessions: number; failed: number; turnLimit: number; costUsd: number | null; spawned?: true }[];
+  agents: { id: string; model: string | null; sessions: number; failed: number; turnLimit: number; costUsd: number | null; spawned?: true; usedSkills?: string[]; assignedPlugins?: string[] }[];
   /** Why the task stopped on the way, in order. */
   blocks: { kind: string; reason: string }[];
   findings: { ERROR: number; WARNING: number; INFO: number };
@@ -128,6 +130,8 @@ export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): P
     const cost = mine.map((s) => sessionCost(s, prices).usd).filter((x): x is number => x !== undefined);
     return {
       id,
+      usedSkills: [...new Set(mine.flatMap(session => session.skills ?? []))].slice(0, 50),
+      assignedPlugins: task.pluginsByAgent?.[id] ?? [],
       model: mine.at(-1)?.model ?? null,
       sessions: mine.length,
       failed: mine.filter((s) => s.exitCode !== 0 && !s.turnLimit).length,
@@ -150,6 +154,10 @@ export async function buildDigest(fs: FileStore, task: Task, prices?: Prices): P
     incidents[kind] = (incidents[kind] ?? 0) + 1;
   }
   return {
+    schemaVersion: 2,
+    work: { description: task.description.slice(0, 4000), assignments: (agreement?.assignments ?? []).map(assignment => ({
+      agentId: assignment.agentId, responsibility: assignment.responsibility.slice(0, 1000), files: (assignment.files ?? []).slice(0, 20),
+    })) },
     taskId: task.id,
     title: task.title,
     status: task.status,
@@ -218,7 +226,7 @@ export async function collectDigests(networkDir: string, prices?: Prices): Promi
     const existing = await fs.readJson<TaskDigest>(path);
     const comments = ((await fs.readJson<unknown[]>(["tasks", task.id, "review.json"])) ?? []).length;
     // written again on a later session (alsoFinished) or once the task was merged, reverted or commented on after it closed
-    if (existing && relevantCount(task.id) <= (existing.countedSessions ?? 0) && (existing as TaskDigest & { outcomeKey?: string }).outcomeKey === outcomeKey(task, comments)) continue;
+    if (existing?.schemaVersion === 2 && relevantCount(task.id) <= (existing.countedSessions ?? 0) && (existing as TaskDigest & { outcomeKey?: string }).outcomeKey === outcomeKey(task, comments)) continue;
     await fs.writeJson(path, await buildDigest(fs, task, prices));
     written.push(task.id);
   }
