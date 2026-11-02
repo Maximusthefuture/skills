@@ -145,6 +145,10 @@ main{padding:0;min-width:0;display:flex;flex-direction:column}
 .coord-task-info>a{font-size:13px;font-weight:600;color:var(--text);overflow-wrap:anywhere}
 .coord-task-info .page-sub{font-size:11.5px;margin:0}
 .coord-task-row button{flex:none}
+.plugin-guide{padding:4px 16px 16px;font-size:13px;line-height:1.6}
+.plugin-guide h3{font-size:14px;margin:18px 0 6px}
+.plugin-guide p{margin:6px 0;color:var(--muted)}
+.plugin-guide pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px;font:12px/1.6 var(--mono);color:var(--text)}
 @media(max-width:680px){.coord-guide{grid-template-columns:1fr}.coord-step{padding:10px 12px}}
 .sect-h{font:650 15px var(--font);margin:34px 0 10px;display:flex;align-items:center;gap:8px}
 .sect-h .n{font:600 11px var(--mono);color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:1px 7px}
@@ -1407,6 +1411,21 @@ function renderHistory(){
 
 /* ── плагины: серверный каталог Qwen extensions ── */
 let pluginRequest=0;
+function pluginInstallGuide(){
+  const details=el("details","coord-disclosure"),guide=el("div","plugin-guide");details.append(el("summary","","Как добавить extension: подробная инструкция"),guide);
+  const step=(title,text,code)=>{guide.append(el("h3","",title),el("p","",text));if(code)guide.append(el("pre","",code))};
+  step("1. Проверьте Qwen CLI","Откройте терминал под тем же пользователем, который запускает Agent Network. Эти команды и установка плагина не требуют ответа модели.","qwen --version\nqwen extensions list");
+  step("2. Создайте папку плагина","Пример для Windows: D:\\Plugins\\frontend-kit. Один extension может содержать несколько связанных skills. В корне должен лежать именно qwen-extension.json.","frontend-kit/\n├── qwen-extension.json\n└── skills/\n    └── ui-review/\n        ├── SKILL.md\n        └── references/\n            └── checklist.md");
+  step("3. Заполните qwen-extension.json","Укажите уникальное имя: латиница, цифры, дефис, точка или подчёркивание; не используйте имя none. Описание должно объяснять назначение пакета — по нему координатор выбирает плагин.",JSON.stringify({name:"frontend-kit",version:"1.0.0",description:"Проверка интерфейсов: формы, адаптивность и доступность."},null,2));
+  step("4. Добавьте обычный skill","Скопируйте всю папку существующего skill, включая references, scripts и assets. Сохраните относительные пути. Проверьте инструкции на команды и инструменты, доступные только в другом CLI. Минимальный skills/ui-review/SKILL.md:","---\nname: ui-review\ndescription: Проверять формы, адаптивность и доступность интерфейса.\n---\n\n# Проверка интерфейса\n\nПроверь состояния загрузки, ошибки и пустые данные.\nПроверь подписи полей и управление с клавиатуры.\nДля каждого замечания укажи шаги воспроизведения и ожидаемое поведение.");
+  step("5. При необходимости добавьте MCP","Для пакета только со skills этот шаг пропустите. MCP объявляются в mcpServers внутри qwen-extension.json. Пример ниже — фрагмент манифеста: замените команду и путь на свой работающий сервер. Не помещайте секреты в description.",JSON.stringify({mcpServers:{"ui-tools":{command:"node",args:["D:/Plugins/my-mcp-server/index.js"]}}},null,2));
+  step("6. Установите extension","Выполните команду с путём к вашей папке. Qwen устанавливает копию: простое редактирование исходной папки не обновляет установленный плагин. Затем проверьте список.",'qwen extensions install "D:\\Plugins\\frontend-kit"\nqwen extensions list');
+  step("7. Проверьте плагин в Agent Network","На этой странице должна появиться карточка frontend-kit. Включите её, чтобы разрешить выбор координатору. Для назначения нужен настроенный Qwen runner; саму сессию для проверки каталога запускать не требуется. Skill внутри Qwen будет называться frontend-kit:ui-review.");
+  step("8. Дайте задачу координатору","Например: «Подготовь задачу на проверку формы входа. Для Qwen-проверяющего выбери плагин frontend-kit». В предложении проверьте раздел «Плагины команды». После подтверждения выбранный набор применится к новым сессиям. Уже работающие сессии не изменятся.");
+  step("Как обновить плагин","Измените исходную папку, обновите установленную копию и снова проверьте список. После изменения манифеста старое предложение может не пройти проверку — попросите координатора подготовить новую версию.","qwen extensions update frontend-kit\nqwen extensions list");
+  step("Если карточка не появилась","Проверьте успешность установки, корректность JSON и наличие ~/.qwen/extensions/<папка>/qwen-extension.json у пользователя, запустившего сервер Agent Network. Каталог пока читает этот формат манифеста. Дубли имён, некорректные манифесты и плагины с MCP по имени agent-network не принимаются. Страница обновляет каталог автоматически; при необходимости обновите её вручную.");
+  return details;
+}
 function renderPlugins(){
   const main=$("main"),key=String(project||"");let wrap=main.querySelector(".plugins-wrap");
   if(!wrap){wrap=el("div","wrap plugins-wrap");wrap.append(el("h1","page-h","Плагины"),el("p","page-sub","Загрузка установленных плагинов…"));main.replaceChildren(wrap)}
@@ -1429,7 +1448,7 @@ function renderPlugins(){
       card.append(toggle);grid.append(card);
     }
     if(!data.plugins.length)grid.append(el("div","coord-empty","Установленных Qwen-плагинов не найдено. Установите расширение через Qwen CLI — оно появится здесь автоматически."));
-    const install=el("details","coord-disclosure");install.append(el("summary","","Как добавить плагин"),el("pre","","qwen extensions install <путь или источник>\n\nКаталог читает ~/.qwen/extensions/*/qwen-extension.json. Включение здесь разрешает выбор плагина в задачах этого проекта. Существующие сессии не меняются."));
+    const install=pluginInstallGuide();install.open=!data.plugins.length;
     wrap.replaceChildren(top,note,team,grid,install);
   }).catch(e=>{if(request===pluginRequest&&wrap.isConnected)toast("bad","Не удалось загрузить плагины",e.message)});
 }
