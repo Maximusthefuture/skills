@@ -843,12 +843,14 @@ function renderTask(){
   const t=taskById(route.task);const main=$("main");
   if(!t){main.replaceChildren(el("div","wrap",el("p","page-sub","Нет такой задачи — возможно, её удалили.")));return}
   const lead=t.agents[0];
-  /* фокус в поле ввода: не перестраиваем чат (защита v2, ревизия 3) */
-  const ae=document.activeElement;if(ae&&ae.id==="composer-text"&&ae.closest("#main"))return;
+  const signature=JSON.stringify(t),previousHead=main.querySelector(".chat-head");
+  if(previousHead?.dataset.taskSignature===signature)return;
+  const previousComposer=main.querySelector(".composer"),keepComposer=previousComposer?.dataset.taskId===t.id?previousComposer:null;
+  const scrollY=window.scrollY;
   const wasBottom=window.innerHeight+window.scrollY>=document.body.scrollHeight-40;
-  main.replaceChildren();
+  for(const child of [...main.children])if(child!==keepComposer)child.remove();
   /* шапка: одна строка + тонкий прогресс; действия в «⋯» */
-  const head=el("div","chat-head");const w2=el("div","wrap2");
+  const head=el("div","chat-head");head.dataset.taskSignature=signature;const w2=el("div","wrap2");
   const back=el("a","back","←");back.href="#/inbox";back.title="Нужно мне";w2.append(back);
   const mid=el("div","",);mid.style.cssText="flex:1;min-width:0";
   mid.append(el("h1","",t.title||t.id));
@@ -862,8 +864,8 @@ function renderTask(){
   const menu=el("button","menu-btn","⋯");menu.title="Действия";menu.onclick=e=>{e.stopPropagation();taskMenu(menu,t)};w2.append(menu);
   head.append(w2);
   const w3=el("div","wrap2");const pr=progressOf(t);const pb=el("div","pbar");const fill=el("i",t.status==="BLOCKED"?"r":"");fill.style.width=Math.round(pr.overall*100)+"%";pb.append(fill);w3.append(pb);head.append(w3);
-  main.append(head);
-  const body=el("div","chat-body");main.append(body);
+  main.insertBefore(head,keepComposer);
+  const body=el("div","chat-body");main.insertBefore(body,keepComposer);
   /* DONE: заметная CTA вливания (3 состояния merge-check) */
   if(t.status==="COMPLETED"&&!t.merged)body.append(mergeCard(t));
   /* контекст: follow-up цепочка, поручения */
@@ -896,8 +898,8 @@ function renderTask(){
     else if(it.kind==="acceptance")body.append(accCard(t))}
   if(!items.length)body.append(el("div","sysline","Пока пусто — агенты напишут, как начнут."));
   /* composer */
-  main.append(composer(t));
-  if(wasBottom)requestAnimationFrame(()=>window.scrollTo(0,document.body.scrollHeight))}
+  if(!keepComposer)main.append(composer(t));
+  requestAnimationFrame(()=>{if(route.name==="tasks"&&route.task===t.id)window.scrollTo(0,wasBottom?document.body.scrollHeight:scrollY)})}
 function avLetter(id,lead){return (id||"?").slice(0,1).toUpperCase()}
 function msgBubble(t,m,lead){
   const mine=m.from==="operator";
@@ -1022,7 +1024,7 @@ function taskMenu(anchor,t){
   document.body.append(pop);
   setTimeout(()=>addEventListener("click",function h(e){if(!pop.contains(e.target)){pop.remove();removeEventListener("click",h)}}),0)}
 function composer(t){
-  const lead=t.agents[0];const box=el("div","composer");const b=el("div","box");
+  const lead=t.agents[0];const box=el("div","composer");box.dataset.taskId=t.id;const b=el("div","box");
   const ta=el("textarea");ta.id="composer-text";ta.rows=1;ta.placeholder="Написать lead'у "+lead+"…";
   ta.value=store("an2.draft."+t.id)||"";
   ta.oninput=()=>{store("an2.draft."+t.id,ta.value);ta.style.height="auto";ta.style.height=Math.min(110,ta.scrollHeight)+"px"};
@@ -1031,7 +1033,7 @@ function composer(t){
   const doSend=async()=>{const text=ta.value.trim();if(!text){ta.focus();return}
     send.disabled=true;send.textContent="…";
     try{const j=await post("/api/tasks/"+encodeURIComponent(t.id)+"/message",{text:text,urgent:urgent.classList.contains("on")});
-      store("an2.draft."+t.id,"");toast(urgent.classList.contains("on")?"warn":"ok",t.id+": отправлено lead'у "+lead,(j.interrupted?"сессия прервана, новая начнётся с сообщения. ":"")+text,t.id)}
+      if(ta.value.trim()===text){ta.value="";ta.style.height="auto";store("an2.draft."+t.id,"")}toast(urgent.classList.contains("on")?"warn":"ok",t.id+": отправлено lead'у "+lead,(j.interrupted?"сессия прервана, новая начнётся с сообщения. ":"")+text,t.id)}
     catch(e){toast("bad",t.id+": не отправлено",e.message,t.id)}
     await tick();send.disabled=false;send.textContent="Отправить"};
   send.onclick=doSend;
