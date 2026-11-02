@@ -1413,13 +1413,7 @@ function renderHistory(){
   main.replaceChildren(wrap)}
 
 /* ── плагины: серверный каталог Qwen extensions ── */
-let pluginRequest=0,pluginDemo=new URLSearchParams(location.search).get("pluginsDemo")==="1";
-const PLUGIN_PREVIEW=[
-  {id:"frontend-kit",name:"frontend-kit",version:"1.2.0",description:"Разработка интерфейсов: формы, адаптивная вёрстка и доступность. Помогает ведущему агенту создавать понятные экраны.",enabled:true,skills:["ui-design","accessibility","responsive-layout"],mcpServers:[]},
-  {id:"browser-checks",name:"browser-checks",version:"0.8.3",description:"Проверка приложения в браузере: пользовательские сценарии, скриншоты и поиск ошибок интерфейса. Подходит проверяющему агенту.",enabled:true,skills:["browser-testing","visual-review"],mcpServers:["browser"]},
-  {id:"database-tools",name:"database-tools",version:"2.0.1",description:"Анализ SQL и проверка миграций базы данных. Сейчас отключён: координатор не сможет назначить этот пакет.",enabled:false,skills:["sql-review","migration-check"],mcpServers:["database"]},
-  {id:"docs-kit",name:"docs-kit",version:"1.0.0",description:"Подготовка README, инструкций запуска и примеров использования по результатам задачи.",enabled:true,skills:["readme-writing","usage-examples"],mcpServers:[]}
-];
+let pluginRequest=0;
 function pluginInstallGuide(){
   const details=el("details","coord-disclosure"),guide=el("div","plugin-guide");details.append(el("summary","","Как добавить extension: подробная инструкция"),guide);
   const step=(title,text,code)=>{guide.append(el("h3","",title),el("p","",text));if(code)guide.append(el("pre","",code))};
@@ -1441,27 +1435,23 @@ function renderPlugins(){
   const request=++pluginRequest;
   getJSON(q("/api/plugins")).then(data=>{
     if(request!==pluginRequest||route.name!=="settings"||route.sub!=="plugins"||String(project||"")!==key)return;
-    const preview=pluginDemo,displayed=preview?PLUGIN_PREVIEW:data.plugins;
-    const signature=JSON.stringify([data,preview]);if(wrap.dataset.signature===signature)return;wrap.dataset.signature=signature;
+    const signature=JSON.stringify(data);if(wrap.dataset.signature===signature)return;wrap.dataset.signature=signature;
     const top=el("div","plugin-heading");top.append(el("h1","page-h","Плагины"),el("span","badge acc","Qwen extensions"));
-    const example=el("button","ghost small",preview?"Вернуться к установленным":"Показать пример");example.setAttribute("aria-pressed",String(preview));
-    example.onclick=()=>{pluginDemo=!pluginDemo;const url=new URL(location.href);if(pluginDemo)url.searchParams.set("pluginsDemo","1");else url.searchParams.delete("pluginsDemo");history.replaceState(null,"",url);renderPlugins()};top.append(example);
-    const note=el("p",preview?"plugin-security":"page-sub",preview?"Демонстрация: четыре тестовых плагина. Они не установлены, не передаются координатору и не влияют на запуск агентов.":"Координатор выбирает плагины для каждого агента. Их skills, MCP и инструкции подключаются только после подтверждения задачи.");
+    const note=el("p","page-sub","Координатор выбирает плагины для каждого агента. Их skills, MCP и инструкции подключаются только после подтверждения задачи.");
     const team=el("p","page-sub",data.qwenAgents.length?"Доступны Qwen runners: "+data.qwenAgents.join(", "):"Qwen runners пока не настроены. Назначение плагинов доступно только для Qwen.");
     const grid=el("div","plugin-grid");
-    for(const p of displayed){
+    for(const p of data.plugins){
       const card=el("article","plugin-card"+(p.enabled?"":" off"));
-      const title=el("div","plugin-title");title.append(el("h3","",p.name),el("span","plugin-version",p.version),badge(p.enabled?"lime":"",preview?(p.enabled?"пример: включён":"пример: отключён"):(p.enabled?"доступен координатору":"отключён")));
+      const title=el("div","plugin-title");title.append(el("h3","",p.name),el("span","plugin-version",p.version),badge(p.enabled?"lime":"",p.enabled?"доступен координатору":"отключён"));
       card.append(title,el("p","plugin-desc",p.description||"Описание не указано в манифесте."));
       const chips=el("div","plugin-components");chips.append(el("span","",p.skills.length+" skills"),el("span","",p.mcpServers.length+" MCP"));card.append(chips);
       const details=el("details","coord-disclosure");details.append(el("summary","","Состав плагина"),el("pre","","Skills: "+(p.skills.join(", ")||"нет")+"\nMCP: "+(p.mcpServers.join(", ")||"нет")));card.append(details);
-      const toggle=el("button","ghost small",p.enabled?"Отключить":"Включить");toggle.disabled=preview||!S.control;
-      if(preview)toggle.title="Тестовая карточка: действия недоступны";
-      toggle.onclick=async()=>{if(preview)return;toggle.disabled=true;try{await post("/api/plugins/enabled",{id:p.id,enabled:!p.enabled});renderPlugins()}catch(e){toast("bad","Не удалось изменить плагин",e.message);toggle.disabled=false}};
+      const toggle=el("button","ghost small",p.enabled?"Отключить":"Включить");toggle.disabled=!S.control;
+      toggle.onclick=async()=>{toggle.disabled=true;try{await post("/api/plugins/enabled",{id:p.id,enabled:!p.enabled});renderPlugins()}catch(e){toast("bad","Не удалось изменить плагин",e.message);toggle.disabled=false}};
       card.append(toggle);grid.append(card);
     }
-    if(!displayed.length)grid.append(el("div","coord-empty","Установленных Qwen-плагинов не найдено. Установите расширение через Qwen CLI — оно появится здесь автоматически."));
-    const install=pluginInstallGuide();install.open=!displayed.length;
+    if(!data.plugins.length)grid.append(el("div","coord-empty","Установленных Qwen-плагинов не найдено. Установите расширение через Qwen CLI — оно появится здесь автоматически."));
+    const install=pluginInstallGuide();install.open=!data.plugins.length;
     wrap.replaceChildren(top,note,team,grid,install);
   }).catch(e=>{if(request===pluginRequest&&wrap.isConnected)toast("bad","Не удалось загрузить плагины",e.message)});
 }
