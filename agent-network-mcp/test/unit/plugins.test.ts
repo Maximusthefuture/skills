@@ -98,7 +98,10 @@ it("carries coordinator choices through approval into the exact runner command",
     home: f.home, run: async options => { commandForTask = options.pluginCommand; await new Promise<void>(resolve => options.signal!.addEventListener("abort", () => resolve())); return 0; },
   });
   try {
-    const args = { operationId: "op", summary: "Browser task", payload: { title: "Check browser", description: "Verify UI", agents: ["lead", "review"], pluginsByAgent: { lead: ["browser-kit"], review: [] } } };
+    const args = { operationId: "op", summary: "Browser task",
+      brief: { goal: "Verify the UI", expectedBehavior: ["The browser displays the requested page"],
+        acceptanceCriteria: [{ condition: "Open the page", expected: "The page renders", verification: "Inspect the browser result" }] },
+      payload: { title: "Check browser", description: "Verify UI", agents: ["lead", "review"], pluginsByAgent: { lead: ["browser-kit"], review: [] } } };
     expect((await client.callTool({ name: "propose_task", arguments: args })).isError).not.toBe(true);
     const proposal = (await store.read()).proposals[0]!;
     expect(proposal.payload.pluginLocks).toEqual({ "browser-kit": catalog[0]!.fingerprint });
@@ -107,6 +110,8 @@ it("carries coordinator choices through approval into the exact runner command",
     await expect(commands.createFromProposal(proposal.proposalId, proposal.hash, preflight)).rejects.toThrow("approval");
     await store.decideProposal(proposal.proposalId, proposal.hash, true, async () => {});
     const task = await commands.createFromProposal(proposal.proposalId, proposal.hash, preflight);
+    expect(task.description).toBe(proposal.payload.description);
+    expect(task.description).toContain(args.brief.acceptanceCriteria[0]!.verification);
     expect(task.pluginsByAgent).toEqual(args.payload.pluginsByAgent);
     pool.start("lead");
     expect(await commandForTask!(task)).toEqual({ command: ["qwen", "-p", "{prompt}", "-e", "browser-kit"], mcpServers: ["agent-network", "browser"] });

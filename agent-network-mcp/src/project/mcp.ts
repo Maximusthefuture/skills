@@ -9,6 +9,7 @@ import { AppError } from "../errors.js";
 import { ProjectMemory } from "./memory.js";
 import { projectTaskContextPage } from "./taskContext.js";
 import { validatePlugins, type PluginInfo } from "../plugins.js";
+import { describeTask, taskBriefSchema } from "./brief.js";
 
 export async function createProjectServer(options: {
   networkDir: string; projectId: string; runId: string; ownerToken: string;
@@ -68,14 +69,16 @@ export async function createProjectServer(options: {
     ...taskFields,
     agents: z.array(agentSchema).min(2).describe(`Required team: choose at least two distinct runner IDs. Available IDs: ${agentIds.join(", ") || "none configured"}. The first ID is the lead.`),
   }).strict().describe("Task fields. title and description explain the work; agents must contain at least two configured runner IDs.");
-  defineTool(server, onError, "propose_task", `Save a task proposal for explicit human approval; this never creates or starts a task. payload must include title, description, and agents: an array of at least two distinct configured runner IDs. Available IDs: ${agentIds.join(", ") || "none configured"}. The first agent is the lead. Reuse operationId for delivery retry.`, {
-    operationId: z.string().min(1), payload: proposalPayload, summary: z.string().min(1).max(2048), supersedes: z.string().optional(),
+  defineTool(server, onError, "propose_task", `Save a task proposal for explicit human approval; this never creates or starts a task. brief is required: goal, expectedBehavior, acceptanceCriteria with condition, expected, verification. The server includes brief in the approved task description. payload must include title, description, and agents: an array of at least two distinct configured runner IDs. Available IDs: ${agentIds.join(", ") || "none configured"}. The first agent is the lead. Reuse operationId for delivery retry.`, {
+    operationId: z.string().min(1), payload: proposalPayload, brief: taskBriefSchema, summary: z.string().min(1).max(2048), supersedes: z.string().optional(),
   }, async input => {
     await authorize();
     const selected = new Set(Object.values(input.payload.pluginsByAgent ?? {}).flat());
     const catalog = options.plugins ?? [];
     const pluginLocks = Object.fromEntries(catalog.filter(plugin => selected.has(plugin.id)).map(plugin => [plugin.id, plugin.fingerprint]));
-    const payload = normalizeProjectTask({ ...input.payload, ...(input.payload.pluginsByAgent ? { pluginLocks } : {}) }, options.resolved);
+    if (input.payload.agents.some(id => !agentIds.includes(id))) throw new AppError("INVALID_INPUT", "Select configured project runner IDs");
+    const payload = normalizeProjectTask({ ...input.payload, description: describeTask(input.payload.description, input.brief),
+      ...(input.payload.pluginsByAgent ? { pluginLocks } : {}) }, options.resolved);
     validatePlugins(payload, catalog, options.qwenAgents ?? []);
     const proposal = await store.propose({ ...input, runId: options.runId, ownerToken: options.ownerToken,
       payload });
