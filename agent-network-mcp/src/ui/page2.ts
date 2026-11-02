@@ -68,14 +68,15 @@ aside{background:var(--ink);color:var(--ink-text);display:flex;flex-direction:co
 /* задача в сайдбаре — строка-чат */
 .chat-item{display:flex;gap:10px;padding:8px 12px;margin:1px 8px;border-radius:9px;cursor:pointer;align-items:center;color:var(--ink-text)}
 .chat-item:hover{background:var(--ink2)}
-.chat-item.on{background:var(--ink2);box-shadow:inset 2px 0 0 var(--lime)}
+.chat-item.on{background:var(--ink3);box-shadow:inset 3px 0 0 var(--lime)}
+.chat-item.on .nm{color:var(--lime)}
 .chat-item .dot{flex:none}
 .chat-item .col{flex:1;min-width:0}
 .chat-item .nm{display:block;font-weight:550;font-size:13px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-item .pv{display:block;color:var(--ink-muted);font-size:12px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
 .chat-item .tm{font:10.5px var(--mono);color:var(--ink-muted);flex:none;align-self:flex-start;padding-top:3px}
 .chat-item .nudge{font:700 10px var(--mono);background:var(--bad);color:#fff;border-radius:8px;padding:1px 6px;flex:none}
-.chat-item.dim{opacity:.55}
+.chat-item.dim:not(.on){opacity:.55}
 .dot{width:8px;height:8px;border-radius:50%;background:#5A5C66;display:inline-block;flex:none}
 .dot.ok{background:var(--lime)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)} .dot.acc{background:var(--violet)}
 .side-foot{margin-top:auto;padding:10px 14px;border-top:1px solid var(--ink-line);display:flex;align-items:center;gap:4px}
@@ -762,12 +763,13 @@ function renderSidebar(){
     if(t.status==="ACTIVE")return t.queue==="running"?3:4;if(t.status==="COMPLETED")return 5;return 6};
   const list=s.tasks.filter(t=>!search||t.title.toLowerCase().includes(search)||t.id.toLowerCase().includes(search))
     .sort((a,b)=>rank(a)-rank(b)||Date.parse(b.updatedAt)-Date.parse(a.updatedAt));
-  const sig=project+"|"+search+"|"+JSON.stringify(list.map(t=>[t.id,t.title,t.status,t.phase,t.syncRound,t.updatedAt,t.queue,taskPreview(t),rank(t)]));
+  const sig=JSON.stringify([project,search,route.name,route.task,list.map(t=>[t.id,t.title,t.status,t.phase,t.syncRound,t.updatedAt,t.queue,taskPreview(t),rank(t)])]);
   if(sig===tasklistSig&&box.childElementCount)return;tasklistSig=sig; // не перестраиваем под мышью и при печати в поиске
   box.replaceChildren();
   if(!list.length){const e2=el("div","pv",search?"Ничего не найдено.":"Задач пока нет — создайте первую кнопкой ＋");e2.style.cssText="padding:8px 20px;color:var(--ink-muted);font-size:12.5px";box.append(e2);return}
   for(const t of list){const a=el("a","chat-item"+(route.name==="tasks"&&route.task===t.id?" on":"")+(t.status==="COMPLETED"||t.status==="CANCELLED"?" dim":""));
     a.href="#/tasks/"+encodeURIComponent(t.id);a.setAttribute("role","listitem");
+    if(route.name==="tasks"&&route.task===t.id)a.setAttribute("aria-current","page");
     a.append(dot(taskDot(t)));
     const col=el("span","col");col.append(el("span","nm",t.title||t.id),el("span","pv",taskPreview(t)));a.append(col);
     if(attIds.has(t.id))a.append(el("span","nudge","вы"));

@@ -3,6 +3,39 @@ import { describe, expect, it } from "vitest";
 import { PAGE2_HTML } from "../../src/ui/page2.js";
 
 describe("the v2 page's script", () => {
+  it("updates the selected sidebar task on navigation even when task data is unchanged", () => {
+    class Node {
+      children: Node[] = [];
+      attrs: Record<string, string> = {};
+      constructor(public className = "") {}
+      get childElementCount() { return this.children.length; }
+      append(...nodes: Node[]) { this.children.push(...nodes); }
+      replaceChildren() { this.children = []; }
+      setAttribute(key: string, value: string) { this.attrs[key] = value; }
+    }
+    const box = new Node(), route = { name: "tasks", task: "task-001" };
+    const context = vm.createContext({
+      S: { tasks: ["task-001", "task-002"].map((id, i) => ({ id, title: id, status: i ? "COMPLETED" : "ACTIVE", updatedAt: "2026-11-02T00:00:00Z" })) },
+      ATT: null, project: "project", route,
+      $: (id: string) => id === "tasklist" ? box : { value: "" },
+      el: (_tag: string, cls: string) => new Node(cls), dot: () => new Node(),
+      taskPreview: () => "Preview", taskDot: () => "ok", ago: () => "now",
+    });
+    const script = PAGE2_HTML.match(/<script>([\s\S]*?)<\/script>/)![1]!;
+    const start = script.indexOf('let tasklistSig="";'), end = script.indexOf('/* ── «Нужно мне»', start);
+    vm.runInContext(script.slice(start, end) + ";renderSidebar()", context);
+    expect(box.children.map(node => node.attrs["aria-current"])).toEqual(["page", undefined]);
+    route.task = "task-002";
+    vm.runInContext("renderSidebar()", context);
+    expect(box.children.map(node => node.attrs["aria-current"])).toEqual([undefined, "page"]);
+    expect(box.children[1]!.className).toContain(" on");
+    const selected = box.children[1];
+    vm.runInContext("renderSidebar()", context);
+    expect(box.children[1]).toBe(selected);
+    route.name = "inbox";
+    vm.runInContext("renderSidebar()", context);
+    expect(box.children.every(node => !node.attrs["aria-current"])).toBe(true);
+  });
   it("keeps every statically referenced control in the document", () => {
     const ids = new Set([...PAGE2_HTML.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
     const script = PAGE2_HTML.match(/<script>([\s\S]*?)<\/script>/)![1]!;
