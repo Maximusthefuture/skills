@@ -126,6 +126,25 @@ main{padding:0;min-width:0;display:flex;flex-direction:column}
 .coord-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .coord-section-title{font-size:14px;margin:22px 0 10px}
 .coord-empty{padding:14px;border:1px dashed var(--line);border-radius:11px;color:var(--muted);background:rgba(255,255,255,.5)}
+.coord-disclosure{border:1px solid var(--line);border-radius:11px;background:var(--panel);margin:10px 0;overflow:hidden;flex:none}
+.coord-disclosure>summary{display:flex;align-items:center;gap:10px;list-style:none;cursor:pointer;padding:12px 14px;font-size:13px;font-weight:600;color:var(--text);user-select:none}
+.coord-disclosure>summary::-webkit-details-marker{display:none}
+.coord-disclosure>summary:before{content:"";width:7px;height:7px;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:rotate(-45deg);transition:transform .15s;flex:none}
+.coord-disclosure[open]>summary:before{transform:rotate(45deg)}
+.coord-disclosure>summary:hover{background:var(--bg)}
+.coord-disclosure>summary:focus-visible{outline:2px solid var(--violet);outline-offset:-3px}
+.coord-disclosure[open]>summary{border-bottom:1px solid var(--line)}
+.coord-disclosure>form,.coord-disclosure>pre,.coord-disclosure>.coord-guide{margin:0;padding:14px}
+.coord-disclosure>pre{font:12px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);max-height:280px;overflow:auto}
+.coord-disclosure>form{display:grid;gap:10px}
+.coord-disclosure>form label{font-size:12px;font-weight:600}
+.coord-disclosure>form button{justify-self:start}
+.coord-task-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--line)}
+.coord-task-row:last-child{border-bottom:0}
+.coord-task-info{flex:1;min-width:160px;display:grid;gap:4px}
+.coord-task-info>a{font-size:13px;font-weight:600;color:var(--text);overflow-wrap:anywhere}
+.coord-task-info .page-sub{font-size:11.5px;margin:0}
+.coord-task-row button{flex:none}
 @media(max-width:680px){.coord-guide{grid-template-columns:1fr}.coord-step{padding:10px 12px}}
 .sect-h{font:650 15px var(--font);margin:34px 0 10px;display:flex;align-items:center;gap:8px}
 .sect-h .n{font:600 11px var(--mono);color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:1px 7px}
@@ -1895,7 +1914,7 @@ function renderProject(){
     wrap=el("div","wrap coord-wrap");wrap.id="project-chat";wrap.dataset.project=key;
     wrap.append(el("h1","page-h","Координатор проекта"),el("p","page-sub","Обсудите цель или попросите подготовить задачу для команды."));
     const statusbar=el("div");statusbar.id="coord-statusbar";wrap.append(statusbar);
-    const guideDet=el("details","coord-guide-det");guideDet.id="coord-guide-det";
+    const guideDet=el("details","coord-guide-det coord-disclosure");guideDet.id="coord-guide-det";
     guideDet.append(el("summary","","Как это работает: 3 шага"));
     const guide=el("div","coord-guide");
     for(const [title,detail] of [["1. Опишите цель","Напишите, что нужно сделать. Например: «Создай задачу: добавь проверку файла…»"],["2. Проверьте предложение","Координатор покажет описание и выберет команду."],["3. Подтвердите создание","Задача появится только после нажатия «Подтвердить и создать задачу». До этого агенты не начинают работу."]]){
@@ -1918,7 +1937,7 @@ function renderProject(){
       localStorage.setItem(draftKey,JSON.stringify(pending));const submitted=pending;send.disabled=true;error.textContent="";
       try{await post("/api/project/messages",submitted);if(input.value===submitted.content){input.value="";pending=null;localStorage.removeItem(draftKey)}renderProject()}
       catch(e){error.textContent=e.message}finally{send.disabled=false}};
-    const follow=el("details");follow.append(el("summary","","Отправить уточнение в задачу"));
+    const follow=el("details","coord-disclosure");follow.append(el("summary","","Отправить уточнение в задачу"));
     const followForm=el("form"),target=el("select"),text=el("textarea"),preview=el("pre"),notice=el("p","page-sub");
     target.id="project-follow-target";text.id="project-follow-text";text.rows=3;text.style.width="100%";
     const targetLabel=el("label","","Выберите задачу");targetLabel.htmlFor=target.id;
@@ -1985,7 +2004,7 @@ function renderProject(){
       card.append(el("h3","","Предложение задачи: "+payload.title),el("p","",proposal.summary),el("p","",payload.description),el("p","page-sub","Команда: "+payload.agents.join(", ")),
         el("p","page-sub","Стоимость неизвестна. "+(payload.maxCostUsd===undefined?"Лимит не задан.":"Лимит: $"+payload.maxCostUsd+"; это не прогноз.")),el("p","coord-status",proposalStates[proposal.status]||"Статус: "+proposal.status));
       if(proposal.status==="pending")card.append(el("p","page-sub","Задача пока не создана. Проверьте описание и состав команды, затем подтвердите или измените предложение."));
-      const settings=el("details");settings.append(el("summary","","Подробные настройки"),el("pre","",JSON.stringify(payload,null,2)));card.append(settings);
+      const settings=el("details","coord-disclosure");settings.dataset.disclosure="proposal-"+proposal.proposalId;settings.append(el("summary","","Подробные настройки"),el("pre","",JSON.stringify(payload,null,2)));card.append(settings);
       const result=el("p","page-sub");result.setAttribute("role","status");card.append(result);
       if(proposal.taskId)card.append(taskLink(proposal.taskId,"Создана задача"));
       if(proposal.status==="pending"||proposal.status==="approved"){
@@ -2004,14 +2023,15 @@ function renderProject(){
             form.onsubmit=async e=>{e.preventDefault();save.disabled=true;save.blur();await act("revise",{payload:{...payload,title:title.value,description:description.value},summary:summary.value});save.disabled=false};};card.append(edit);
         }
       }content.append(card)}
-    const related=el("details");related.append(el("summary","","Задачи в обсуждении"));
+    const related=el("details","coord-disclosure");related.dataset.disclosure="tasks";const relatedTitle=el("summary","","Задачи в обсуждении");relatedTitle.append(el("span","badge",String(state.tasks.length)));related.append(relatedTitle);
     const attentionLabels={question:"Ждёт вашего ответа",blocked:"Нужно решение по блокировке",plan:"Ждёт утверждения плана",acceptance:"Ждёт приёмки",merge:"Ждёт проверки вливания",supervisor:"Ждёт решения",observer:"Ждёт решения"};
-    for(const task of S.tasks){const link=state.tasks.find(t=>t.taskId===task.id);const row=el("div");row.append(taskLink(task.id,task.title));
+    if(!S.tasks.length)related.append(el("p","coord-status","Задач пока нет."));
+    for(const task of S.tasks){const link=state.tasks.find(t=>t.taskId===task.id);const row=el("div","coord-task-row"),info=el("div","coord-task-info");info.append(taskLink(task.id,task.title),el("span","page-sub",task.id+" · "+(link?"В контексте координатора":"Не добавлена в обсуждение")));row.append(info);
       if(link){const items=(ATT?.projects.find(p=>p.id===project)?.items||[]).filter(item=>item.taskId===task.id);for(const item of items){const status=el("span","page-sub",attentionLabels[item.kind]||"Ждёт вас");row.append(status,taskLink(task.id,"Открыть"))}}
-      const button=el("button","btn",link?"Отключить от обсуждения":"Добавить в обсуждение");button.disabled=!!link&&["ACTIVE","BLOCKED"].includes(task.status);
+      const button=el("button","ghost small",link?"Отключить":"Добавить");button.setAttribute("aria-label",(link?"Отключить от обсуждения: ":"Добавить в обсуждение: ")+task.title);button.disabled=!!link&&["ACTIVE","BLOCKED"].includes(task.status);if(button.disabled)button.title="Активная задача остаётся в обсуждении до завершения";
       button.onclick=async()=>{if(link&&!confirm("Coordinator потеряет доступ к контексту этой задачи. Отключить?"))return;button.disabled=true;
         try{await post(link?"/api/project/detach":"/api/project/attach",{taskId:task.id,operationId:crypto.randomUUID()});renderProject()}catch(e){$("project-chat-error").textContent=e.message}finally{button.disabled=false}};row.append(button);related.append(row)}content.append(related);
-    if(state.memory){const memory=el("details");memory.append(el("summary","","Память проекта"),el("pre","",state.memory.content||"Договорённостей пока нет."));content.append(memory);
+    if(state.memory){const memory=el("details","coord-disclosure");memory.dataset.disclosure="memory";memory.append(el("summary","","Память проекта"),el("pre","",state.memory.content||"Договорённостей пока нет."));content.append(memory);
       for(const change of state.memory.changes.filter(c=>c.status==="pending")){const card=el("section","card");card.append(el("h3","","Предлагаемое изменение памяти"),el("pre","",change.content));
         for(const approve of [true,false]){const button=el("button","btn",approve?"Подтвердить память":"Отклонить изменение");button.onclick=async()=>{button.disabled=true;try{await post("/api/project/memory/decide",{changeId:change.changeId,approve});renderProject()}catch(e){$("project-chat-error").textContent=e.message}finally{button.disabled=false}};card.append(button)}content.append(card)}}
     const markFocusables=root=>{const counts=new Map();for(const node of root.querySelectorAll("button,input,textarea,select,a[href],[tabindex]")){const card=node.closest("section.card"),label=node.closest("label");const heading=card?.querySelector("h3")?.textContent||"";
@@ -2019,6 +2039,8 @@ function renderProject(){
       const base=[node.tagName,heading,title].join("|");const count=counts.get(base)||0;counts.set(base,count+1);node.dataset.pfocus=base+"|"+count}};
     markFocusables(history);const active=history.contains(document.activeElement)?document.activeElement:null;markFocusables(content);
     const priorKey=active?.dataset.pfocus;const priorStart=typeof active?.selectionStart==="number"?active.selectionStart:null;const priorEnd=typeof active?.selectionEnd==="number"?active.selectionEnd:null;const stick=coordStickBottom;
+    const openSections=new Set([...history.querySelectorAll("details[data-disclosure][open]")].map(node=>node.dataset.disclosure));
+    for(const section of content.querySelectorAll("details[data-disclosure]"))section.open=openSections.has(section.dataset.disclosure);
     history.replaceChildren(content);if(stick)history.scrollTop=history.scrollHeight;
     if(priorKey){const replacement=[...history.querySelectorAll("[data-pfocus]")].find(node=>node.dataset.pfocus===priorKey);
       if(replacement){replacement.focus({preventScroll:true});if(priorStart!==null&&typeof replacement.setSelectionRange==="function")replacement.setSelectionRange(priorStart,priorEnd??priorStart)}}
