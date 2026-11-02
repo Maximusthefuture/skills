@@ -2461,6 +2461,17 @@ function renderDrawer(){
   const diffB=el("button","ghost small","Diff");diffB.type="button";diffB.title="изменения ветки задачи, замечания к строкам";diffB.onclick=()=>openDiff(t.id);head.append(diffB);
   const x=el("button","ghost small","×");x.type="button";x.onclick=()=>closeDrawer();head.append(x);
   const body=el("div","dbody");d.replaceChildren(head,body);
+  /* Команда: назначенные агенты и реальные сессии именно этой задачи */
+  {const sec=el("div","dsec"),runners=S.control?.runners;
+   const agents=[...new Set([...t.agents,...(t.spawned||[]).map(agent=>agent.id)])];
+   const working=Array.isArray(runners)?runners.filter(runner=>runner.running&&runner.session?.taskId===t.id):null;
+   sec.append(el("h3","","Команда задачи"));
+   sec.append(el("div","",working?"Работают сейчас: "+working.length+" · Назначено: "+agents.length:"Назначено: "+agents.length+" · Активность сессий недоступна"));
+   for(const id of agents){const runner=runners?.find(item=>item.id===id),active=working?.some(item=>item.id===id);
+     const status=active?"Работает":!runner?"Нет данных о сессии":runner.session?"Занят другой задачей":runner.running?"Ожидает":"Остановлен";
+     const row=el("div","kv");row.append(el("span","k",id+(id===t.agents[0]?" · ведущий":"")),badge(active?"lime":"",status));sec.append(row)}
+   if(working)sec.append(el("div","note","Счётчик показывает запущенные сессии этой задачи, включая ожидание ответов команды. Обновляется автоматически."));
+   body.append(sec)}
   /* Фазы */
   {const sec=el("div","dsec");sec.append(el("h3","","Фазы"));
    const names={DISCUSS:"Согласование",IMPLEMENT:"Выполнение",SYNC:"Проверка",INTEGRATE:"Сведение",DONE:"Готово"};
