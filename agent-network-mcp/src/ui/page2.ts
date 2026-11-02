@@ -367,13 +367,13 @@ details.adv input,details.adv select,details.adv textarea{font:inherit;color:var
 @media (prefers-reduced-motion:reduce){.drafter .spin{animation:none}}
 
 /* плагины: прототип */
-.plugins-wrap{max-width:900px}
+.plugins-wrap{max-width:900px;--muted:#43523A}
 .plugin-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .plugin-demo-note{padding:10px 13px;border:1px solid var(--violet);border-radius:10px;background:color-mix(in srgb,var(--violet) 6%,var(--panel));color:var(--muted);font-size:12px;margin-bottom:16px}
 .plugin-install{margin-bottom:18px}.plugin-install button{justify-self:start}
 .plugin-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .plugin-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;min-width:0}
-.plugin-card.off{opacity:.72}.plugin-card:hover{border-color:var(--lime-deep)}
+.plugin-card.off{border-style:dashed}.plugin-card:hover{border-color:var(--lime-deep)}
 .plugin-top{display:flex;gap:11px;align-items:flex-start}.plugin-main{min-width:0;flex:1}
 .plugin-icon{width:38px;height:38px;flex:none;display:grid;place-items:center;border-radius:11px;background:var(--ink);color:var(--lime);font:700 18px var(--mono)}
 .plugin-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.plugin-title h3{font-size:14px;margin:0}.plugin-version{font:11px var(--mono);color:var(--muted)}
@@ -571,6 +571,7 @@ pre.jlog{grid-column:1/-1;max-height:420px;margin:0;white-space:pre-wrap;font:11
   .action-card,.progress-card{margin-left:0;max-width:100%}
 }
 @media (prefers-color-scheme:dark){
+  .plugins-wrap{--muted:#D5DFC7}
   :root{
     --bg:#17181A; --panel:#1E2023; --line:#2C2E33;
     --text:#E8E8E3; --muted:#9A9A90;
