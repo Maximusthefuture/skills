@@ -6,14 +6,8 @@ import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { runSession } from "../runner.js";
 import type { CoordinatorExecutor } from "./coordinator.js";
+import { COORDINATOR_INSTRUCTIONS as system } from "./prompt.js";
 
-const system = "You are a Project Coordinator. Discuss the user's goal and agreements. " +
-  "You cannot inspect code, run commands, create tasks, or send instructions to agents. " +
-  "Use project tools to read history, linked task context and saved proposals; save task and memory proposals for separate human approval. " +
-  "When proposing a task, provide title, description, and agents as an array of at least two distinct configured runner IDs; the first ID is the lead. " +
-  "Never claim an action happened without server evidence. Code research needs a separately approved analysis task. " +
-  "Memory is agreements, not evidence about code. Explain when supplied context is truncated. " +
-  "Reply in the user's language.";
 
 /** Fixed argv: caller configuration cannot re-enable coding tools or repository hooks. */
 export function coordinatorArgv(prompt: string, model?: string, mcpConfig?: string): string[] {
@@ -40,6 +34,7 @@ export function codexCoordinatorArgv(prompt: string, model: string | undefined, 
   return [command, "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
     "--sandbox", "read-only", "--disable", "shell_tool", "--cd", cwd,
     ...config("web_search", "disabled"),
+    ...config("developer_instructions", system),
     ...config("mcp_servers.project.command", entry.command),
     ...config("mcp_servers.project.args", entry.args),
     ...config("mcp_servers.project.cwd", cwd),
