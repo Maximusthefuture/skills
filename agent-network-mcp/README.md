@@ -1746,6 +1746,9 @@ runner'а скиллы не нужны: всё это приходит в `swarm
   отклоняет вызов `Skill` и чтение `SKILL.md` такого скилла. В примере для Claude хук стоит в `--settings` (matcher
   `Skill`), для Qwen — в [`examples/qwen-hooks/settings.json`](examples/qwen-hooks/settings.json) (`skill` и `read_file`).
 
+Планируемый режим обсуждения решений описан в [плане разработки Brainstorm](docs/brainstorm-mode-plan.md):
+стадии, серверные ограничения, правила агентов, пограничные случаи и критерии приёмки. Режим ещё не реализован.
+
 ### Плагины Qwen: выбор координатором для каждой задачи
 
 **[Подробная инструкция добавления extension](docs/qwen-extensions.md)**: структура пакета, пример манифеста,
