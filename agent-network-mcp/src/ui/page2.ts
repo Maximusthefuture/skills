@@ -488,6 +488,24 @@ details.adv input,details.adv select,details.adv textarea{font:inherit;color:var
 .need .row2{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .need textarea{width:100%;margin-top:8px;min-height:70px;font:13px var(--font);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:8px 10px}
 .need.brainstorm textarea{background:var(--bg)}
+.brainstorm-kittens{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 0 8px}
+.brainstorm-cats{display:flex;gap:8px;align-items:center}
+.brainstorm-cat{position:relative;width:64px;height:74px;color:var(--violet)}
+.brainstorm-cat:nth-child(3n+2){color:var(--lime-text)}
+.brainstorm-cat:nth-child(3n){color:#e5a071}
+.brainstorm-cat svg{display:block;width:64px;height:64px;overflow:visible}
+.brainstorm-cat .cat-eye{transform-origin:32px 27px}
+.brainstorm-cat .cat-tail{transform-origin:49px 47px}
+.cat-thought{position:absolute;right:0;top:-5px;font:600 15px var(--font);color:var(--text);opacity:.5}
+.brainstorm-cat.thinking svg{animation:cat-bob 3s ease-in-out infinite;animation-delay:var(--cat-clock)}
+.brainstorm-cat.thinking .cat-tail{animation:cat-tail 1.5s ease-in-out infinite;animation-delay:var(--cat-clock)}
+.brainstorm-cat.thinking .cat-eye{animation:cat-blink 6s linear infinite;animation-delay:var(--cat-clock)}
+.brainstorm-cat.thinking .cat-thought{animation:cat-idea 3s ease-in-out infinite;animation-delay:var(--cat-clock)}
+@keyframes cat-bob{0%,100%{transform:translateY(0) rotate(-2deg)}50%{transform:translateY(-4px) rotate(2deg)}}
+@keyframes cat-tail{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(14deg)}}
+@keyframes cat-blink{0%,44%,48%,100%{transform:scaleY(1)}46%{transform:scaleY(.1)}}
+@keyframes cat-idea{0%,100%{transform:translateY(0);opacity:.35}50%{transform:translateY(-4px);opacity:1}}
+@media(prefers-reduced-motion:reduce){.brainstorm-cat.thinking svg,.brainstorm-cat.thinking .cat-tail,.brainstorm-cat.thinking .cat-eye,.brainstorm-cat.thinking .cat-thought{animation:none}}
 .jrow{display:grid;grid-template-columns:58px 90px 76px 74px minmax(0,1fr);gap:10px;align-items:baseline;padding:6px 12px;border-bottom:1px solid var(--line);font-size:12.5px;cursor:pointer}
 .jrow:hover{background:#FBFBF9}
 .jrow .tm,.jrow .by{color:var(--muted);font:11px var(--mono);white-space:nowrap}
@@ -913,10 +931,25 @@ function renderTask(){
   requestAnimationFrame(()=>{if(route.name==="tasks"&&route.task===t.id)window.scrollTo(0,wasBottom?document.body.scrollHeight:scrollY)})}
 function avLetter(id,lead){return (id||"?").slice(0,1).toUpperCase()}
 const brainstormDrafts=new Map(),brainstormTabs=new Map(),brainstormOperations=new Map();
+function brainstormKittens(t){
+  const s=t.brainstorm,pending=t.status==="ACTIVE"&&t.phase==="DISCUSS"&&!["approval","approved"].includes(s.stage);
+  const runners=S.control?.runners,working=pending&&Array.isArray(runners)?runners.filter(r=>r.running&&r.session?.taskId===t.id):[];
+  const row=el("div","brainstorm-kittens"),cats=el("div","brainstorm-cats");cats.setAttribute("aria-hidden","true");
+  for(const[id,index]of s.participants.slice(0,4).map((id,index)=>[id,index])){
+    const active=working.some(r=>r.id===id),cat=el("span","brainstorm-cat"+(active?" thinking":""));
+    cat.title=id+(active?" обдумывает решение":" отдыхает");cat.style.setProperty("--cat-clock",String(-(Date.now()/1000%60)-index*.3)+"s");
+    cat.innerHTML='<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path class="cat-tail" d="M48 49C65 52 61 33 55 38C51 41 60 45 51 47"/><path d="M18 52C14 43 19 35 24 34H40C46 37 49 45 45 52Z" fill="currentColor" fill-opacity=".12"/><path d="M17 25L16 10L27 17Q32 15 37 17L48 10L47 25C50 39 14 39 17 25Z" fill="currentColor" fill-opacity=".2"/><g class="cat-eye"><path d="M24 26V28M40 26V28"/></g><path d="M30 30L32 32L34 30M32 32V34M14 29L21 30M43 30L50 29M24 45V52M39 45V52M18 53H46"/></svg>';
+    cat.append(el("span","cat-thought",active?["…","?","✦"][index%3]:"·"));cats.append(cat);
+  }
+  if(s.participants.length>4)cats.append(el("span","coord-status","+"+(s.participants.length-4)));
+  const label=s.stage==="approval"?"Котики всё обдумали. Теперь ваше решение.":s.stage==="approved"?"План в лапках. Решение утверждено.":t.status!=="ACTIVE"?"Котики отдыхают. Обсуждение остановлено.":working.length?"Котики обдумывают решение · сессий: "+working.length:"Котики ждут продолжения обсуждения.";
+  row.append(cats,el("span","coord-status",label));return row;
+}
 function brainstormCard(t){
   const s=t.brainstorm,card=el("section","need plan brainstorm"),round=s.rounds.find(r=>r.round===s.round),decision=s.decisions.at(-1);
   const labels={options:"Независимые варианты",critique:"Критика и сравнение",synthesis:"Рекомендация ведущего",approval:"Нужно ваше решение",approved:"Решение утверждено"};
   card.append(el("h3","","Brainstorm · "+labels[s.stage]),el("p","coord-status","Раунд "+s.round+" из "+s.maxRounds+" · Варианты: "+s.submitted.options+"/"+s.participants.length+" · Рецензии: "+s.submitted.critiques+"/"+s.participants.length));
+  card.append(brainstormKittens(t));
   if(s.stage==="approval")card.append(el("p","","Проверьте выбранный подход, ограничения и открытые вопросы. После утверждения команда продолжит подготовку плана и соглашения."));
   else if(s.waitingOn.length)card.append(el("p","coord-status","Ожидаются: "+s.waitingOn.join(", ")));
   if(round.feedback)card.append(el("p","","Замечания к раунду: "+round.feedback));
