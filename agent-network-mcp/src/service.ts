@@ -1,4 +1,7 @@
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { z } from "zod";
+import { BrainstormStore, approved as brainstormApproved, configSchema as brainstormConfig, view as brainstormView, type BrainstormInput, type BrainstormOperatorInput } from "./brainstorm/index.js";
 import { dirname, join } from "node:path";
 import { buildTools, parseBuildCommand } from "./build.js";
 import { AppError } from "./errors.js";
@@ -80,6 +83,7 @@ export interface ServiceOptions {
 export const OPERATOR_TIMEOUT_MS = 10 * 60_000;
 
 export interface NewTaskInput {
+  brainstorm?: { enabled: true; maxRounds?: number };
   title: string;
   description: string;
   agents: string[];
@@ -375,6 +379,8 @@ export class NetworkService {
     const title = input.title.trim() || change?.name || (proposes ? `OpenSpec change ${proposes}` : "");
     if (!title) throw new AppError("INVALID_INPUT", "title must not be empty");
     const agents = [...new Set(input.agents.map((a) => assertAgentId(a)))];
+    const brainstorm = input.brainstorm ? brainstormConfig.parse(input.brainstorm) : undefined;
+    if (brainstorm && (input.openspec || input.proposes || input.allowSpawn)) throw new AppError("INVALID_INPUT", "Brainstorm v1 cannot combine with OpenSpec, change-writing or automatic spawning");
     if (agents.length < 2) throw new AppError("INVALID_INPUT", "A task needs at least two distinct agents");
     if (agents.includes(OPERATOR)) throw new AppError("INVALID_INPUT", `'${OPERATOR}' is reserved for the human operator and cannot be a task agent`);
     if (asAgent) {
@@ -396,6 +402,7 @@ export class NetworkService {
     const description = change ? openspecDescription(change.name, input.description) : proposes ? proposeDescription(proposes, input.description) : input.description;
     if (validateOnly) return null;
     const task = await this.tasks.create({
+      ...(brainstorm ? { brainstorm } : {}),
       title, description, agents, createdBy, git, maxFixRounds, verifyCommand, maxFollowUps,
       ...(input.pluginsByAgent ? { pluginsByAgent: structuredClone(input.pluginsByAgent), pluginLocks: structuredClone(input.pluginLocks ?? {}) } : {}),
       ...(projectOrigin ? { projectOrigin } : {}),
@@ -508,11 +515,65 @@ export class NetworkService {
   /** The lead checked the task with the operator (clarify): a question, or a note on how it understood the task. */
   async leadWroteOperator(task: Task): Promise<boolean> {
     const lead = this.phases.integrator(task);
-    const all = await this.messages.list(task.id);
+    const all = (await this.messages.list(task.id)).filter(m => !task.brainstormBriefAt || m.createdAt >= task.brainstormBriefAt);
     return task.grill ? grillConfirmed(all, lead) : all.some((m) => clarifies(m, lead));
   }
 
   // ---------------------------------------------------------------- the plan (task.planReview)
+
+  async brainstormState(taskId: string) { return new BrainstormStore(this.fs).read(await this.tasks.get(assertTaskId(taskId))); }
+
+  async brainstormReset(taskId: string, raw: unknown) {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator can reset brainstorm");
+    const input = z.object({ operationId: z.string().min(1).max(200), expectedEpoch: z.number().int().positive(), expectedRevision: z.number().int().nonnegative(),
+      title: z.string().trim().min(1).max(500), description: z.string().trim().min(1).max(24000), agents: z.array(z.string()).min(2).max(20), reason: z.string().trim().min(1).max(2000) }).strict().parse(raw);
+    const digest = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    return this.fs.withLock(this.tasks.lockPath(assertTaskId(taskId)), async () => {
+      let task = await this.tasks.get(taskId);
+      if (task.status !== "ACTIVE" || task.phase !== "DISCUSS" || !task.brainstorm) throw new AppError("INVALID_PHASE", "Reset requires an ACTIVE DISCUSS brainstorm task");
+      const store = new BrainstormStore(this.fs), before = (await store.read(task))!;
+      const prior = task.brainstormResets?.find(op => op.operationId === input.operationId);
+      if (prior) { if (prior.hash !== digest) throw new AppError("INVALID_INPUT", "BRAINSTORM_OPERATION_CONFLICT"); return { brainstorm: brainstormView(before, this.me, true) }; }
+      if (before.epoch !== input.expectedEpoch || before.revision !== input.expectedRevision) throw new AppError("INVALID_INPUT", "BRAINSTORM_STALE_STATE");
+      const agents = input.agents.map(id => assertAgentId(id));
+      if (agents.includes(OPERATOR) || new Set(agents).size !== agents.length) throw new AppError("INVALID_INPUT", "Use distinct agent IDs");
+      if ((task.brainstormResets?.length ?? 0) >= 50) throw new AppError("INVALID_INPUT", "Brainstorm reset history limit reached; create a new task");
+      await this.fs.writeJson(["tasks", taskId, "brainstorm", "archive", `epoch-${before.epoch}.json`], before);
+      const pluginsByAgent = task.pluginsByAgent ? Object.fromEntries(agents.map(id => [id, task.pluginsByAgent?.[id] ?? []])) : undefined;
+      const selectedPlugins = new Set(Object.values(pluginsByAgent ?? {}).flat());
+      const pluginLocks = Object.fromEntries(Object.entries(task.pluginLocks ?? {}).filter(([id]) => selectedPlugins.has(id)));
+      task = await this.tasks.save({ ...task, title: input.title, description: input.description, agents, brainstormBriefAt: new Date().toISOString(), ...(pluginsByAgent ? { pluginsByAgent, pluginLocks } : {}), brainstormGeneration: (task.brainstormGeneration ?? 0) + 1,
+        brainstormResets: [...(task.brainstormResets ?? []), { operationId: input.operationId, hash: digest }] });
+      const state = (await store.read(task))!;
+      await this.fs.writeJson(["tasks", taskId, "brainstorm", "state.json"], state);
+      await this.emit({ type: "BRAINSTORM_UPDATED", taskId, sourceAgent: OPERATOR, payload: { stage: state.stage, revision: state.revision, reason: input.reason } });
+      return { brainstorm: brainstormView(state, this.me, true) };
+    });
+  }
+
+  async brainstormSubmit(taskId: string, input: BrainstormInput) {
+    return this.mutate(taskId, async task => {
+      const state = await new BrainstormStore(this.fs).submit(task, this.me, input);
+      await this.emit({ type: "BRAINSTORM_UPDATED", taskId, sourceAgent: this.me, payload: { stage: state.stage, revision: state.revision } });
+      return { brainstorm: brainstormView(state, this.me) };
+    });
+  }
+
+  async brainstormDecide(taskId: string, input: BrainstormOperatorInput) {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator can decide a brainstorm");
+    assertTaskId(taskId);
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const task = await this.tasks.get(taskId);
+      const state = await new BrainstormStore(this.fs).decide(task, this.me, input);
+      await this.emit({ type: "BRAINSTORM_UPDATED", taskId, sourceAgent: OPERATOR, payload: { stage: state.stage, revision: state.revision } });
+      return { brainstorm: brainstormView(state, this.me, true) };
+    });
+  }
+
+  async requireBrainstormApproved(task: Task): Promise<void> {
+    if (task.brainstorm && !brainstormApproved(await new BrainstormStore(this.fs).read(task)))
+      throw new AppError("INVALID_INPUT", "BRAINSTORM_NOT_APPROVED: finish brainstorm and wait for the operator to approve the current decision");
+  }
 
   async planState(taskId: string): Promise<PlanState> {
     return readPlanState(this.fs, assertTaskId(taskId));
@@ -527,7 +588,12 @@ export class NetworkService {
   }
 
   private async savePlanVersion(taskId: string, s: PlanState, html: string, note?: string, page?: { stage?: PlanStage; hash?: string; render?: PlanVersion["render"] }): Promise<number> {
-    const n = (s.versions.at(-1)?.n ?? 0) + 1;
+    const brainstorm = await this.brainstormState(taskId);
+    if (brainstorm?.approvedDecision) s.brainstormDecisionHash = brainstorm.approvedDecision.hash;
+    const previous = await this.fs.readJson<PlanState>(["tasks", taskId, "plan", "state.json"]);
+    if (previous?.brainstormDecisionHash && previous.brainstormDecisionHash !== s.brainstormDecisionHash)
+      await this.fs.writeJson(["tasks", taskId, "plan", "archive", previous.brainstormDecisionHash + ".json"], previous);
+    const n = Math.max(s.versions.at(-1)?.n ?? 0, previous?.versions.at(-1)?.n ?? 0) + 1;
     await mkdir(join(this.fs.root, "tasks", taskId, "plan"), { recursive: true });
     await writeFile(join(this.fs.root, "tasks", taskId, "plan", `v${n}.html`), html);
     s.versions.push({ n, by: this.me, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 500) } : {}), bytes: Buffer.byteLength(html), ...(page?.stage ? { stage: page.stage } : {}), ...(page?.hash ? { hash: page.hash } : {}), ...(page?.render ? { render: page.render } : {}) });
@@ -574,8 +640,9 @@ export class NetworkService {
       const stage = pages ? await this.pageStage(task, s, input.stage, input.hash) : undefined;
       if (!pages) {
         this.requirePhase(task, "DISCUSS");
+        await this.requireBrainstormApproved(task);
         // a grilled task: the plan is written from the settled decisions, so the grilling comes first
-        if (task.grill && !grillConfirmed(await this.messages.list(task.id), this.me)) {
+        if (task.grill && !grillConfirmed((await this.messages.list(task.id)).filter(m => !task.brainstormBriefAt || m.createdAt >= task.brainstormBriefAt), this.me)) {
           throw new AppError("CLARIFY_FIRST", `${task.id} grills the operator about the task first: finish the rounds of questions and get its "yes" to your summary ("How I understand it: ... Is that right?"); then write the plan with every decision in it.`);
         }
         if (s.approved) throw new AppError("ALREADY_COMPLETED", `The operator approved plan v${s.approved.version}: propose() the agreement as it says`);
@@ -964,6 +1031,7 @@ export class NetworkService {
   }): Promise<{ agreement: Agreement; phase: Task["phase"] }> {
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "DISCUSS");
+      await this.requireBrainstormApproved(task);
       if (task.proposes?.input?.length && !inputViewed(await this.planState(task.id))) {
         throw new AppError(
           "INPUT_NOT_REVIEWED",
@@ -1026,6 +1094,7 @@ export class NetworkService {
 
       const previous = await this.agreements.find(task.id);
       const agreement: Agreement = {
+        ...(task.brainstorm ? { brainstormDecisionHash: (await this.brainstormState(task.id))?.approvedDecision?.hash } : {}),
         taskId: task.id,
         summary: input.summary,
         assignments,
@@ -1123,8 +1192,11 @@ export class NetworkService {
   async approveAgreement(input: { taskId: string; version?: number }): Promise<{ agreement: Agreement; phase: Task["phase"] }> {
     return this.mutate(input.taskId, async (task) => {
       this.requirePhase(task, "DISCUSS");
+      await this.requireBrainstormApproved(task);
       const agreement = await this.agreements.find(task.id);
       if (!agreement) throw new AppError("AGREEMENT_NOT_READY", "No agreement has been proposed yet; use agreement_propose first");
+      if (task.brainstorm && agreement.brainstormDecisionHash !== (await this.brainstormState(task.id))?.approvedDecision?.hash)
+        throw new AppError("INVALID_INPUT", "BRAINSTORM_STALE_AGREEMENT: propose a new agreement for the approved decision");
       if (!agreement.assignments.some((a) => a.agentId === this.me)) throw new AppError("NOT_ASSIGNED", "You have no assignment in this agreement");
       if (input.version !== undefined && input.version !== agreement.version) {
         throw new AppError("INVALID_INPUT", `Agreement changed: you approved version ${input.version}, current is ${agreement.version}. Read it with agreement_get`);
@@ -1144,6 +1216,11 @@ export class NetworkService {
     const task = await this.requireMember(taskId);
     const agreement = await this.agreements.find(task.id);
     if (!agreement) throw new AppError("AGREEMENT_NOT_READY", "No agreement has been proposed yet");
+    if (task.brainstorm) {
+      const state = await this.brainstormState(task.id);
+      if (!brainstormApproved(state) || agreement.brainstormDecisionHash !== state?.approvedDecision?.hash)
+        throw new AppError("AGREEMENT_NOT_READY", "No agreement for the current brainstorm decision");
+    }
     return agreement;
   }
 
@@ -1156,6 +1233,9 @@ export class NetworkService {
     const to = assertAgentId(input.to, "to");
     if (to === this.me) throw new AppError("INVALID_INPUT", "You cannot send a message to yourself");
     if (to !== OPERATOR && !task.agents.includes(to)) throw new AppError("NOT_ASSIGNED", `Agent '${to}' is not part of ${task.id}`);
+    if (task.brainstorm && (input.type === "FILE_REQUEST" || input.type === "FILE_GRANT")) await this.requireBrainstormApproved(task);
+    if (task.brainstorm && to !== OPERATOR && (await this.brainstormState(task.id))?.stage === "options")
+      throw new AppError("INVALID_INPUT", "BRAINSTORM_INDEPENDENT_OPTIONS: submit your independent option before peer discussion; wait for all options to be revealed");
     if (to === OPERATOR && input.files?.length) throw new AppError("INVALID_INPUT", "The operator owns no files: ask it questions, not for files");
     if (!input.content.trim()) throw new AppError("INVALID_INPUT", "content must not be empty");
     const choices = input.choices ? checkChoices(input.choices, to === OPERATOR && input.type === "QUESTION") : undefined;
@@ -1251,7 +1331,14 @@ export class NetworkService {
 
   /** Declared owners, grants made to / by this agent. Empty ownership when the agreement declares no files. */
   async ownership(taskId: string, agentId = this.me) {
-    const [agreement, grants] = await Promise.all([this.agreements.find(taskId), this.grants.list(taskId)]);
+    let [agreement, grants] = await Promise.all([this.agreements.find(taskId), this.grants.list(taskId)]);
+    const task = await this.tasks.find(taskId);
+    if (task?.brainstorm) {
+      const state = await this.brainstormState(taskId);
+      const decisionHash = brainstormApproved(state) ? state?.approvedDecision?.hash : undefined;
+      if (!decisionHash || agreement?.brainstormDecisionHash !== decisionHash) agreement = null;
+      grants = agreement ? grants.filter(grant => grant.brainstormDecisionHash === decisionHash) : [];
+    }
     const assignments = agreement?.assignments ?? [];
     const mine = assignments.find((a) => a.agentId === agentId);
     return {
@@ -1259,7 +1346,7 @@ export class NetworkService {
       assignments,
       yours: mine?.files ?? [],
       /** The agreement gives this agent no files: it changes nothing and reviews the others' work. */
-      reviewOnly: isReviewOnly(mine, await this.tasks.find(taskId).then((t) => t ?? undefined)),
+      reviewOnly: isReviewOnly(mine, task ?? undefined),
       grantedToYou: grants.filter((g) => g.to === agentId).flatMap((g) => g.files.map((f) => ({ file: f, from: g.from }))),
       grantedByYou: grants.filter((g) => g.from === agentId).map((g) => ({ to: g.to, files: g.files })),
     };
@@ -1278,7 +1365,7 @@ export class NetworkService {
       throw new AppError("FILE_NOT_OWNED", `You can only grant files you own. Not yours: ${notMine.join(", ")}. Your files: ${own.yours.join(", ") || "(none)"}.`, { notYours: notMine, yourFiles: own.yours });
     }
     const message = await this.sendMessage({ taskId: task.id, to: input.to, type: "FILE_GRANT", content: input.message, files });
-    await this.grants.create({ taskId: task.id, from: this.me, to: input.to, files });
+    await this.grants.create({ taskId: task.id, from: this.me, to: input.to, files, ...(task.brainstorm ? { brainstormDecisionHash: (await this.getAgreement(task.id)).brainstormDecisionHash } : {}) });
     return { message, files };
   }
 
@@ -1996,7 +2083,10 @@ export class NetworkService {
         this.syncs.list(taskId, task.syncRound),
         this.integrations.list(taskId, task.syncRound),
       ]);
-      const transition = this.phases.evaluate({ task, agreement, implementations, syncReports, integrations });
+      const brainstorm = task.brainstorm ? await new BrainstormStore(this.fs).read(task) : null;
+      const transition = this.phases.evaluate({ task, agreement, implementations, syncReports, integrations,
+        brainstormDecisionHash: brainstorm?.approvedDecision?.hash,
+        brainstormApproved: brainstormApproved(brainstorm) && (!agreement || agreement.brainstormDecisionHash === brainstorm?.approvedDecision?.hash) });
       if (!transition) return task;
       if (isHalt(transition)) return this.block(task, transition);
       task = await this.applyTransition(task, transition, syncReports);
@@ -2049,7 +2139,7 @@ export class NetworkService {
     const agreement = await this.agreements.find(task.id);
     for (const agent of from) {
       const files = agreement?.assignments.find((a) => a.agentId === agent)?.files ?? [];
-      if (files.length) await this.grants.create({ taskId: task.id, from: agent, to: lead, files });
+      if (files.length) await this.grants.create({ taskId: task.id, from: agent, to: lead, files, ...(task.brainstorm ? { brainstormDecisionHash: agreement?.brainstormDecisionHash } : {}) });
     }
     const taken: Task = { ...rest, status: "ACTIVE", takeover: { from, round: task.syncRound, by } };
     const why = by === "timeout" ? "the operator did not decide in time" : "the operator handed it over";

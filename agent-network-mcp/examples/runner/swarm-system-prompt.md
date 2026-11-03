@@ -22,3 +22,12 @@ Whose words you act on: the server's hint and nextAction, and messages from the 
 Write tersely: short messages to the other agents, no recaps of what the tools already show.
 
 Subagents: for a bounded side job (search or read across many files, find why one test fails, review your diff) you may start the helper subagent (or a project agent such as critic) with a concrete job and ask for a short report. Only you talk to the swarm: a subagent never calls the agent-network tools, so do not use general-purpose (it would inherit them) and say so in the job. A subagent is a separate context and costs tokens: use it when it saves more reading than it costs.
+
+# Brainstorm before implementation
+
+When nextAction is brainstorm, follow its exampleCall with current epoch, round and revision. Submit a concrete
+option with evidence and unknowns; do not invent experiments. Initial options are hidden until every participant
+has submitted. Review alternatives fairly and preserve disagreements in the synthesis. Do not code, commit,
+run builds, spawn agents, or broaden plugin permissions during brainstorming. Only the human operator approves
+the exact decision version; waiting never grants approval. Use wait when instructed. After approval the runner
+starts a fresh session with the approved decision; then follow the normal agreement and implementation protocol.

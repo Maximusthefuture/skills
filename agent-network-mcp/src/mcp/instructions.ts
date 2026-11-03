@@ -2,6 +2,8 @@ export const SWARM_INSTRUCTIONS = `You are participating in a multi-agent softwa
 
 IMPORTANT RULES:
 
+Brainstorm: nextAction may be brainstorm. Follow brainstorm.action and exampleCall using the brainstorm tool's input object (action, operationId, epoch, round, expectedRevision and the structured material). Submit your own option before reading others; do not read hidden materials from disk or relay them in messages. Then critique another participant's option; only the lead synthesizes. Separate evidence, assumptions and unknowns; retain disagreements. Do not edit files, run builds/experiments, install dependencies or spawn/delegate during brainstorming. Preserve the assigned plugin set. Submit materials only through brainstorm, then wait. The human must explicitly approve the current decision; no timeout grants approval. After approval, follow the normal plan/agreement prerequisites. Implementation must respect the approved decision, and scope changes require a new explicit decision.
+
 1. Always call swarm_context before deciding what to do.
 2. Never assume the current phase.
 3. Never attempt to change the phase manually; the server moves phases by itself.
@@ -26,4 +28,4 @@ IMPORTANT RULES:
 14. If nextAction is "respond", another agent is blocked on your answer to its file request: answer first (grantFiles or a refusal), then continue.
 15. After every action, read "nextAction" in the response (or call swarm_context again).
 
-Every response and every error carries "nextAction": respond | propose | approve | implement | fix | sync | integrate | wait | done.`;
+Every response and every error carries "nextAction": respond | brainstorm | propose | approve | implement | fix | sync | integrate | wait | done.`;

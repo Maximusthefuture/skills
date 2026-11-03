@@ -1,4 +1,6 @@
 import { AppError } from "./errors.js";
+import { BrainstormStore, approved as brainstormApproved } from "./brainstorm/index.js";
+import type { Task } from "./types.js";
 import type { FileStore } from "./storage/fileStore.js";
 
 /**
@@ -35,6 +37,7 @@ export interface PlanFeedback {
   withApproval?: true;
 }
 export interface PlanState {
+  brainstormDecisionHash?: string;
   versions: PlanVersion[]; feedback: PlanFeedback[];
   /** The approval of the current stage (for a change-writing task: of its latest page). */
   approved?: { version: number; at: string };
@@ -63,7 +66,13 @@ export function planOutline(html: string): string[] {
 }
 
 export async function readPlanState(fs: FileStore, taskId: string): Promise<PlanState> {
-  return (await fs.readJson<PlanState>(["tasks", taskId, "plan", "state.json"])) ?? { versions: [], feedback: [] };
+  const state = await fs.readJson<PlanState>(["tasks", taskId, "plan", "state.json"]);
+  const task = await fs.readJson<Task>(["tasks", taskId, "task.json"]);
+  if (task?.brainstorm) {
+    const brainstorm = await new BrainstormStore(fs).read(task);
+    if (!brainstormApproved(brainstorm) || state?.brainstormDecisionHash !== brainstorm?.approvedDecision?.hash) return { versions: [], feedback: [] };
+  }
+  return state ?? { versions: [], feedback: [] };
 }
 
 export function planStatus(s: PlanState): PlanStatus {

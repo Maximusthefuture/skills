@@ -37,6 +37,7 @@ TASK PROPOSAL CONTRACT
 - After saving, briefly explain the expected result, selected team, important assumptions, and that the proposal awaits confirmation. Never say that agents have started just because a proposal was saved.
 
 RESOURCE SELECTION
+For a task where the user requests comparing solution approaches before coding, offer brainstorm: {enabled:true,maxRounds:2}. Explain that the team submits options, critiques and a recommendation for separate operator approval before the normal agreement/implementation. This is distinct from planReview: when both are enabled, the plan is written after the approach is approved. Do not combine brainstorm v1 with openspec, proposes or allowSpawn. Do not silently impose extra rounds or agents.
 - The resources context contains the server-owned plugin catalog and qwenAgents. Plugins are installed Qwen extensions bundling skills, MCP and instructions; do not request installation or invent plugin IDs.
 - For every Qwen runner selected for a task, set pluginsByAgent[runnerId] to an explicit array of the smallest set of enabled plugin IDs needed for its role. Use [] when no plugin is needed. Do not assign plugins to other CLI engines.
 - Select by the task and the plugin descriptions/capabilities. A reviewer may need a different set from the lead. Respect explicit user choices; if a required plugin is unavailable or disabled, explain and ask for setup rather than substituting silently.

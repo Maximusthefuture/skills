@@ -21,6 +21,7 @@ import type { ProjectState } from "../project/store.js";
 import { ProjectCoordinator, type CoordinatorExecutor } from "../project/coordinator.js";
 import { isolatedCoordinatorExecutor } from "../project/executor.js";
 import { projectSnapshot } from "../project/snapshot.js";
+import { BrainstormStore, view as brainstormView, operatorInputSchema as brainstormOperatorInput } from "../brainstorm/index.js";
 import { validatePlugins } from "../plugins.js";
 import type { Prices } from "../stats.js";
 import { FileStore } from "../storage/fileStore.js";
@@ -646,6 +647,18 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     if (!p) return json(404, { error: "PROJECT_NOT_FOUND", message: `No project '${wanted}' on this page`, projects: projects.map((x) => x.id) });
 
     if (method === "GET") {
+      const brainstormArchive = /^\/api\/tasks\/([^/]+)\/brainstorm\/archive$/.exec(path);
+      if (brainstormArchive) {
+        const task = await new TaskStore(p.fs).get(decodeURIComponent(brainstormArchive[1]!));
+        const files = (await readdir(join(p.networkDir, "tasks", task.id, "brainstorm", "archive")).catch(() => [])).filter(name => /^epoch-\d+\.json$/.test(name));
+        return json(200, { epochs: await Promise.all(files.map(async name => ({ file: name, state: await p.fs.readJson(["tasks", task.id, "brainstorm", "archive", name]) }))) });
+      }
+      const brainstormPath = /^\/api\/tasks\/([^/]+)\/brainstorm$/.exec(path);
+      if (brainstormPath) {
+        const task = await new TaskStore(p.fs).get(decodeURIComponent(brainstormPath[1]!));
+        const state = await new BrainstormStore(p.fs).read(task);
+        return json(200, { brainstorm: state ? brainstormView(state, "operator", true) : null });
+      }
       if (path === "/api/plugins") return json(200, p.pool ? await p.pool.pluginContext() : { plugins: [], qwenAgents: [] });
       if (path === "/api/project/history") return json(200, historyPage(await new ProjectStore(p.fs).read(), {
         message: Number(url.searchParams.get("message") ?? 0), offset: Number(url.searchParams.get("offset") ?? 0),
@@ -946,6 +959,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const depCancel = /^\/api\/deploys\/(dep-\d+)\/cancel$/.exec(path);
     if (depCancel) return json(200, { run: await p.deployer.cancel(depCancel[1]!) });
     if (path === "/api/tasks") {
+      const brainstorm = (body as { brainstorm?: unknown }).brainstorm;
       const b = body as { title?: unknown; description?: unknown; agents?: unknown; verifyCommand?: unknown; maxFollowUps?: unknown; maxFixRounds?: unknown; openspec?: unknown; maxCostUsd?: unknown; proposes?: unknown; from?: unknown; clarify?: unknown; planReview?: unknown; grill?: unknown; depth?: unknown; allowSpawn?: unknown; contract?: unknown };
       // a preset (fast / standard / thorough) sets the three; without one, each comes as it is
       const prep = typeof b.depth === "string" && b.depth !== "custom" ? depthFlags(b.depth) : { clarify: b.clarify === true, grill: b.grill === true, planReview: b.planReview === true };
@@ -957,6 +971,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const openspec = typeof b.openspec === "string" && b.openspec.trim() ? assertChangeName(b.openspec.trim()) : undefined;
       if (openspec) await checkAgentFolders(p, openspec, agents);
       const task = await operator.createTaskAsOperator({
+        ...(brainstorm !== undefined ? { brainstorm: brainstorm as import("../service.js").NewTaskInput["brainstorm"] } : {}),
         title: String(b.title ?? ""),
         description: String(b.description ?? ""),
         agents,
@@ -974,6 +989,19 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
       });
       return json(201, { task });
+    }
+    const brainstormAction = /^\/api\/tasks\/([^/]+)\/brainstorm\/(approve|revise|extend)$/.exec(path);
+    if (brainstormAction) {
+      if (req.headers["x-agent-network-actor"] === "supervisor") return json(403, { error: "FORBIDDEN", message: "Brainstorm decisions belong to the human operator" });
+      const input = brainstormOperatorInput.parse({ ...(body as object), action: brainstormAction[2] });
+      return json(200, await operator.brainstormDecide(decodeURIComponent(brainstormAction[1]!), input));
+    }
+    const brainstormReset = /^\/api\/tasks\/([^/]+)\/brainstorm\/reset$/.exec(path);
+    if (brainstormReset) {
+      if (req.headers["x-agent-network-actor"] === "supervisor") return json(403, { error: "FORBIDDEN", message: "Brainstorm reset belongs to the human operator" });
+      const agents = (body as { agents?: unknown }).agents;
+      if (!Array.isArray(agents) || agents.some(id => typeof id !== "string" || !p.pool?.ids().includes(id))) throw new AppError("INVALID_INPUT", "Use configured runner IDs");
+      return json(200, await operator.brainstormReset(decodeURIComponent(brainstormReset[1]!), body));
     }
     // the supervisor acts through the same routes as the page; what it does goes into its journal
     const bySupervisor = req.headers["x-agent-network-actor"] === "supervisor";

@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { NewTaskInput } from "../service.js";
+import { configSchema } from "../brainstorm/index.js";
 
 /** Strict: newly supported task fields must be consciously added to the approval contract. */
 export const projectTaskFields = {
+  brainstorm: configSchema.optional(),
   title: z.string().trim().min(1), description: z.string().trim().min(1),
   agents: z.array(z.string().trim().min(1)).min(2).refine(a => new Set(a).size === a.length, "Agents must be distinct"),
   pluginsByAgent: z.record(z.string().min(1), z.array(z.string().min(1)).max(20)).optional(),

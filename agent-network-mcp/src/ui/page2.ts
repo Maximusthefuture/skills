@@ -487,6 +487,7 @@ details.adv input,details.adv select,details.adv textarea{font:inherit;color:var
 .need .rec{margin-top:6px;padding:6px 10px;background:var(--bg);border-radius:6px;font-size:12.5px}
 .need .row2{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .need textarea{width:100%;margin-top:8px;min-height:70px;font:13px var(--font);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+.need.brainstorm textarea{background:var(--bg)}
 .jrow{display:grid;grid-template-columns:58px 90px 76px 74px minmax(0,1fr);gap:10px;align-items:baseline;padding:6px 12px;border-bottom:1px solid var(--line);font-size:12.5px;cursor:pointer}
 .jrow:hover{background:#FBFBF9}
 .jrow .tm,.jrow .by{color:var(--muted);font:11px var(--mono);white-space:nowrap}
@@ -627,7 +628,7 @@ pre.jlog{grid-column:1/-1;max-height:420px;margin:0;white-space:pre-wrap;font:11
 /* v2: «мессенджер с агентами». Тот же API, что v1: /api/state, /api/attention, /api/tasks… */
 const PHASE_NAMES={DISCUSS:"Согласование",IMPLEMENT:"Выполнение",SYNC:"Проверка",INTEGRATE:"Сведение результата",DONE:"Готово"};
 const PHASES=["DISCUSS","IMPLEMENT","SYNC","INTEGRATE","DONE"];
-const ATT_KIND={question:"Вопрос",plan:"План",acceptance:"Приёмка",merge:"Вливание",blocked:"Остановлена",supervisor:"Надзор",observer:"Наблюдатель"};
+const ATT_KIND={question:"Вопрос",brainstorm:"Выбор решения",plan:"План",acceptance:"Приёмка",merge:"Вливание",blocked:"Остановлена",supervisor:"Надзор",observer:"Наблюдатель"};
 const HINTS=["Отмена заказа через API","Миграция: новая таблица","Починить падающий тест","OpenSpec change по тикету"];
 const $=id=>document.getElementById(id);
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
@@ -853,6 +854,7 @@ function renderTask(){
   const signature=JSON.stringify(t),previousHead=main.querySelector(".chat-head");
   if(previousHead?.dataset.taskSignature===signature)return;
   const previousComposer=main.querySelector(".composer"),keepComposer=previousComposer?.dataset.taskId===t.id?previousComposer:null;
+  const focusedBrainstorm=document.activeElement?.id==="brainstorm-feedback"?{start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   const scrollY=window.scrollY;
   const wasBottom=window.innerHeight+window.scrollY>=document.body.scrollHeight-40;
   for(const child of [...main.children])if(child!==keepComposer)child.remove();
@@ -873,6 +875,7 @@ function renderTask(){
   const w3=el("div","wrap2");const pr=progressOf(t);const pb=el("div","pbar");const fill=el("i",t.status==="BLOCKED"?"r":"");fill.style.width=Math.round(pr.overall*100)+"%";pb.append(fill);w3.append(pb);head.append(w3);
   main.insertBefore(head,keepComposer);
   const body=el("div","chat-body");main.insertBefore(body,keepComposer);
+  if(t.brainstorm)body.append(brainstormCard(t));
   /* DONE: заметная CTA вливания (3 состояния merge-check) */
   if(t.status==="COMPLETED"&&!t.merged)body.append(mergeCard(t));
   /* контекст: follow-up цепочка, поручения */
@@ -906,8 +909,48 @@ function renderTask(){
   if(!items.length)body.append(el("div","sysline","Пока пусто — агенты напишут, как начнут."));
   /* composer */
   if(!keepComposer)main.append(composer(t));
+  if(focusedBrainstorm){const field=$("brainstorm-feedback");if(field){field.focus({preventScroll:true});field.setSelectionRange(focusedBrainstorm.start,focusedBrainstorm.end)}}
   requestAnimationFrame(()=>{if(route.name==="tasks"&&route.task===t.id)window.scrollTo(0,wasBottom?document.body.scrollHeight:scrollY)})}
 function avLetter(id,lead){return (id||"?").slice(0,1).toUpperCase()}
+const brainstormDrafts=new Map(),brainstormTabs=new Map(),brainstormOperations=new Map();
+function brainstormCard(t){
+  const s=t.brainstorm,card=el("section","need plan brainstorm"),round=s.rounds.find(r=>r.round===s.round),decision=s.decisions.at(-1);
+  const labels={options:"Независимые варианты",critique:"Критика и сравнение",synthesis:"Рекомендация ведущего",approval:"Нужно ваше решение",approved:"Решение утверждено"};
+  card.append(el("h3","","Brainstorm · "+labels[s.stage]),el("p","coord-status","Раунд "+s.round+" из "+s.maxRounds+" · Варианты: "+s.submitted.options+"/"+s.participants.length+" · Рецензии: "+s.submitted.critiques+"/"+s.participants.length));
+  if(s.stage==="approval")card.append(el("p","","Проверьте выбранный подход, ограничения и открытые вопросы. После утверждения команда продолжит подготовку плана и соглашения."));
+  else if(s.waitingOn.length)card.append(el("p","coord-status","Ожидаются: "+s.waitingOn.join(", ")));
+  if(round.feedback)card.append(el("p","","Замечания к раунду: "+round.feedback));
+  const tabs=el("div","coord-actions"),content=el("div");
+  const names={approach:"Подход",components:"Компоненты",benefits:"Преимущества",risks:"Риски",assumptions:"Предположения",evidence:"Источники",unknowns:"Неизвестное",strengths:"Сильные стороны",concerns:"Замечания",recommendation:"Рекомендация",rationale:"Обоснование",comparison:"Сравнение",disagreements:"Разногласия",constraints:"Ограничения",nextSteps:"Следующие шаги"};
+  const showFields=(parent,obj)=>{for(const[key,label]of Object.entries(names)){const value=obj[key];if(value===undefined)continue;const items=Array.isArray(value)?value:[value];if(items.length){parent.append(el("h4","",label));for(const text of items)parent.append(el("p","coord-message",text))}}};
+  const select=tab=>{brainstormTabs.set(t.id,tab);content.replaceChildren();for(const button of tabs.children){button.className=button.dataset.tab===tab?"small":"ghost small";button.setAttribute("aria-pressed",String(button.dataset.tab===tab))}
+    if(tab==="options"){for(const option of round.options){const item=el("details","coord-disclosure");item.append(el("summary","",option.author+" · "+option.id));const inside=el("div","plugin-guide");showFields(inside,option);item.append(inside);content.append(item)}if(!round.options.length)content.append(el("p","coord-status","Варианты ещё не поданы."))}
+    if(tab==="critique"){for(const critique of round.critiques){const item=el("details","coord-disclosure");item.append(el("summary","",critique.author+" · "+critique.optionIds.join(", ")));const inside=el("div","plugin-guide");showFields(inside,critique);item.append(inside);content.append(item)}if(!round.critiques.length)content.append(el("p","coord-status","Рецензий пока нет."))}
+    if(tab==="decision"){if(decision){const selected=decision.recommendation.selectedOptionIds.map(id=>s.rounds.flatMap(r=>r.options).find(o=>o.id===id)?.approach||id);content.append(el("p","coord-status","Решение v"+decision.version+" · Раунд "+decision.round),el("p","","Выбранный подход: "+selected.join("; ")));showFields(content,decision.recommendation)}else content.append(el("p","coord-status","Ведущий подготовит рекомендацию после рецензий."))}};
+  for(const[tab,label]of[["options","Варианты"],["critique","Сравнение"],["decision","Рекомендация"]]){const button=el("button","ghost small",label);button.type="button";button.dataset.tab=tab;button.onclick=()=>select(tab);tabs.append(button)}
+  card.append(tabs,content);select(brainstormTabs.get(t.id)||(s.stage==="approval"||s.stage==="approved"?"decision":"options"));
+  if(s.rounds.length>1){const history=el("details","coord-disclosure");history.append(el("summary","","Предыдущие раунды"));for(const previous of s.rounds.filter(r=>r.round!==s.round)){const inside=el("div","plugin-guide");inside.append(el("h4","","Раунд "+previous.round));for(const option of previous.options){inside.append(el("h4","",option.author));showFields(inside,option)}for(const critique of previous.critiques){inside.append(el("h4","","Рецензия: "+critique.author));showFields(inside,critique)}history.append(inside)}card.append(history)}
+  if(s.epoch>1){const archive=el("details","coord-disclosure");archive.append(el("summary","","Предыдущие постановки"));archive.ontoggle=async()=>{if(!archive.open||archive.dataset.loaded)return;archive.dataset.loaded="1";try{const answer=await getJSON(q("/api/tasks/"+encodeURIComponent(t.id)+"/brainstorm/archive"));for(const entry of answer.epochs)archive.append(el("pre","",JSON.stringify(entry.state,null,2)))}catch(e){archive.append(el("p","",e.message));delete archive.dataset.loaded}};card.append(archive)}
+  if(t.status==="ACTIVE"&&t.phase==="DISCUSS"){
+    const reset=el("button","ghost small","Изменить постановку и начать заново");reset.onclick=async()=>{
+      const description=await ask("Новая постановка сбросит утверждение решения, плана и соглашения. Материалы сохранятся в архиве. Введите полную новую постановку:","Новая цель, требования и ограничения");if(typeof description!=="string"||!description.trim())return;
+      reset.disabled=true;try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/brainstorm/reset",{operationId:crypto.randomUUID(),expectedEpoch:s.epoch,expectedRevision:s.revision,title:t.title,description:description.trim(),agents:t.agents,reason:"Оператор изменил постановку"});await tick()}catch(e){toast("bad","Постановка не изменена",e.message);reset.disabled=false}
+    };card.append(reset);
+  }
+  if(t.status==="ACTIVE"&&t.phase==="DISCUSS"&&s.stage==="approval"&&decision){
+    const form=el("div","coord-compose"),label=el("label","","Замечания для следующего раунда"),feedback=el("textarea");feedback.id="brainstorm-feedback";label.htmlFor=feedback.id;feedback.rows=3;feedback.style.width="100%";feedback.value=brainstormDrafts.get(t.id)||"";feedback.oninput=()=>brainstormDrafts.set(t.id,feedback.value);
+    const actions=el("div","coord-actions"),notice=el("p","coord-status");notice.setAttribute("role","status");
+    const act=async(action,extra={})=>{const key=[t.id,s.epoch,s.revision,decision.hash,action,JSON.stringify(extra)].join("|");if(!brainstormOperations.has(key))brainstormOperations.set(key,crypto.randomUUID());
+      for(const button of actions.children)button.disabled=true;
+      try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/brainstorm/"+action,{operationId:brainstormOperations.get(key),...(action==="extend"?{expectedRevision:s.revision}:{decisionVersion:decision.version,decisionHash:decision.hash}),...extra});if(action==="revise")brainstormDrafts.delete(t.id);await tick()}
+      catch(e){notice.textContent=e.message;toast("bad","Решение не изменено",e.message);for(const button of actions.children)button.disabled=false;await tick()}};
+    const approve=el("button","cta small","Утвердить решение");approve.onclick=()=>act("approve");
+    const revise=el("button","ghost small","Вернуть с замечаниями");revise.disabled=s.round>=s.maxRounds;revise.onclick=()=>{if(!feedback.value.trim()){notice.textContent="Напишите замечания к решению.";feedback.focus();return}act("revise",{feedback:feedback.value.trim()})};actions.append(approve,revise);
+    if(s.round>=s.maxRounds){notice.textContent="Лимит раундов достигнут. Можно утвердить решение, продлить обсуждение или отменить задачу.";if(s.maxRounds<5){const extend=el("button","ghost small","Добавить раунд");extend.onclick=()=>act("extend",{maxRounds:s.maxRounds+1,reason:feedback.value.trim()||"Оператор продлил обсуждение"});actions.append(extend)}}
+    form.append(label,feedback,actions,notice);card.append(form);
+  }
+  return card;
+}
 function msgBubble(t,m,lead){
   const mine=m.from==="operator";
   const wrap=el("div","msg"+(mine?" me":""));
@@ -1126,6 +1169,8 @@ function renderNew(){
   const clarifyC=mkCheck("clarify","Сначала уточнить постановку (вопросы с вариантами)",true);
   const grillC=mkCheck("grill","Допрос (grill-me): раунды вопросов, в конце подтверждаете понимание");
   const planC=mkCheck("planReview","План на утверждение: lead пишет план страницей, вы правите и утверждаете");
+  const brainstormC=mkCheck("brainstorm","Brainstorm: сравнить варианты решения и утвердить подход до разработки");
+  const brainstormRounds=F("Раундов Brainstorm (1–5)",document.createElement("input"));brainstormRounds.type="number";brainstormRounds.min=1;brainstormRounds.max=5;brainstormRounds.value="2";brainstormRounds.dataset.newKey="brainstormRounds";
   const applyDepth=()=>{const v=depthS.value;clarifyC.checked=v!=="fast"&&v!=="custom";grillC.checked=v==="thorough";planC.checked=v==="thorough"};
   depthS.onchange=applyDepth;
   for(const cb of[clarifyC,grillC,planC])cb.onchange=()=>{depthS.value="custom"};
@@ -1154,6 +1199,7 @@ function renderNew(){
     const agents=[leadS.value,...[...othersById].filter(([id2,cb])=>cb.checked&&!cb.disabled).map(([id2])=>id2)].filter(Boolean);
     const body={title:titleI.value,description:descI.value.trim()||idea.value.trim(),agents:agents,depth:depthS.value,
       clarify:clarifyC.checked,grill:grillC.checked,planReview:planC.checked,allowSpawn:spawnC.checked,
+      ...(brainstormC.checked?{brainstorm:{enabled:true,maxRounds:Number(brainstormRounds.value)}}:{}),
       verifyCommand:verifyI.value,maxFollowUps:fuI.value,maxFixRounds:frI.value,maxCostUsd:costI.value};
     if(openS.value==="__new__"){if(proposesI.value.trim())body.proposes=proposesI.value.trim()}else if(openS.value)body.openspec=openS.value;
     if(fromI.value.trim())body.from=fromI.value.split("\n").map(x2=>x2.trim()).filter(Boolean);
@@ -1992,6 +2038,7 @@ function renderProject(){
       card.append(el("h3","","Предложение задачи: "+payload.title),el("p","",proposal.summary),el("p","",payload.description),el("p","page-sub","Команда: "+payload.agents.join(", ")),
         el("p","page-sub","Стоимость неизвестна. "+(payload.maxCostUsd===undefined?"Лимит не задан.":"Лимит: $"+payload.maxCostUsd+"; это не прогноз.")),el("p","coord-status",proposalStates[proposal.status]||"Статус: "+proposal.status));
       if(proposal.status==="pending")card.append(el("p","page-sub","Задача пока не создана. Проверьте описание и состав команды, затем подтвердите или измените предложение."));
+      if(payload.brainstorm?.enabled)card.append(el("p","coord-status","Brainstorm · до "+payload.brainstorm.maxRounds+" раундов. Перед разработкой потребуется ваше утверждение решения."));
       if(payload.pluginsByAgent){const resources=el("div","coord-disclosure");resources.append(el("h4","","Плагины команды"));
         for(const [agent,ids] of Object.entries(payload.pluginsByAgent))resources.append(el("p","coord-status",agent+": "+(ids.join(", ")||"Без дополнительных плагинов")));card.append(resources)}
       const settings=el("details","coord-disclosure");settings.dataset.disclosure="proposal-"+proposal.proposalId;settings.append(el("summary","","Подробные настройки"),el("pre","",JSON.stringify(payload,null,2)));card.append(settings);

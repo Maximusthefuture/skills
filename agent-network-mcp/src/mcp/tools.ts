@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { configSchema as brainstormConfig, inputSchema as brainstormInput } from "../brainstorm/index.js";
 import { MAX_WAIT_MS } from "../service.js";
 import { defineTool, errorResult } from "./toolkit.js";
 import type { Swarm } from "./swarm.js";
@@ -41,9 +42,13 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
       description: z.string().describe("Concrete spec: problem, expected behaviour, files to touch, who does what (e.g. 'backend: fix in src/main; reviewer: write the test'), what must not change"),
       agents: z.array(z.string()).describe("Ids of the OTHER agents, e.g. ['reviewer']; you are added automatically"),
       verifyCommand: z.string().optional().describe("Build/test command for the integration step, if the user named one, e.g. 'mvn -q verify'"),
+      brainstorm: brainstormConfig.optional().describe("Enable structured solution comparison before implementation: { enabled: true, maxRounds: 2 }; operator approval is required"),
     },
     async (a) => swarm.createTask(a),
   );
+  tool(
+    "brainstorm", "DISCUSS: independently submit an option, critique other options, or (lead only) synthesize a decision for explicit operator approval. Read current brainstorm context first; no coding or automatic approval.",
+    { input: z.union([brainstormInput, z.object({ action: z.literal("read") }).strict()]).describe("Use the exampleCall from current brainstorm context, or { action: 'read' }; include current epoch, round, expectedRevision and a unique operationId when submitting") }, async ({ input }) => swarm.brainstorm(input));
   tool(
     "send_message",
     "Message ONE agent of your task, or 'operator' (the human): a question only a human can answer, or with fyi: true a note that needs no answer. Also for files: requestFiles asks an owner to let you CHANGE its files (reading needs no permission), grantFiles (owner) allows it; owners answer first (nextAction 'respond').",

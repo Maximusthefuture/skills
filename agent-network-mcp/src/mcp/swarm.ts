@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { agentAction as brainstormAction, approved as brainstormApproved, view as brainstormView, decisionSummary, nextExample as brainstormExample, type BrainstormState, type BrainstormInput, type BrainstormConfig } from "../brainstorm/index.js";
 import { isAbsolute, join } from "node:path";
 import { commitContract, contractDiff, contractPath, contractVersion, installCommand, isContractFile } from "../contract.js";
 import { checkAcceptance, missingEvidence, needsAcceptance, specScenarios, uncoveredScenarios } from "../acceptance.js";
@@ -17,7 +18,7 @@ import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, OPERATOR_TIMEO
 import type { Agent, Agreement, FollowUpRequest, GitContext, Implementation, IntegrationReport, Message, Phase, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
 
 /** What the agent should do next, computed by the server so the agent never reasons about the state machine. */
-export type NextAction = "respond" | "propose" | "approve" | "implement" | "fix" | "sync" | "integrate" | "wait" | "done";
+export type NextAction = "respond" | "brainstorm" | "propose" | "approve" | "implement" | "fix" | "sync" | "integrate" | "wait" | "done";
 
 export interface Decision {
   nextAction: NextAction;
@@ -33,6 +34,7 @@ export interface Decision {
 }
 
 interface Snapshot {
+  brainstorm?: BrainstormState | null;
   task: Task;
   /** OpenSpec task, until DONE: the change as it is in the project folder (null if it cannot be read). */
   change?: ChangeInfo | null;
@@ -250,7 +252,7 @@ export class Swarm {
    * active task, the description must be substantial, and every agent must already be registered.
    * The creator becomes the lead (first in the list).
    */
-  async createTask(input: { title?: string; description?: string; agents?: string[]; verifyCommand?: string }): Promise<SwarmContext> {
+  async createTask(input: { title?: string; description?: string; agents?: string[]; verifyCommand?: string; brainstorm?: BrainstormConfig }): Promise<SwarmContext> {
     await this.begin(true);
     const registered = (await this.service.agents.list()).map((a) => a.id).filter((id) => id !== this.me);
     const known = { registeredAgents: registered }; // other agents you can put in 'agents'
@@ -268,7 +270,7 @@ export class Swarm {
     if (unknown.length) {
       throw new AppError("AGENT_NOT_REGISTERED", `Not registered (not started yet or misspelled): ${unknown.join(", ")}. Use only registered agents.`, known);
     }
-    const task = await this.service.createTask({ title: input.title, description: input.description!, agents: [this.me, ...others], verifyCommand: input.verifyCommand });
+    const task = await this.service.createTask({ title: input.title, description: input.description!, agents: [this.me, ...others], verifyCommand: input.verifyCommand, brainstorm: input.brainstorm });
     return { ...this.reply(await this.contextNow()), ok: true, action: "TASK_CREATED", taskId: task.id } as SwarmContext;
   }
 
@@ -278,6 +280,7 @@ export class Swarm {
    */
   async build(input: { command?: string; timeoutMin?: number; in?: string }, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const task = await this.currentTask();
+    if (task?.brainstorm) await this.service.requireBrainstormApproved(task);
     const open = task && (task.status === "ACTIVE" || task.status === "BLOCKED") ? task : null;
     // in: "contract" — the contract's worktree of this task (its own build, recorded apart from the service's)
     if (input.in !== undefined && input.in !== "contract") throw invalid('in: "contract" (the contract\'s worktree) or nothing (your folder)');
@@ -421,6 +424,17 @@ export class Swarm {
         (snap.unread.length ? `You have ${snap.unread.length} unread message(s): call swarm_context. ` : "") +
         d.hint,
     };
+  }
+
+  async brainstorm(input: BrainstormInput | { action: "read" }): Promise<SwarmContext> {
+    await this.begin(true);
+    const task = await this.requireTask();
+    if (input.action !== "read") {
+      const snap = await this.snapshot(task);
+      if (snap.mustClarify) throw invalid("Finish clarification before submitting brainstorm materials");
+      await this.service.brainstormSubmit(task.id, input);
+    }
+    return this.reply(await this.contextNow());
   }
 
   async sendMessage(input: { to?: string; message?: string; requestFiles?: string[]; grantFiles?: string[]; fyi?: boolean; options?: { label: string; description?: string }[]; recommended?: string; multiSelect?: boolean; summary?: boolean }): Promise<SwarmContext> {
@@ -735,7 +749,8 @@ export class Swarm {
 
   private signature(ctx: SwarmContext): string {
     const t = ctx.task as { id: string; phase: string; syncRound: number; status: string } | null;
-    return t ? `${t.id}:${t.phase}:${t.syncRound}:${t.status}` : "none";
+    const brainstorm = ctx.brainstorm as { epoch?: number; revision?: number } | undefined;
+    return t ? `${t.id}:${t.phase}:${t.syncRound}:${t.status}:${brainstorm?.epoch ?? ""}:${brainstorm?.revision ?? ""}` : "none";
   }
 
   /**
@@ -864,7 +879,7 @@ export class Swarm {
   }
 
   private async snapshot(task: Task): Promise<Snapshot> {
-    const [agreement, impls, reports, integrations, agents, messages] = await Promise.all([
+    let [agreement, impls, reports, integrations, agents, messages] = await Promise.all([
       this.service.agreements.find(task.id),
       this.service.implementations.list(task.id),
       this.service.syncs.list(task.id, task.syncRound),
@@ -872,14 +887,18 @@ export class Swarm {
       this.service.agents.list(),
       this.service.messages.list(task.id),
     ]);
-    const open = openFileRequests(messages);
+    const clarificationMessages = messages.filter(m => !task.brainstormBriefAt || m.createdAt >= task.brainstormBriefAt);
+    const open = openFileRequests(clarificationMessages);
+    const brainstorm = task.brainstorm ? await this.service.brainstormState(task.id) : null;
+    if (brainstorm && agreement?.brainstormDecisionHash !== brainstorm.approvedDecision?.hash) agreement = null;
     const subtasks = await Promise.all(task.agents.map((a) => this.service.subtasks.get(task.id, a)));
     return {
       task, agreement, impls, reports, integrations, agents, subtasks,
+      brainstorm,
       unread: messages.filter((m) => m.to === this.me && !m.readAt),
       openToMe: open.filter((m) => m.to === this.me),
       openFromMe: open.filter((m) => m.from === this.me),
-      myQuestions: messages.filter((m) => m.from === this.me && m.to === OPERATOR && m.type === "QUESTION" && !m.readAt),
+      myQuestions: clarificationMessages.filter((m) => m.from === this.me && m.to === OPERATOR && m.type === "QUESTION" && !m.readAt),
       myLastMessageAt: messages.filter((m) => m.from === this.me && m.to !== OPERATOR).at(-1)?.createdAt,
       ...(task.phase === "INTEGRATE" ? { followUpBudget: await this.service.followUpBudget(task) } : {}),
       handoff: await this.handoffPhase(task),
@@ -919,7 +938,7 @@ export class Swarm {
             () => ({}),
           )
         : {}),
-      ...(task.clarify && task.phase === "DISCUSS" && !agreement && !(task.grill ? grillConfirmed(messages, task.agents[0]!) : messages.some((m) => clarifies(m, task.agents[0]!))) ? { mustClarify: true } : {}),
+      ...(task.clarify && task.phase === "DISCUSS" && !agreement && !(task.grill ? grillConfirmed(clarificationMessages, task.agents[0]!) : clarificationMessages.some((m) => clarifies(m, task.agents[0]!))) ? { mustClarify: true } : {}),
       ...(task.proposes || task.grill
         ? {
             operatorAnswers: messages
@@ -1171,6 +1190,7 @@ export class Swarm {
       return { task: { id: task.id, title: task.title, phase: task.phase, status: task.status }, agent, parked: true, pendingMessages: [], waitingOn: d.waitingOn, allowedActions: d.allowedActions, nextAction: d.nextAction, hint: d.hint };
     }
     if (d.handoff) {
+      if (d.handoff === "DISCUSS") await this.service.markHandoff(task.id, phaseEpoch(task) ?? 0);
       // nothing else: messages stay unread for the fresh session, and nothing here should tempt this one to go on
       return {
         task: { id: task.id, title: task.title, phase: task.phase, status: task.status },
@@ -1232,6 +1252,7 @@ export class Swarm {
         ...(task.baseCommit ? { baseCommit: task.baseCommit } : {}),
       },
       agent,
+      ...(snap.brainstorm ? (phase === "DISCUSS" ? { brainstorm: brainstormView(snap.brainstorm, this.me) } : { brainstormDecision: decisionSummary(snap.brainstorm) }) : {}),
       ...(myAssignment ? { assignment: { responsibility: myAssignment.responsibility } } : {}),
       ...this.openspecView(snap, full),
       ...(task.contract ? { contract: { project: task.contract.project, specs: task.contract.specs, artifact: `${task.contract.groupId}:${task.contract.artifactId}`, baseVersion: task.contract.version, changedBy: this.service.phases.integrator(task), ...(this.service.phases.integrator(task) === this.me ? { worktree: task.contract.worktree } : {}) } } : {}),
@@ -1358,6 +1379,8 @@ export class Swarm {
       };
     }
     const core = this.decideCore(s);
+    if (this.underRunner && process.env.AGENT_NETWORK_BRAINSTORM_READONLY === "1" && s.brainstorm && brainstormApproved(s.brainstorm))
+      return { nextAction: "done", allowedActions: [], waitingOn: [], handoff: "DISCUSS", hint: "Brainstorm approved: end this read-only session. The runner starts a fresh session for the approved approach and the normal DISCUSS prerequisites." };
     // an unanswered request for one of my files blocks another agent: answering it comes first
     const req = s.openToMe[0];
     if (req && s.task.phase !== "DONE") {
@@ -1374,6 +1397,12 @@ export class Swarm {
       };
     }
     let d = core;
+    if (s.brainstorm && !brainstormApproved(s.brainstorm) && !s.mustClarify) {
+      if (this.underRunner && core.nextAction === "wait" && this.idleWaits >= this.parkAfterWaits && !s.unread.some(m => !m.quiet))
+        return { ...core, nextAction: "done", allowedActions: [], park: true, hint: "Brainstorm waits for participants or explicit operator approval. End this session; the runner wakes on a brainstorm revision. Never approve by timeout." };
+      const example = brainstormExample(s.brainstorm, this.me);
+      return example ? { ...core, exampleCall: { tool: "brainstorm", args: { input: example.args } } } : core;
+    }
     // a question to the operator holds the asker for a while; with no answer it goes ahead with its own proposal and says so
     const dueAt = (m: Message) => Date.parse(m.createdAt) + this.operatorTimeoutMs;
     const minutes = Math.round(this.operatorTimeoutMs / 60_000);
@@ -1463,6 +1492,12 @@ export class Swarm {
       return this.underRunner
         ? done("done", [], `${why}: end your session now; the runner starts a new one when the task is unblocked.`, [])
         : done("wait", ["send_message", "wait"], `${why}; call wait().`, ["operator"]);
+    }
+    if (task.phase === "DISCUSS" && s.brainstorm && !brainstormApproved(s.brainstorm) && !s.mustClarify) {
+      const action = brainstormAction(s.brainstorm, this.me), state = brainstormView(s.brainstorm, this.me);
+      return done(action === "wait" ? "wait" : "brainstorm", ["brainstorm", "send_message", "wait"],
+        `Brainstorm ${s.brainstorm.stage}, round ${s.brainstorm.round}/${s.brainstorm.maxRounds}. ${action === "wait" ? "Wait for the other participants or operator. No approval by timeout." : "Call brainstorm with action " + action + ". Use the schema and current epoch/round/expectedRevision in brainstorm context."} Do not implement code, run builds, change files or spawn agents.`,
+        s.brainstorm.stage === "approval" ? ["operator"] : state.waitingOn);
     }
     const phases = this.service.phases;
     const spec = task.openspec ? changePath(task.openspec.change) : null;

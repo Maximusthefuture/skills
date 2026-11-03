@@ -12,6 +12,8 @@ const ALLOWED: Readonly<Record<Phase, readonly Phase[]>> = {
 };
 
 export interface PhaseSnapshot {
+  brainstormApproved?: boolean;
+  brainstormDecisionHash?: string;
   task: Task;
   agreement: Agreement | null;
   implementations: Implementation[];
@@ -83,6 +85,7 @@ export class PhaseManager {
     if (task.status !== "ACTIVE") return null;
     switch (task.phase) {
       case "DISCUSS": {
+        if (task.brainstorm?.enabled && (!s.brainstormApproved || !s.brainstormDecisionHash || s.agreement?.brainstormDecisionHash !== s.brainstormDecisionHash)) return null;
         const a = s.agreement;
         if (!a) return null;
         const assigned = a.assignments.map((x) => x.agentId);

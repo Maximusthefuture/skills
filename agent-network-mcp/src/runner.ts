@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { BrainstormStore, approved as brainstormApproved, decisionSummary } from "./brainstorm/index.js";
+import { brainstormReadOnlyCommand, brainstormRules } from "./brainstormRunner.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -222,6 +224,8 @@ export interface RunningSession {
 }
 
 export interface RunnerOptions {
+  /** Tests: replace the CLI session without contacting any model. */
+  sessionRun?: typeof runSession;
   agent: string;
   networkDir: string;
   /**
@@ -495,9 +499,13 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     // the lead of a task that changes the API contract writes the contract's worktree too: the CLI is told so
     const contractDir = task.contract && task.agents[0] === agent ? task.contract.worktree : undefined;
     const resources = opts.pluginCommand ? await opts.pluginCommand(task) : { command, mcpServers: undefined };
-    const dirs = contractDir ? withExtraDir(resources.command, contractDir) : { command: resources.command, added: false };
+    const brainstorm = task.brainstorm ? await new BrainstormStore(fs).read(task) : null;
+    const brainstorming = !!brainstorm && !brainstormApproved(brainstorm) && task.phase === "DISCUSS";
+    const sessionCommand = brainstorming ? brainstormReadOnlyCommand(resources.command) : resources.command;
+    const dirs = contractDir ? withExtraDir(sessionCommand, contractDir) : { command: sessionCommand, added: false };
     const skillsOff = withSkillOverrides(dirs.command, offSkills);
     const prompt =
+      (brainstorming ? brainstormRules + "\n\n" : decisionSummary(brainstorm) + "\n\n") +
       (urgent ? URGENT.replace("{message}", urgent) : "") +
       withInstructions(renderPrompt(template, vars), instructions, vars) +
       (opts.tokenSaver ? `\n\n${TOKEN_SAVER}` : "") +
@@ -505,13 +513,16 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       (contractDir ? `\n\nThe API contract's worktree of this task, yours to edit: ${contractDir}${dirs.added ? "" : " (your CLI may ask before writing outside your folder)"}.` : "");
     const env = {
       ...process.env, AGENT_ID: agent, NETWORK_DIR: networkDir, AGENT_NETWORK_TASK_ID: task.id, AGENT_NETWORK_ATTEMPT: String(attempt), AGENT_NETWORK_RUNNER: "1",
+      AGENT_NETWORK_BRAINSTORM_READONLY: brainstorming ? "1" : "0",
       [DISABLED_SKILLS_ENV]: JSON.stringify(offSkills),
       ...(freshPhases.length ? { AGENT_NETWORK_FRESH_PHASES: freshPhases.join(",") } : {}),
     };
     say(`${task.id}: starting session ${attempt} (phase ${task.phase}${handoff ? ", fresh after a handoff" : afterTurnLimit ? ", going on after the turn limit" : ""}${model ? `, model ${model}` : ""})`);
     const progressBefore = await progress(task.id).catch(() => "");
     const finishedBefore = new Set((await tasks.listForAgent(agent)).filter(isFinished).map((t) => t.id));
-    const sink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
+    const rawSink = opts.output ?? (opts.stdio === "ignore" ? null : (text: string) => void process.stdout.write(text));
+    let noticeWritten = false;
+    const sink = brainstorming ? (text: string) => { if (!noticeWritten && text.trim()) { noticeWritten = true; rawSink?.("[Brainstorm: transcript hidden; read structured materials in the task]\n"); } } : rawSink;
     const startedAt = new Date();
     opts.onSession?.({ taskId: task.id, attempt, startedAt: startedAt.toISOString(), ...(model ? { model } : {}) });
     opts.onContext?.(null);
@@ -536,7 +547,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     };
     const skills: string[] = [];
     const onActivity = (e: ActivityItem): void => {
-      opts.onActivity?.(e);
+      opts.onActivity?.(brainstorming ? { kind: e.kind, ...(e.tool ? { tool: e.tool } : {}), ...(e.isError ? { isError: true } : {}), summary: "Brainstorm: " + e.kind } : e);
       if (e.skill && !skills.includes(e.skill)) skills.push(e.skill);
       if (contextFull && !contextEnded && e.kind === "tool_result") {
         contextEnded = true;
@@ -544,7 +555,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       }
     };
     const { code, result } = await withQwenSkillSettings(skillsOff.command, offSkills, env, (sessionEnv, qwenHidden) =>
-      runSession(buildArgv(withModel(skillsOff.command, model), prompt + (skillsOff.hidden || qwenHidden ? "" : disabledSkillsNote(offSkills)), system), sessionEnv, opts.cwd, sink, signal?.aborted ? signal : session.signal, onActivity, onContext), !!opts.pluginCommand, resources.mcpServers);
+      (opts.sessionRun ?? runSession)(buildArgv(withModel(skillsOff.command, model), prompt + (skillsOff.hidden || qwenHidden ? "" : disabledSkillsNote(offSkills)), system), sessionEnv, opts.cwd, sink, signal?.aborted ? signal : session.signal, onActivity, onContext), !!opts.pluginCommand, resources.mcpServers);
     opts.urgent?.attach(null);
     signal?.removeEventListener("abort", stopAll);
     const endedAt = new Date();
@@ -556,6 +567,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     const alsoTasks = (await tasks.listForAgent(agent)).filter((t) => isFinished(t) && t.id !== task.id && !finishedBefore.has(t.id));
     // why it ended, for the record (the page's runs, the observer, cost by phase)
     const ended = await tasks.find(task.id).catch(() => null);
+    const brainstormFinished = brainstorming && !!ended && brainstormApproved(await new BrainstormStore(fs).read(ended));
     const parkedBy = await lastPark(fs, agent).catch(() => null);
     const endedBy = contextEnded
       ? ("context-limit" as const)
@@ -567,7 +579,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
           ? ("parked" as const)
           : ended.status === "BLOCKED"
             ? ("blocked" as const)
-            : freshPhases.length && (ended.phaseHistory?.length ?? 0) > (task.phaseHistory?.length ?? 0) && (await isHandedOver(fs, agent, ended).catch(() => false))
+            : brainstormFinished || (freshPhases.length && (ended.phaseHistory?.length ?? 0) > (task.phaseHistory?.length ?? 0) && (await isHandedOver(fs, agent, ended).catch(() => false)))
               ? ("handoff" as const)
               : plannedTurnLimit
                 ? ("turn-limit" as const)
@@ -624,6 +636,11 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
     }
     // the session parked (a planned end): the top of the loop waits without a model, or, if something changed for the
     // agent while the session was ending, starts a fresh one at once
+    if (brainstormFinished) {
+      plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);
+      say(`${task.id}: brainstorm approved; start a fresh session with the approved decision`);
+      continue;
+    }
     const parked = await lastPark(fs, agent).catch(() => null);
     if (parked?.taskId === task.id && Date.parse(parked.at) >= startedAt.getTime()) {
       plannedEnds.set(task.id, (plannedEnds.get(task.id) ?? 0) + 1);

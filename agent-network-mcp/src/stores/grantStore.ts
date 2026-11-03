@@ -10,7 +10,7 @@ export class GrantStore {
     return ["tasks", assertTaskId(taskId), "grants"];
   }
 
-  async create(input: { taskId: string; from: string; to: string; files: string[] }): Promise<Grant> {
+  async create(input: { taskId: string; from: string; to: string; files: string[]; brainstormDecisionHash?: string }): Promise<Grant> {
     return this.fs.createNumbered(this.dir(input.taskId), "grant", (id) => ({ id, ...input, createdAt: new Date().toISOString() }));
   }
 

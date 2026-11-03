@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { BrainstormStore, view as brainstormView } from "../brainstorm/index.js";
 import { isAppError } from "../errors.js";
 import { changePath, hasChange, readChange } from "../openspec.js";
 import { planBrief, readPlanState, reviewsPages } from "../plan.js";
@@ -74,7 +75,7 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
 
   async function buildView(task: Task) {
     {
-      const [agreement, impls, reports, integrationReports] = await Promise.all([
+      let [agreement, impls, reports, integrationReports] = await Promise.all([
         agreements.find(task.id),
         implementations.list(task.id),
         syncs.list(task.id),
@@ -84,11 +85,14 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
       // a task with planReview, still in DISCUSS: where the lead's plan stands (waiting on the operator or the lead); a
       // change-writing task with analysts' input: its pages (the input in DISCUSS, the change in IMPLEMENT)
       const plan = reviewsPages(task) ? planBrief(await readPlanState(fs, task.id)) : null;
+      const brainstorm = await new BrainstormStore(fs).read(task);
+      if (brainstorm && agreement?.brainstormDecisionHash !== brainstorm.approvedDecision?.hash) agreement = null;
       const pageOpen = task.planReview ? task.phase === "DISCUSS" && !agreement : plan?.stage === "change" ? task.phase === "IMPLEMENT" : task.phase === "DISCUSS" && !agreement;
       const planWait = plan && task.status === "ACTIVE" && pageOpen && plan.status !== "approved" ? [plan.status === "awaiting" ? "operator" : task.agents[0]!] : null;
       const [msgs, evs] = await Promise.all([tail<Message>(fs, ["tasks", task.id, "messages"], "msg"), tail<NetworkEvent>(fs, ["tasks", task.id, "events"], "event")]);
       return {
         ...pickTask(task),
+        brainstorm: brainstorm ? brainstormView(brainstorm, "operator", true) : null,
         /** running / queued / blocked / done / cancelled: whether one of its agents works on it now. */
         queue: queue.get(task.id) ?? "queued",
         stats: stats.get(task.id) ?? null,
@@ -96,7 +100,7 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         implementations: impls,
         syncReports: reports,
         integrations: integrationReports,
-        grants: await grants.list(task.id),
+        grants: (await grants.list(task.id)).filter(grant => !brainstorm || (!!agreement && grant.brainstormDecisionHash === brainstorm.approvedDecision?.hash)),
         plan,
         waitingOn: planWait ?? waitingOn(task, agreement?.assignments.map((a) => a.agentId) ?? [], agreement?.approvedBy ?? [], impls, current.map((r) => r.agentId), !!agreement),
         messages: msgs.items,
@@ -202,6 +206,8 @@ function operatorQuestions(messages: Message[]) {
 function pickTask(t: Task) {
   const { id, title, description, phase, status, agents, syncRound, createdAt, updatedAt, createdBy, git, blockedReason, verifyCommand, parentTaskId, baseCommit, maxFollowUps, followUpsUsed, handover, takeover, maxCostUsd, blockedBy, merged, proposes, spawned, clarify, planReview, grill, jobOf, allowSpawn, acceptance, contract, setAside } = t;
   return {
+    brainstormConfig: t.brainstorm ?? null,
+    pluginsByAgent: t.pluginsByAgent,
     id, title, description, phase, status, agents, syncRound, maxFixRounds: phases.maxFixRounds(t), createdAt, updatedAt, createdBy, git,
     blockedReason: blockedReason ?? null, verifyCommand: verifyCommand ?? null,
     /** Cost limit in USD (null = none); blockedBy "cost": BLOCKED by it, unblocking raises it. */

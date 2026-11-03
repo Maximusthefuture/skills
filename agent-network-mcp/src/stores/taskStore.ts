@@ -6,6 +6,7 @@ import type { GitContext, Task } from "../types.js";
 import { assertTaskId } from "../validation.js";
 
 export interface NewTask {
+  brainstorm?: Task["brainstorm"];
   projectInput?: Task["projectInput"];
   projectOrigin?: { projectId: string; operationId: string };
   title: string;
@@ -47,6 +48,7 @@ export class TaskStore {
     const now = new Date().toISOString();
     const task: Task = {
       id,
+      ...(input.brainstorm ? { brainstorm: input.brainstorm } : {}),
       ...(input.projectInput ? { projectInput: input.projectInput } : {}),
       ...(input.projectOrigin ? { projectOrigin: input.projectOrigin } : {}),
       title: input.title,

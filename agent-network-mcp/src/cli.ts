@@ -25,6 +25,7 @@ const USAGE = `Usage:
                                 --propose: the agents WRITE that OpenSpec change (the lead writes, the others review), no code
                                 --from <path> (repeatable, with --propose): the analysts' artifacts (.md files or a folder) the change
                                   is written from: shown to you as a page, grilled on, then the lead writes its own change (grill on by default)
+                                --brainstorm [--brainstorm-rounds 2]: compare approaches before coding; explicit operator approval, 1–5 rounds
                                 --clarify: the lead first asks what is unclear (or says how it understood the task), then proposes
                                 --plan: the lead first writes an HTML plan; you comment, edit and approve it on the page, then it proposes
                                 --spawn: the lead may add agents from the spawn templates (off: it splits the work among --agents)
@@ -96,6 +97,8 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       from: { type: "string", multiple: true },
       clarify: { type: "boolean" },
       plan: { type: "boolean" },
+      brainstorm: { type: "boolean" },
+      "brainstorm-rounds": { type: "string" },
       spawn: { type: "boolean" },
       grill: { type: "boolean" },
       depth: { type: "string" },
@@ -184,6 +187,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, out: (s: st
       ...(values.depth ? depthFlags(values.depth) : {}),
       ...(values.clarify ? { clarify: true } : {}),
       ...(values.plan ? { planReview: true } : {}),
+      ...(values.brainstorm ? { brainstorm: { enabled: true, maxRounds: Number(values["brainstorm-rounds"] ?? 2) } } : {}),
       ...(values.grill ? { grill: true } : {}),
       ...(values.spawn ? { allowSpawn: true } : {}),
       agents: values.agents.split(",").map((a) => a.trim()).filter(Boolean),

@@ -6,9 +6,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
+const agents = readFileSync(join(root, "AGENTS.md"), "utf8").replaceAll("\r\n", "\n");
 const skillPath = join(root, "skills", "agent-network", "SKILL.md");
-const skill = readFileSync(skillPath, "utf8");
+const skill = readFileSync(skillPath, "utf8").replaceAll("\r\n", "\n");
 const front = /^---\n[\s\S]*?\n---\n/.exec(skill)?.[0];
 if (!front) throw new Error(`${skillPath}: no front matter`);
 writeFileSync(skillPath, `${front}\n<!-- generated from AGENTS.md by npm run docs:sync: edit AGENTS.md -->\n\n${agents}`);

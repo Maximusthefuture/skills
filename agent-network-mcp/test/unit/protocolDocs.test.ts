@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { SWARM_INSTRUCTIONS } from "../../src/mcp/instructions.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const read = (p: string) => readFileSync(join(root, p), "utf8");
+const read = (p: string) => readFileSync(join(root, p), "utf8").replaceAll("\r\n", "\n");
 /** The tools registerSwarmTools gives an agent, read from its source. */
 const tools = [...read("src/mcp/tools.ts").matchAll(/^\s+tool\(\s*\n\s*"([a-z_]+)"/gm)].map((m) => m[1]!);
 

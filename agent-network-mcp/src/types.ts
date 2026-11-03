@@ -23,6 +23,10 @@ export interface GitContext {
 }
 
 export interface Task {
+  brainstorm?: { enabled: true; maxRounds: number };
+  brainstormGeneration?: number;
+  brainstormBriefAt?: string;
+  brainstormResets?: { operationId: string; hash: string }[];
   projectInput?: { state: "pending" | "ready"; expected: string[]; inputSnapshotHash?: string };
   projectOrigin?: { projectId: string; operationId: string };
   id: string;
@@ -198,6 +202,7 @@ export interface Assignment {
 
 /** The owner of some files lets another agent change them. */
 export interface Grant {
+  brainstormDecisionHash?: string;
   id: string;
   taskId: string;
   from: string;
@@ -207,6 +212,7 @@ export interface Grant {
 }
 
 export interface Agreement {
+  brainstormDecisionHash?: string;
   taskId: string;
   summary: string;
   assignments: Assignment[];
@@ -350,6 +356,7 @@ export interface QuestionChoices {
 }
 
 export const EVENT_TYPES = [
+  "BRAINSTORM_UPDATED",
   "AGENT_REGISTERED",
   "TASK_CREATED",
   "MESSAGE_CREATED",

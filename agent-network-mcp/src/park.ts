@@ -1,4 +1,5 @@
 import type { FileStore } from "./storage/fileStore.js";
+import { createHash } from "node:crypto";
 import { EventStore } from "./stores/eventStore.js";
 import { MessageStore } from "./stores/messageStore.js";
 import type { Task } from "./types.js";
@@ -15,7 +16,9 @@ export async function parkMark(fs: FileStore, task: Task, agentId: string): Prom
   const toMe = seen.messages.filter((m) => m.to === agentId && !m.quiet).at(-1)?.id ?? "";
   // only what can give this agent something to do: a block and its unblock, a build, an agent added... wake nobody
   const events = seen.wakes.filter((e) => e.source !== agentId && (e.target == null || e.target === agentId));
-  const state = [task.phase, task.syncRound, JSON.stringify(task.reviewScope ?? null), JSON.stringify(task.takeover ?? null)].join(":");
+  const brainstorm = task.brainstorm ? await fs.readJson<{ epoch: number; revision: number }>(["tasks", task.id, "brainstorm", "state.json"]) : null;
+  const brief = task.brainstorm ? createHash("sha256").update(JSON.stringify([task.title,task.description,task.agents,task.brainstormGeneration])).digest("hex") : "";
+  const state = [task.phase, task.syncRound, brief, brainstorm?.epoch, brainstorm?.revision, JSON.stringify(task.reviewScope ?? null), JSON.stringify(task.takeover ?? null)].join(":");
   return `${state}|${toMe}|${events.at(-1)?.seq ?? 0}`;
 }
 
@@ -52,7 +55,7 @@ async function seenOf(fs: FileStore, taskId: string): Promise<Seen> {
 }
 
 /** Events that may need a parked agent: a new agreement to approve, a part reported (a dependency), comments on the diff. */
-export const WAKES = new Set(["AGREEMENT_UPDATED", "IMPLEMENTATION_COMPLETED", "REVIEW_COMMENTS", "TASK_HANDED_OVER", "PHASE_CHANGED"]);
+export const WAKES = new Set(["BRAINSTORM_UPDATED", "AGREEMENT_UPDATED", "IMPLEMENTATION_COMPLETED", "REVIEW_COMMENTS", "TASK_HANDED_OVER", "PHASE_CHANGED"]);
 
 /** A parked agent looks again after this long anyway (a short session): a missed reason to wake costs minutes, not a task. */
 export const PARK_MAX_MS = 15 * 60_000;

@@ -9,9 +9,9 @@ import { onPath } from "./stack.js";
  * once, and it leaves the list by itself when the operator has decided.
  */
 
-export type AttentionKind = "question" | "plan" | "acceptance" | "merge" | "blocked" | "supervisor" | "observer";
+export type AttentionKind = "question" | "brainstorm" | "plan" | "acceptance" | "merge" | "blocked" | "supervisor" | "observer";
 /** In the order they come in the list (after what blocks the swarm, and what has a deadline). */
-export const ATTENTION_KINDS: readonly AttentionKind[] = ["question", "blocked", "plan", "merge", "acceptance", "supervisor", "observer"];
+export const ATTENTION_KINDS: readonly AttentionKind[] = ["question", "blocked", "brainstorm", "plan", "merge", "acceptance", "supervisor", "observer"];
 
 export interface AttentionItem {
   key: string;
@@ -31,6 +31,7 @@ export interface AttentionItem {
 }
 
 interface TaskView {
+  brainstorm?: { stage: string; revision: number; updatedAt: string } | null;
   id: string; title: string; status: string; phase: string; updatedAt: string; phaseSince?: string; syncRound?: number;
   grill?: boolean; jobOf?: unknown; merged?: unknown; acceptance?: unknown;
   /** A change-writing task, and whether its change is in the project folder (merged) after DONE. */
@@ -74,6 +75,10 @@ export function attentionItems(i: AttentionInput): AttentionItem[] {
     });
   }
   for (const t of i.tasks) {
+    if (t.status === "ACTIVE" && t.brainstorm?.stage === "approval") out.push({
+      key: `brainstorm:${t.id}:${t.brainstorm.revision}`, kind: "brainstorm", taskId: t.id, blocking: true,
+      since: t.brainstorm.updatedAt, title: `${t.id}: решение Brainstorm ждёт утверждения`, text: t.title, open: { tab: "tasks" },
+    });
     if (t.plan && t.status === "ACTIVE" && t.waitingOn?.includes("operator") && t.plan.status === "awaiting") {
       out.push({
         key: `plan:${t.id}:v${t.plan.version ?? 0}`, kind: "plan", taskId: t.id, blocking: true, since: t.plan.at ?? t.updatedAt,
