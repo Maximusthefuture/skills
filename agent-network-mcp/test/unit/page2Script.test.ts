@@ -3,6 +3,35 @@ import { describe, expect, it } from "vitest";
 import { PAGE2_HTML } from "../../src/ui/page2.js";
 
 describe("the v2 page's script", () => {
+  it("keeps brainstorm disclosures open across refreshes and tabs without reusing another task or epoch", () => {
+    class Details {
+      open = false;
+      isConnected = true;
+      toggle?: () => void;
+      addEventListener(_event: string, handler: () => void) { this.toggle = handler; }
+    }
+    const task = { id: "task-001", brainstorm: { epoch: 1 } };
+    const context = vm.createContext({ project: "project-a", el: () => new Details(), task });
+    const script = PAGE2_HTML.match(/<script>([\s\S]*?)<\/script>/)![1]!;
+    const start = script.indexOf("const brainstormDrafts="), end = script.indexOf("function brainstormKittens(", start);
+    vm.runInContext(script.slice(start, end), context);
+    const create = () => vm.runInContext('brainstormDisclosure(task,"option:1")', context) as Details;
+    const first = create();
+    first.open = true; first.toggle!();
+    const refreshed = create();
+    expect(refreshed.open).toBe(true);
+    first.isConnected = false; first.open = false; first.toggle!();
+    expect(create().open).toBe(true); // A removed element's queued toggle cannot overwrite the user's choice.
+    refreshed.open = false; refreshed.toggle!();
+    expect(create().open).toBe(false);
+    refreshed.open = true; refreshed.toggle!();
+    task.brainstorm.epoch = 2;
+    expect(create().open).toBe(false);
+    task.brainstorm.epoch = 1; task.id = "task-002";
+    expect(create().open).toBe(false);
+    task.id = "task-001"; context.project = "project-b";
+    expect(create().open).toBe(false);
+  });
   it("updates the selected sidebar task on navigation even when task data is unchanged", () => {
     class Node {
       children: Node[] = [];
