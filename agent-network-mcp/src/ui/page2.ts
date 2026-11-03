@@ -930,12 +930,28 @@ function renderTask(){
   if(focusedBrainstorm){const field=$("brainstorm-feedback");if(field){field.focus({preventScroll:true});field.setSelectionRange(focusedBrainstorm.start,focusedBrainstorm.end)}}
   requestAnimationFrame(()=>{if(route.name==="tasks"&&route.task===t.id)window.scrollTo(0,wasBottom?document.body.scrollHeight:scrollY)})}
 function avLetter(id,lead){return (id||"?").slice(0,1).toUpperCase()}
-const brainstormDrafts=new Map(),brainstormTabs=new Map(),brainstormOperations=new Map(),brainstormDisclosures=new Map();
+const brainstormDrafts=new Map(),brainstormTabs=new Map(),brainstormOperations=new Map(),brainstormDisclosures=new Map(),brainstormArchives=new Map();
 function brainstormDisclosure(t,key){
   const identity=JSON.stringify([project||"",t.id,t.brainstorm.epoch,key]);
   const details=el("details","coord-disclosure");details.open=brainstormDisclosures.get(identity)===true;
   details.addEventListener("toggle",()=>{if(details.isConnected)brainstormDisclosures.set(identity,details.open)});
   return details;
+}
+function brainstormArchive(t){
+  const archive=brainstormDisclosure(t,"archive"),key=JSON.stringify([project||"",t.id,t.brainstorm.epoch]);
+  archive.append(el("summary","","Предыдущие постановки"));
+  const load=async()=>{
+    if(!archive.open||archive.dataset.loaded)return;
+    archive.dataset.loaded="1";
+    try{
+      if(!brainstormArchives.has(key))brainstormArchives.set(key,getJSON(q("/api/tasks/"+encodeURIComponent(t.id)+"/brainstorm/archive")).catch(error=>{brainstormArchives.delete(key);throw error}));
+      const answer=await brainstormArchives.get(key);
+      for(const entry of answer.epochs)archive.append(el("pre","",JSON.stringify(entry.state,null,2)));
+    }catch(e){archive.append(el("p","",e.message));delete archive.dataset.loaded}
+  };
+  archive.ontoggle=load;
+  if(archive.open)load();
+  return archive;
 }
 function brainstormKittens(t){
   const s=t.brainstorm,pending=t.status==="ACTIVE"&&t.phase==="DISCUSS"&&!["approval","approved"].includes(s.stage);
@@ -969,7 +985,7 @@ function brainstormCard(t){
   for(const[tab,label]of[["options","Варианты"],["critique","Сравнение"],["decision","Рекомендация"]]){const button=el("button","ghost small",label);button.type="button";button.dataset.tab=tab;button.onclick=()=>select(tab);tabs.append(button)}
   card.append(tabs,content);select(brainstormTabs.get(t.id)||(s.stage==="approval"||s.stage==="approved"?"decision":"options"));
   if(s.rounds.length>1){const history=brainstormDisclosure(t,"rounds");history.append(el("summary","","Предыдущие раунды"));for(const previous of s.rounds.filter(r=>r.round!==s.round)){const inside=el("div","plugin-guide");inside.append(el("h4","","Раунд "+previous.round));for(const option of previous.options){inside.append(el("h4","",option.author));showFields(inside,option)}for(const critique of previous.critiques){inside.append(el("h4","","Рецензия: "+critique.author));showFields(inside,critique)}history.append(inside)}card.append(history)}
-  if(s.epoch>1){const archive=brainstormDisclosure(t,"archive");archive.append(el("summary","","Предыдущие постановки"));archive.ontoggle=async()=>{if(!archive.open||archive.dataset.loaded)return;archive.dataset.loaded="1";try{const answer=await getJSON(q("/api/tasks/"+encodeURIComponent(t.id)+"/brainstorm/archive"));for(const entry of answer.epochs)archive.append(el("pre","",JSON.stringify(entry.state,null,2)))}catch(e){archive.append(el("p","",e.message));delete archive.dataset.loaded}};card.append(archive)}
+  if(s.epoch>1)card.append(brainstormArchive(t));
   if(t.status==="ACTIVE"&&t.phase==="DISCUSS"){
     const reset=el("button","ghost small","Изменить постановку и начать заново");reset.onclick=async()=>{
       const description=await ask("Новая постановка сбросит утверждение решения, плана и соглашения. Материалы сохранятся в архиве. Введите полную новую постановку:","Новая цель, требования и ограничения");if(typeof description!=="string"||!description.trim())return;

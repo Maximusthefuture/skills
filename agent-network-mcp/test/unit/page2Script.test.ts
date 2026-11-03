@@ -3,6 +3,39 @@ import { describe, expect, it } from "vitest";
 import { PAGE2_HTML } from "../../src/ui/page2.js";
 
 describe("the v2 page's script", () => {
+  it("keeps previous briefs expanded and reuses loaded archive data after a refresh", async () => {
+    class Node {
+      open = false;
+      isConnected = true;
+      dataset: Record<string, string> = {};
+      children: Node[] = [];
+      toggle?: () => void;
+      ontoggle?: () => Promise<void>;
+      constructor(public textContent = "") {}
+      append(...nodes: Node[]) { this.children.push(...nodes); }
+      addEventListener(_event: string, handler: () => void) { this.toggle = handler; }
+    }
+    let requests = 0;
+    const task = { id: "task-001", brainstorm: { epoch: 2 } };
+    const context = vm.createContext({ project: "project-a", task,
+      el: (_tag: string, _cls: string, text: string) => new Node(text), q: (path: string) => path,
+      getJSON: async () => { requests++; return { epochs: [{ state: { brief: "Original requirement" } }] }; },
+    });
+    const script = PAGE2_HTML.match(/<script>([\s\S]*?)<\/script>/)![1]!;
+    vm.runInContext(script.slice(script.indexOf("const brainstormDrafts="), script.indexOf("function brainstormKittens(")), context);
+    const create = () => vm.runInContext("brainstormArchive(task)", context) as Node;
+    const first = create(); first.open = true; first.toggle!(); await first.ontoggle!();
+    expect(first.children[1]!.textContent).toContain("Original requirement");
+    const refreshed = create(); await new Promise(resolve => setImmediate(resolve));
+    expect(refreshed.open).toBe(true);
+    expect(refreshed.children[1]!.textContent).toContain("Original requirement");
+    expect(requests).toBe(1);
+    refreshed.open = false; refreshed.toggle!();
+    expect(create().open).toBe(false);
+    task.brainstorm.epoch = 3;
+    const newBrief = create(); newBrief.open = true; newBrief.toggle!(); await newBrief.ontoggle!();
+    expect(requests).toBe(2);
+  });
   it("keeps brainstorm disclosures open across refreshes and tabs without reusing another task or epoch", () => {
     class Details {
       open = false;
