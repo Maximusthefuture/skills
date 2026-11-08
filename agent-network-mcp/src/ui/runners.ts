@@ -1,3 +1,4 @@
+import { validateRunnerProfile, profileInstructions, type RunnerProfileId } from "../runnerProfiles.js";
 import { ATTENTION_KINDS, type NotifyConfig } from "../attention.js";
 import { homedir } from "node:os";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -35,6 +36,7 @@ import { pluginCatalog, setPluginEnabled, validatePlugins, isQwen, qwenPluginCom
  * Every agent field may also sit in "defaults"; relative paths are resolved against the config file.
  */
 export interface RunnerAgentConfig {
+  profile?: RunnerProfileId;
   id: string;
   /** Agent CLI argv with "{prompt}" (see `run`). */
   command: string[];
@@ -352,6 +354,8 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
   const agents: RunnersConfig["agents"] = [];
   // one agent (or a spawn template under its name): command, model, files, worktree; checked the same way
   const parseAgent = async (merged: RawAgent & { worktree?: unknown }, id: string): Promise<RunnerAgentConfig> => {
+    let profile: RunnerProfileId | null;
+    try { profile = validateRunnerProfile(merged.profile); } catch (e) { throw new AppError("INVALID_CONFIG", `${file}: agent "${id}": ${(e as Error).message}`); }
     if (!Array.isArray(merged.command) || merged.command.length === 0 || !merged.command.every((c) => typeof c === "string")) {
       throw new AppError("INVALID_CONFIG", `${file}: agent "${id}" needs "command": the agent CLI as an array, e.g. ["qwen", "{prompt}", "-m", "qwen/qwen3.5-9b"]`);
     }
@@ -389,6 +393,7 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
     return {
       id,
       command: withoutTools(merged.command, without),
+      ...(profile ? { profile } : {}),
       ...(without.length ? { withoutTools: without } : {}),
       ...(disabledSkills.length ? { disabledSkills } : {}),
       ...(Object.keys(disabledSkillsByTask).length ? { disabledSkillsByTask } : {}),
@@ -776,6 +781,7 @@ export function watchPrices(file: string): () => Promise<{ prices?: Prices; erro
 }
 
 export interface RunnerView {
+  profile: RunnerProfileId | null;
   id: string;
   running: boolean;
   startedAt: string | null;
@@ -880,6 +886,7 @@ export class RunnerPool {
       command: m.config.command.map((c) => (/\s/.test(c) ? JSON.stringify(c) : c)).join(" "),
       promptFile: m.config.promptFile ?? null,
       instructionsFile: m.config.instructionsFile ?? null,
+      profile: m.config.profile ?? null,
       model: usesModel(m.config.command) ? m.config.model ?? null : null,
       models: usesModel(m.config.command) ? [...new Set([...(m.config.models ?? []), ...(m.config.model ? [m.config.model] : [])])] : [],
       session: m.session,
@@ -937,7 +944,7 @@ export class RunnerPool {
    * A runner the page's form adds from a template: written into the runners config (autostart: false) and joins the
    * pool stopped; «Старт» runs it.
    */
-  async addRunner(given: { id: string; template: string; model?: string }): Promise<RunnerView> {
+  async addRunner(given: { id: string; template: string; model?: string; profile?: RunnerProfileId | null }): Promise<RunnerView> {
     if (!this.opts.configPath) throw new AppError("INVALID_INPUT", "Adding a runner needs the runners config file");
     if (this.managed.has(given.id.trim())) throw new AppError("INVALID_INPUT", `A runner "${given.id.trim()}" exists already: pick another id`);
     const config = await saveRunner(this.opts.configPath, given);
@@ -959,15 +966,26 @@ export class RunnerPool {
   async details(): Promise<RunnerDetails[]> {
     return Promise.all(
       this.list().map(async (v) => {
-        if (!v.instructionsFile) return { ...v, instructions: null };
+        const role = profileInstructions(v.profile);
+        if (!v.instructionsFile) return { ...v, instructions: role ? { preview: role } : null };
         try {
-          const text = (await readFile(v.instructionsFile, "utf8")).trim();
+          const text = [role, (await readFile(v.instructionsFile, "utf8")).trim()].filter(Boolean).join("\n\n");
           return { ...v, instructions: { preview: text.length > 300 ? `${text.slice(0, 300)}…` : text } };
         } catch (e) {
           return { ...v, instructions: { error: (e as NodeJS.ErrnoException).code ?? (e as Error).message } };
         }
       }),
     );
+  }
+
+  /** Persist a role before updating memory; existing sessions continue with their original instructions. */
+  async setProfile(id: string, raw: string | null): Promise<RunnerView> {
+    const m = this.get(id);
+    const profile = validateRunnerProfile(raw);
+    if (this.opts.configPath && !m.spawnedFor) await saveAgentField(this.opts.configPath, id, "profile", profile);
+    if (profile) m.config.profile = profile; else delete m.config.profile;
+    this.say(m, '[ui] profile: ' + (profile ?? 'none') + ' (applies from the next session)');
+    return this.view(id);
   }
 
   /**
@@ -1063,6 +1081,7 @@ export class RunnerPool {
     this.say(m, "[ui] runner started");
     const run = this.opts.run ?? runRunner;
     m.done = run({
+      roleInstructions: () => profileInstructions(m.config.profile),
       agent: m.config.id,
       networkDir: this.networkDir,
       command: m.config.command,
@@ -1201,7 +1220,7 @@ async function saveAgentField(configPath: string, id: string, field: string, val
   const raw = JSON.parse(await readFile(configPath, "utf8")) as { agents?: Record<string, unknown>[] };
   const agent = raw.agents?.find((a) => a.id === id);
   if (!agent) return;
-  if (value === null) delete agent[field];
+  if (value === null && field !== "profile") delete agent[field];
   else agent[field] = value;
   await writeConfig(configPath, raw);
 }
@@ -1212,7 +1231,7 @@ async function saveAgentField(configPath: string, id: string, field: string, val
  * template lists, and the runner starts stopped (autostart: false). The changed config is parsed whole (exactly as at
  * start) before anything is written. Returns the new agent's parsed config.
  */
-export async function saveRunner(configPath: string, given: { id: string; template: string; model?: string }): Promise<RunnerAgentConfig> {
+export async function saveRunner(configPath: string, given: { id: string; template: string; model?: string; profile?: RunnerProfileId | null }): Promise<RunnerAgentConfig> {
   const id = assertAgentId(given.id.trim(), "id");
   const current = await loadRunnersConfig(configPath); // the config as it stands, checked before anything changes
   if (current.agents.some((a) => a.id === id)) throw new AppError("INVALID_INPUT", `A runner "${id}" exists already: pick another id`);
@@ -1226,7 +1245,8 @@ export async function saveRunner(configPath: string, given: { id: string; templa
   }
   const raw = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown> & { agents?: Record<string, unknown>[]; runnerTemplates?: Record<string, unknown> };
   const fields = raw.runnerTemplates![given.template] as Record<string, unknown>;
-  const agent: Record<string, unknown> = { id, ...fields, ...(model ? { model } : {}), autostart: false };
+  const profile = given.profile !== undefined ? validateRunnerProfile(given.profile) : undefined;
+  const agent: Record<string, unknown> = { id, ...fields, ...(model ? { model } : {}), ...(profile !== undefined ? { profile } : {}), autostart: false };
   raw.agents = [...(raw.agents ?? []), agent];
   // checked whole before it is written: a temp copy next to it (its relative paths resolve the same)
   const check = `${configPath}.${process.pid}.check`;

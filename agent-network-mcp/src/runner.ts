@@ -224,6 +224,8 @@ export interface RunningSession {
 }
 
 export interface RunnerOptions {
+  /** Built-in role evaluated before each fresh session, layered with the custom file. */
+  roleInstructions?: () => string | undefined;
   /** Tests: replace the CLI session without contacting any model. */
   sessionRun?: typeof runSession;
   agent: string;
@@ -491,7 +493,7 @@ export async function runRunner(opts: RunnerOptions): Promise<number> {
       ...(uncommitted >= COMMIT_FIRST_AT ? { uncommitted } : {}),
     };
     const template = (opts.promptFile ? await readText(opts.promptFile, "prompt file", log) : undefined) ?? opts.promptTemplate ?? DEFAULT_PROMPT;
-    const instructions = opts.instructionsFile ? await readText(opts.instructionsFile, "instructions file", log) : undefined;
+    const instructions = [opts.roleInstructions?.(), opts.instructionsFile ? await readText(opts.instructionsFile, "instructions file", log) : undefined].filter(Boolean).join("\n\n");
     const urgent = opts.urgent?.take();
     // where the work stands on disk, so the session does not spend its first turns (and context) on git log and status
     const brief = await workBrief(opts.cwd).catch(() => "");

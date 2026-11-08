@@ -11,6 +11,7 @@ import { assertChangeName, changePath, hasChange, listChanges, type Exec } from 
 import { injectSdk, PLAN_CSP, readPlanSnapshot } from "../plan.js";
 import { reviewFileDiff } from "../planComparison.js";
 import { DiscussionStore, listDiscussions } from "../discussions.js";
+import { RUNNER_PROFILES, validateRunnerProfile } from "../runnerProfiles.js";
 import { NetworkService, OPERATOR_TIMEOUT_MS, depthFlags } from "../service.js";
 import { ProjectStore } from "../project/store.js";
 import { ProjectMemory } from "../project/memory.js";
@@ -719,6 +720,7 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
                 drafter: p.drafter ? { model: p.drafter.model ?? null } : null,
                 /** The CLIs with their models the «Добавить runner» form offers (runners.json "runnerTemplates"). */
                 runnerTemplates: p.pool.templates(),
+                runnerProfiles: RUNNER_PROFILES,
                 /** Agents in auto worktrees: the DONE task card offers to merge the lead's branch and remove the worktrees. */
                 worktrees: p.pool.ids().filter((id) => p.pool!.agentFolder(id)?.worktree),
               }
@@ -1519,9 +1521,15 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     }
     if (path === "/api/runners") {
       // the page's «Добавить runner» form: a new runner from a "runnerTemplates" entry, written into the config, stopped
-      const b = body as { id?: unknown; template?: unknown; model?: unknown };
-      const view = await pool.addRunner({ id: String(b.id ?? ""), template: String(b.template ?? ""), ...(typeof b.model === "string" && b.model.trim() ? { model: b.model } : {}) });
+      const b = body as { id?: unknown; template?: unknown; model?: unknown; profile?: unknown };
+      const view = await pool.addRunner({ id: String(b.id ?? ""), template: String(b.template ?? ""), ...(typeof b.model === "string" && b.model.trim() ? { model: b.model } : {}), ...(b.profile !== undefined ? { profile: validateRunnerProfile(b.profile) } : {}) });
       return json(201, view);
+    }
+    const profileOf = /^\/api\/runners\/([^/]+)\/profile$/.exec(path);
+    if (profileOf) {
+      const b = body as { profile?: unknown };
+      if (b.profile === undefined) throw new AppError("INVALID_INPUT", "profile is required; use null to clear it");
+      return json(200, await pool.setProfile(decodeURIComponent(profileOf[1]!), validateRunnerProfile(b.profile)));
     }
     const inst = /^\/api\/runners\/([^/]+)\/instructions$/.exec(path);
     if (inst) {

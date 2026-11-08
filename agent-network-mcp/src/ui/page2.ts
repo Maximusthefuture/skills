@@ -1398,8 +1398,18 @@ async function checkSpecFolders(change,box,agentsFn){const agents=agentsFn().joi
 
 /* ── агенты (#/agents) ── */
 const agentOpen=new Set();
+const runnerCreationDrafts=new Map();
+function runnerCreationDraft(){const key=project||"";if(!runnerCreationDrafts.has(key))runnerCreationDrafts.set(key,{id:"",template:"",model:"",profile:"",error:""});return runnerCreationDrafts.get(key)}
+function runnerProfileSelect(value){const select=el("select");select.setAttribute("aria-label","Профиль роли");const none=el("option","","Без профиля");none.value="";select.append(none);
+  for(const p of S?.control?.runnerProfiles||[]){const option=el("option","",p.name);option.value=p.id;select.append(option)}select.value=value||"";return select}
+function runnerProfileInfo(select){const box=el("div","page-sub");const draw=()=>{const p=(S?.control?.runnerProfiles||[]).find(p=>p.id===select.value);box.textContent=p?p.description:"Используются инструкции выбранного CLI и файл инструкций агента."};draw();return {box,draw}}
+function runnerProfileEditor(r){const control=el("label","","Профиль роли"),select=runnerProfileSelect(r.profile),info=runnerProfileInfo(select);select.onchange=info.draw;
+  const apply=el("button","small","Применить профиль");apply.type="button";apply.onclick=async()=>{apply.disabled=true;try{await post("/api/runners/"+encodeURIComponent(r.id)+"/profile",{profile:select.value||null});toast("ok",r.id+": профиль сохранён","Применится со следующей сессии");await tick()}catch(e){toast("bad","Профиль не сохранён",e.message)}finally{apply.disabled=false}};
+  control.append(select,apply);return {control,info:info.box}}
 function renderAgents(){
-  const main=$("main");const wrap=el("div","wrap");main.replaceChildren(wrap);
+  const main=$("main");const previous=main.querySelector("[data-agents-view]");if(previous?.dataset.agentsView===(project||"")&&previous.contains(document.activeElement)&&document.activeElement.matches("input,select,textarea"))return;
+  rememberTaskDisclosures(main);
+  const wrap=el("div","wrap");wrap.dataset.agentsView=project||"";main.replaceChildren(wrap);
   wrap.append(el("h1","page-h","Агенты"));
   wrap.append(el("p","page-sub","Runner'ы проекта: запуск, модель, инструкции, лог. Нажмите на строку, чтобы раскрыть."));
   const runners=S&&S.control?S.control.runners:null;
@@ -1410,21 +1420,25 @@ function renderAgents(){
     wrap.append(tbl);return}
   for(const r of runners)wrap.append(agentRow(r));
   /* добавить агента из шаблона */
-  const add=el("details","adv");add.id="addagent";add.style.marginTop="14px";add.append(el("summary","","Новый агент из шаблона"));
-  const ain=el("div","in");const g=el("div");g.style.cssText="display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px";
-  const idI=el("input");idI.placeholder="kimi-2";g.append(el("label","","Имя (id)").appendChild(idI).parentElement);
+  const add=taskDisclosure({id:"runners"},"new-runner","adv");add.id="addagent";add.style.marginTop="14px";add.append(el("summary","","Новый агент из шаблона"));
+  const ain=el("div","in");const g=el("div");g.style.cssText="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:11px";
+  const creation=runnerCreationDraft();const idI=el("input");idI.placeholder="kimi-2";idI.value=creation.id;idI.oninput=()=>{creation.id=idI.value};g.append(el("label","","Имя (id)").appendChild(idI).parentElement);
   const tplS=el("select");const templates=(S.control.runnerTemplates)||[];
   for(const t of templates){const o=el("option","",t.name||t.id||JSON.stringify(t).slice(0,40));o.value=t.name||t.id;tplS.append(o)}
+  if(templates.some(t=>(t.name||t.id)===creation.template))tplS.value=creation.template;
   g.append(el("label","","Шаблон CLI").appendChild(tplS).parentElement);
-  const modelS=el("select");modelS.append(el("option","","— из шаблона —"));
-  const fillModels=()=>{const t=templates.find(x2=>(x2.name||x2.id)===tplS.value);modelS.replaceChildren(el("option","","— из шаблона —"));
-    for(const m of(t&&t.models)||[]){const o=el("option","",m);o.value=m;modelS.append(o)}};
-  tplS.onchange=fillModels;fillModels();g.append(el("label","","Модель").appendChild(modelS).parentElement);
+  const modelS=el("select");
+  const fillModels=()=>{const t=templates.find(x2=>(x2.name||x2.id)===tplS.value),inherit=el("option","","— из шаблона —");inherit.value="";modelS.replaceChildren(inherit);
+    for(const m of(t&&t.models)||[]){const o=el("option","",m);o.value=m;modelS.append(o)}modelS.value=(t?.models||[]).includes(creation.model)?creation.model:""};
+  tplS.onchange=()=>{creation.template=tplS.value;creation.model="";fillModels()};modelS.onchange=()=>{creation.model=modelS.value};fillModels();g.append(el("label","","Модель").appendChild(modelS).parentElement);
+  const profileS=runnerProfileSelect(creation.profile);g.append(el("label","","Профиль роли").appendChild(profileS).parentElement);const profileInfo=runnerProfileInfo(profileS);profileS.onchange=()=>{creation.profile=profileS.value;profileInfo.draw()};
   ain.append(g);
+  ain.append(profileInfo.box,el("p","muted small","Профиль добавляет инструкции роли. Модель и доступные инструменты берутся из выбранного CLI."));
   const note2=el("span");note2.style.cssText="font-size:12px;color:var(--muted);margin-left:8px";
+  note2.textContent=creation.error;
   const go3=el("button","cta small","Добавить агента");go3.type="button";go3.onclick=async()=>{try{
-    await post("/api/runners",{id:idI.value.trim(),template:tplS.value,...(modelS.value?{model:modelS.value}:{})});
-    toast("ok","Агент добавлен",idI.value.trim()+" — запишется в runners.json");add.open=false;await tick()}catch(e){note2.style.color="var(--bad)";note2.textContent=e.message}};
+    await post("/api/runners",{id:idI.value.trim(),template:tplS.value,...(modelS.value?{model:modelS.value}:{}),profile:profileS.value||null});
+    toast("ok","Агент добавлен",idI.value.trim()+" — запишется в runners.json");runnerCreationDrafts.delete(project||"");add.open=false;await tick()}catch(e){creation.error=e.message;note2.style.color="var(--bad)";note2.textContent=e.message}};
   ain.append(el("div","",),go3,note2);add.append(ain);wrap.append(add);
   /* агенты в сети */
   const sectH=el("div","sect-h","Агенты в сети ");sectH.append(el("span","n","MCP-процессы"));wrap.append(sectH);
@@ -1529,6 +1543,7 @@ function agentRow(r){
   const now=el("div","now");
   now.textContent=r.session?(r.session.taskId+(cur?" · "+taskPreview(cur):"")+" · "+ago(r.session.startedAt)):r.running?"Нет задачи. Запустится сам, когда появится работа.":"Остановлен.";
   if(r.model){const m=el("span","","");m.style.cssText="font-family:var(--mono);font-size:11px";m.textContent=" · "+r.model;now.append(m)}
+  const role=(S?.control?.runnerProfiles||[]).find(p=>p.id===r.profile);if(role)now.append(el("span",""," · "+role.name));
   mid.append(h,now);const ctx=contextMeter(r);if(ctx)mid.append(ctx);row.append(mid);
   const acts=el("div","acts");
   const toggle=el("button","ghost small",r.running?"Остановить":"Запустить");toggle.type="button";
@@ -1537,6 +1552,7 @@ function agentRow(r){
   acts.append(toggle,exp);row.append(acts);
   if(!open)return row;
   const det=el("div","agent-detail");const g=el("div","row3");
+  const profileEditor=runnerProfileEditor(r);g.append(profileEditor.control);
   const models=r.models&&r.models.length?r.models:[r.model].filter(Boolean);
   if(models.length){const l=el("label","","Модель");const s=el("select");for(const m of models){const o=el("option","",m);o.value=m;if(m===r.model)o.selected=true;s.append(o)}
     const other=el("option","","другая…");other.value="__other__";s.append(other);const inp=el("input");inp.placeholder="модель";inp.style.display="none";
@@ -1550,6 +1566,8 @@ function agentRow(r){
   const tsc=el("input");tsc.type="checkbox";tsc.checked=!!r.tokenSaver;tsc.onchange=async()=>{try{await post("/api/runners/"+encodeURIComponent(r.id)+"/token-saver",{enabled:tsc.checked});await tick()}catch(e){toast("bad","Не вышло",e.message)}};
   lts.append(tsc,document.createTextNode("Экономить токены (сокращённые промпты)"));g.append(lts);
   det.append(g);
+  det.append(profileEditor.info,el("p","muted small","Профиль действует со следующей сессии. Свои инструкции дополняют профиль; модель и инструменты задаются конфигурацией CLI."));
+  if(role?.instructions){const instructions=taskDisclosure({id:"runner:"+r.id},"profile:"+r.profile,"adv");instructions.append(el("summary","","Инструкции профиля"),el("pre","logbox2",role.instructions));det.append(instructions)}
   const acts2=el("div");acts2.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px";
   const logB=el("button","ghost small","Сырой лог");logB.type="button";const logBox=el("pre","logbox");logBox.hidden=true;
   logB.onclick=async()=>{if(!logBox.hidden){logBox.hidden=true;return}
