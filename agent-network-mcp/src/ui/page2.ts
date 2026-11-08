@@ -581,6 +581,29 @@ pre.jlog{grid-column:1/-1;max-height:420px;margin:0;white-space:pre-wrap;font:11
 .askbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;max-width:460px;white-space:pre-line;box-shadow:0 8px 30px rgba(0,0,0,.25);width:100%}
 .askbox textarea{width:100%;margin-top:8px}
 .askbox .row2{display:flex;gap:8px;margin-top:12px}
+.review-screen{max-width:1100px;padding:24px 28px}
+.review-screen h1{font-size:25px;margin:0 0 6px}
+.review-toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:20px 0}
+.review-toolbar select{min-width:220px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text);font:13px var(--font)}
+.review-agents{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:14px 0}
+.review-agent{display:inline-flex;align-items:center;gap:7px;background:var(--bg);border:1px solid var(--line);padding:7px 10px;border-radius:8px}
+.review-empty{color:var(--muted);font-size:13px}
+.review-results,.review-diff{margin-top:22px}
+.review-finding{padding:14px 16px;margin:10px 0;border:1px solid var(--warn);border-left:4px solid var(--warn);border-radius:10px;background:var(--panel)}
+.review-code{overflow:auto;padding:14px;background:var(--ink);color:var(--ink-text);border-radius:10px;font:12px/1.6 var(--mono);white-space:pre-wrap}
+.review-list{display:grid;gap:9px;margin:12px 0 24px}
+.review-run{padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.review-run summary{cursor:pointer;list-style:none}
+.review-run summary::-webkit-details-marker{display:none}
+.review-run summary:after{content:"＋";float:right;color:var(--muted);font-size:14px}
+.review-run[open] summary:after{content:"−"}
+.review-run-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+.review-status{font-size:11px;font-weight:650;border-radius:999px;padding:4px 9px;white-space:nowrap}
+.review-status.running{color:var(--warn);background:var(--warn-soft)}
+.review-status.completed{color:var(--ok);background:var(--ok-soft)}
+.review-status.failed{color:var(--bad);background:var(--bad-soft)}
+.review-status-select{margin-top:10px;padding:6px 9px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text);font:12px var(--font)}
+.review-run-note{font-size:12px;margin-top:7px;color:var(--muted)}
 
 @media(max-width:820px){
   .app{grid-template-columns:1fr}
@@ -622,6 +645,7 @@ pre.jlog{grid-column:1/-1;max-height:420px;margin:0;white-space:pre-wrap;font:11
   <div class="side-nav">
     <a id="nav-project" href="#/project"><span class="ic">◇</span>Координатор проекта</a>
     <a id="nav-inbox" href="#/inbox"><span class="ic">◉</span>Нужно мне<span class="c" id="c-att" hidden></span></a>
+    <a id="nav-review" href="#/review"><span class="ic">⑂</span>Ревью PR</a>
   </div>
   <div class="side-label">Задачи<span class="plus" id="newtask-plus" title="Создать задачу вручную, без координатора" role="button" tabindex="0" aria-label="Создать задачу вручную, без координатора">＋</span></div>
   <div id="tasklist" role="list"></div>
@@ -684,7 +708,7 @@ function toast(kind,title,text,taskId){const box=$("toasts");const d=el("div","t
   return d}
 
 /* ── роутер: #/inbox · #/tasks/<id> · #/new · #/agents · #/history/<tab> · #/settings/<sub> ── */
-const ROUTES=["project","inbox","tasks","new","agents","history","settings"];
+const ROUTES=["project","inbox","review","tasks","new","agents","history","settings"];
 let route=parseHash();
 function parseHash(){const parts=location.hash.replace(/^#\/?/,"").split("/").map(x=>decodeURIComponent(x));
   const name=ROUTES.includes(parts[0])?parts[0]:"inbox";
@@ -712,6 +736,7 @@ async function tick(){try{
   if(route.name==="history"&&route.tab==="runs"&&!RUNS.length)RUNS=(await getJSON(q("/api/runs"))).runs;
   if(route.name==="history"&&route.tab==="activity")await fetchActivity();
   if(route.name==="agents")await fetchActivity();
+  if(route.name==="review")await refreshBitbucketReviews();
   if(route.name==="settings"&&route.sub==="observer")OBS=(await getJSON(q("/api/observer")).catch(()=>null))||OBS;
   if(route.name==="settings"&&route.sub==="deploy")DEP=(await getJSON(q("/api/deploys")).catch(()=>null))||DEP;
   if(route.name==="settings"&&route.sub==="supervisor")SUP=(await getJSON(q("/api/supervisor"+(supAll?"?all=1":""))).catch(()=>null))||SUP;
@@ -772,7 +797,7 @@ function renderChrome(){
   const cg=$("c-agents");cg.hidden=!rs.length;cg.textContent=rs.length?rs.filter(r=>r.running).length+"/"+rs.length:"";
   const pe=$("banner");pe.hidden=!(s.prices&&s.prices.error);pe.textContent=s.prices&&s.prices.error?"prices в runners.json не читаются (действуют прежние): "+s.prices.error:"";
   document.title=(attTotal?"("+attTotal+") ":"")+s.project.name+" · Agent Network";
-  for(const id of["nav-inbox","nav-agents","nav-history"]){const a=$(id);a.classList.toggle("on",(id==="nav-inbox"&&route.name==="inbox")||(id==="nav-agents"&&route.name==="agents")||(id==="nav-history"&&route.name==="history"))}}
+  for(const id of["nav-inbox","nav-review","nav-agents","nav-history"]){const a=$(id);a.classList.toggle("on",(id==="nav-inbox"&&route.name==="inbox")||(id==="nav-review"&&route.name==="review")||(id==="nav-agents"&&route.name==="agents")||(id==="nav-history"&&route.name==="history"))}}
 
 /* ── сайдбар: лента задач как чаты ── */
 let tasklistSig="";
@@ -2138,14 +2163,48 @@ function renderProject(){
       if(replacement){replacement.focus({preventScroll:true});if(priorStart!==null&&typeof replacement.setSelectionRange==="function")replacement.setSelectionRange(priorStart,priorEnd??priorStart)}}
   }).catch(e=>{const error=$("project-chat-error");if(error&&String(project||"")===key)error.textContent=e.message});
 }
+let PR_REVIEW_RESULT=null,REVIEW_LIST_BOX=null;
 function renderMain(){
   if(route.name==="project")return renderProject();
   if(route.name==="inbox")return renderInbox();
+  if(route.name==="review"){if($("main")?.querySelector(".review-screen"))return;return renderPullRequestReview()}
   if(route.name==="tasks")return renderTask();
   if(route.name==="new")return renderNew();
   if(route.name==="agents")return renderAgents();
   if(route.name==="history")return renderHistory();
   if(route.name==="settings")return renderSettings()}
+
+async function renderPullRequestReview(){
+  const root=$("main");if(!root)return;root.replaceChildren();const host=el("div");host.id="main";root.append(host);
+  const wrap=el("section","review-screen");wrap.append(el("h1","","Ревью Bitbucket PR"),el("p","muted","Демо-данные · подключение Bitbucket MCP будет добавлено отдельно"));
+  const controls=el("div","review-toolbar");const repo=el("select");repo.setAttribute("aria-label","Репозиторий");const pr=el("select");pr.setAttribute("aria-label","Pull request");
+  const loadRepos=await getJSON(q("/api/bitbucket/repositories")).catch(()=>({repositories:[]}));
+  for(const r of loadRepos.repositories||[]){const o=el("option","",r.workspace+" / "+r.name);o.value=r.id;repo.append(o)}
+  const loadPrs=async()=>{pr.replaceChildren();const data=await getJSON(q("/api/bitbucket/pull-requests?repo="+encodeURIComponent(repo.value))).catch(()=>({pullRequests:[]}));for(const x of data.pullRequests||[]){const o=el("option","","#"+x.id+" · "+x.title);o.value=x.id;pr.append(o)}};
+  repo.onchange=()=>void loadPrs();controls.append(repo,pr);wrap.append(controls);
+  await loadPrs();const reviewers=el("div","review-agents");reviewers.append(el("strong","","Агенты для ревью"));const ids=(S?.control?.runners||[]).map(x=>x.id);const checks=[];
+  for(const id of ids){const label=el("label","review-agent",id);const c=el("input");c.type="checkbox";c.value=id;label.prepend(c);reviewers.append(label);checks.push(c)}
+  if(!ids.length)reviewers.append(el("span","review-empty","На этой странице runner-ы не настроены; показан демонстрационный результат."));wrap.append(reviewers);
+  const output=el("div");REVIEW_LIST_BOX=el("div","review-list");
+  const showOutput=(result,files)=>{output.replaceChildren();const out=el("div","review-results");out.append(el("h2","","Результаты · демонстрация"));for(const finding of result.findings||[]){const card=el("article","review-finding");card.append(el("strong","",finding.severity+" · "+finding.file+":"+finding.line),el("p","",finding.title),el("p","muted",finding.detail));out.append(card)}
+    const diffs=el("div","review-diff");diffs.append(el("h2","","Изменения"));for(const file of files||[]){diffs.append(el("h3","",file.path));const pre=el("pre","review-code",file.diff);diffs.append(pre)}output.append(out,diffs)};
+  if(PR_REVIEW_RESULT?.repoId===repo.value&&PR_REVIEW_RESULT?.prId===pr.value)showOutput(PR_REVIEW_RESULT.result,PR_REVIEW_RESULT.files);
+  repo.onchange=()=>{PR_REVIEW_RESULT=null;void loadPrs()};pr.onchange=()=>{PR_REVIEW_RESULT=null;output.replaceChildren()};
+  const run=el("button","","Запустить ревью");run.type="button";run.onclick=async()=>{run.disabled=true;try{const f=await getJSON(q("/api/bitbucket/repositories/"+encodeURIComponent(repo.value)+"/pull-requests/"+encodeURIComponent(pr.value)+"/diff"));const selected=checks.filter(x=>x.checked).map(x=>x.value);const result=await post("/api/bitbucket/review",{repoId:repo.value,pullRequestId:pr.value,agents:selected});
+      PR_REVIEW_RESULT={repoId:repo.value,prId:pr.value,result,files:f.files||[]};showOutput(result,f.files);await refreshBitbucketReviews();
+  }catch(e){toast("bad","Ревью не запущено",e.message)}finally{run.disabled=false}};wrap.append(run,output);host.append(wrap)
+  wrap.append(el("h2","","История ревью PR"),REVIEW_LIST_BOX);host.append(wrap);await refreshBitbucketReviews()
+}
+async function refreshBitbucketReviews(){if(!REVIEW_LIST_BOX?.isConnected)return;const openIds=new Set([...REVIEW_LIST_BOX.querySelectorAll("details[open]")].map(x=>x.dataset.reviewId));const data=await getJSON(q("/api/bitbucket/reviews")).catch(()=>({reviews:[]}));REVIEW_LIST_BOX.replaceChildren();
+  if(!(data.reviews||[]).length){REVIEW_LIST_BOX.append(el("p","review-empty","Запусков пока нет"));return}
+  const labels={running:"Выполняется",completed:"Завершено",failed:"Ошибка"};for(const r of data.reviews){const card=el("details","review-run");card.dataset.reviewId=r.id;card.open=openIds.has(r.id);const summary=el("summary");const head=el("div","review-run-head");head.append(el("strong","",r.title||("PR #"+r.pullRequestId)),el("span","review-status "+r.status,labels[r.status]||r.status));
+    summary.append(head,el("div","muted small",(r.repoId||"")+" · PR #"+r.pullRequestId+" · "+(r.agents?.length?r.agents.join(", "):"без выбранных агентов")));card.append(summary);
+    if(r.status==="completed")card.append(el("div","review-run-note",(r.findings?.length||0)+" замечаний · завершено "+time(r.completedAt)));
+    if(r.status==="running")card.append(el("div","review-run-note","Демо-проверка готова; выберите статус, когда закончите проверку."));
+    if(r.status==="failed")card.append(el("div","review-run-note",r.error||"Не удалось завершить ревью"));
+    const status=el("select","review-status-select");status.setAttribute("aria-label","Статус ревью");for(const [value,label] of [["running","Выполняется"],["completed","Завершено"],["failed","Ошибка"]]){const option=el("option","",label);option.value=value;status.append(option)}status.value=r.status;status.onchange=async()=>{status.disabled=true;try{await post("/api/bitbucket/reviews/"+encodeURIComponent(r.id)+"/status",{status:status.value});await refreshBitbucketReviews()}catch(e){toast("bad","Статус не изменён",e.message);status.disabled=false}};card.append(status);
+    for(const finding of r.findings||[]){const item=el("div","review-finding");item.append(el("strong","",finding.severity+" · "+finding.file+":"+finding.line),el("p","",finding.title),el("p","muted",finding.detail));card.append(item)}
+    if(r.status==="completed"&&!(r.findings||[]).length)card.append(el("div","review-run-note","Замечаний не найдено."));REVIEW_LIST_BOX.append(card)}}
 function render(){if(!S)return;renderChrome();renderSidebar();renderMain();if(DIFFOV)drawDiff()}
 
 /* ── переключатель проектов (⇄) ── */

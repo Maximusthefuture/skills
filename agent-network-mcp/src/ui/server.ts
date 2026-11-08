@@ -55,6 +55,7 @@ import { Deployer, taskDeployState } from "../deploy/deployer.js";
 import { saveSettings } from "../deploy/settings.js";
 import type { Git } from "../deploy/push.js";
 import type { Kubectl } from "../deploy/kube.js";
+import { MockBitbucketProvider } from "../bitbucket/provider.js";
 import type { OpenJenkins } from "../deploy/jenkins.js";
 
 export interface UiServer {
@@ -332,6 +333,7 @@ const slug = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g,
  * requests must be same-origin JSON (a page on another site cannot create tasks for the agents).
  */
 export async function startUiServer(target: string | UiProject[], opts: UiOptions = {}): Promise<UiServer> {
+  const bitbucket = new MockBitbucketProvider();
   const specs: UiProject[] =
     typeof target === "string" ? [{ networkDir: target, ...(opts.runners ? { runners: opts.runners } : {}), ...(opts.prices ? { prices: opts.prices } : {}) }] : target;
   if (!specs.length) throw new AppError("INVALID_CONFIG", "No project to show");
@@ -660,6 +662,14 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         return json(200, { brainstorm: state ? brainstormView(state, "operator", true) : null });
       }
       if (path === "/api/plugins") return json(200, p.pool ? await p.pool.pluginContext() : { plugins: [], qwenAgents: [] });
+      if (path === "/api/bitbucket/repositories") return json(200, { repositories: await bitbucket.listRepositories(), mode: "mock" });
+      if (path === "/api/bitbucket/reviews") return json(200, { reviews: (await p.fs.readJson<{ reviews: Record<string, unknown>[] }>(["bitbucket-reviews.json"]))?.reviews ?? [] });
+      if (path === "/api/bitbucket/pull-requests") {
+        const repoId = url.searchParams.get("repo") ?? "";
+        return json(200, { pullRequests: await bitbucket.listPullRequests(repoId) });
+      }
+      const prDiff = /^\/api\/bitbucket\/repositories\/([^/]+)\/pull-requests\/([^/]+)\/diff$/.exec(path);
+      if (prDiff) return json(200, { files: await bitbucket.getDiff(decodeURIComponent(prDiff[1]!), decodeURIComponent(prDiff[2]!)) });
       if (path === "/api/project/history") return json(200, historyPage(await new ProjectStore(p.fs).read(), {
         message: Number(url.searchParams.get("message") ?? 0), offset: Number(url.searchParams.get("offset") ?? 0),
       }));
@@ -834,6 +844,45 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const log = /^\/api\/runners\/([^/]+)\/log$/.exec(path);
       if (log && p.pool) return json(200, { id: log[1], lines: p.pool.log(decodeURIComponent(log[1]!)) });
       return text(404, "not found");
+    }
+    if (method === "POST" && path === "/api/bitbucket/review") {
+      const refused = crossSite(req, hostHeader); if (refused) return refused;
+      const body = await readJson(req) as { repoId?: unknown; pullRequestId?: unknown; agents?: unknown };
+      if (typeof body.repoId !== "string" || typeof body.pullRequestId !== "string" || !Array.isArray(body.agents)) throw new AppError("INVALID_INPUT", "repoId, pullRequestId and agents are required");
+      const pr = await bitbucket.getPullRequest(body.repoId, body.pullRequestId);
+      const agents = body.agents.filter((x): x is string => typeof x === "string").slice(0, 8);
+      const finding = {
+        id: "mock-1", severity: "MEDIUM", file: "src/orders.ts", line: 13,
+        title: "Проверьте граничные значения quantity",
+        detail: "Изменение отклоняет отрицательные значения, но отдельно проверьте ноль и дробные значения. Это демонстрационное замечание, не результат запуска агента.",
+        reviewers: agents,
+      };
+      type ReviewRecord = { id: string; repoId: string; pullRequestId: string; title: string; status: string; agents: string[]; startedAt: string; completedAt?: string; findings: typeof finding[] };
+      const run: ReviewRecord = { id: `review-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, repoId: pr.repoId, pullRequestId: pr.id,
+        title: pr.title, status: "running", agents, startedAt: new Date().toISOString(), findings: [finding] };
+      const updateReviews = async (entry: ReviewRecord) => p.fs.withLock(["bitbucket-reviews.lock"], async () => {
+        const saved = await p.fs.readJson<{ reviews: ReviewRecord[] }>(["bitbucket-reviews.json"]) ?? { reviews: [] };
+        const reviews = [entry, ...saved.reviews.filter(x => x.id !== entry.id)].slice(0, 50);
+        await p.fs.writeJson(["bitbucket-reviews.json"], { reviews });
+      });
+      await updateReviews(run);
+      return json(202, { mode: "mock", pullRequest: pr, agents, review: run, findings: [finding] });
+    }
+    const reviewStatus = /^\/api\/bitbucket\/reviews\/([^/]+)\/status$/.exec(path);
+    if (method === "POST" && reviewStatus) {
+      const refused = crossSite(req, hostHeader); if (refused) return refused;
+      const body = await readJson(req) as { status?: unknown };
+      if (body.status !== "running" && body.status !== "completed" && body.status !== "failed") throw new AppError("INVALID_INPUT", "status must be running, completed or failed");
+      const id = decodeURIComponent(reviewStatus[1]!);
+      const updated = await p.fs.withLock(["bitbucket-reviews.lock"], async () => {
+        const saved = await p.fs.readJson<{ reviews: Array<Record<string, unknown>> }>(["bitbucket-reviews.json"]) ?? { reviews: [] };
+        const current = saved.reviews.find(x => x.id === id);
+        if (!current) throw new AppError("INVALID_INPUT", `No PR review ${id}`);
+        const review = { ...current, status: body.status, ...(body.status === "completed" ? { completedAt: new Date().toISOString() } : { completedAt: undefined }) };
+        await p.fs.writeJson(["bitbucket-reviews.json"], { reviews: saved.reviews.map(x => x.id === id ? review : x) });
+        return review;
+      });
+      return json(200, { review: updated });
     }
     if (method === "POST" && path === "/api/plugins/enabled") {
       const refused = crossSite(req, hostHeader); if (refused) return refused;
