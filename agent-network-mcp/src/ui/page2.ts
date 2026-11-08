@@ -1406,12 +1406,19 @@ function runnerProfileInfo(select){const box=el("div","page-sub");const draw=()=
 function runnerProfileEditor(r){const control=el("label","","Профиль роли"),select=runnerProfileSelect(r.profile),info=runnerProfileInfo(select);select.onchange=info.draw;
   const apply=el("button","small","Применить профиль");apply.type="button";apply.onclick=async()=>{apply.disabled=true;try{await post("/api/runners/"+encodeURIComponent(r.id)+"/profile",{profile:select.value||null});toast("ok",r.id+": профиль сохранён","Применится со следующей сессии");await tick()}catch(e){toast("bad","Профиль не сохранён",e.message)}finally{apply.disabled=false}};
   control.append(select,apply);return {control,info:info.box}}
+function runnerProfileGuide(){const guide=taskDisclosure({id:"runners"},"profile-guide","adv");guide.append(el("summary","","Как пользоваться профилями"));const body=el("div","in");
+  body.append(el("p","","Профиль задаёт роль агента и добавляет готовые инструкции к его следующей сессии."));
+  const roles=el("ul");for(const p of S?.control?.runnerProfiles||[])roles.append(el("li","",p.name+": "+p.description+"."));body.append(roles);
+  const steps=el("ol");for(const text of ["Для нового агента откройте «Новый агент из шаблона», выберите CLI, модель и профиль роли, затем нажмите «Добавить агента».","Для существующего агента нажмите «Раскрыть», выберите «Профиль роли» и нажмите «Применить профиль».","Изменение действует со следующей сессии. Текущая сессия продолжит работу с прежними инструкциями; остановленный агент сам не запустится.","Чтобы убрать готовую роль, выберите «Без профиля» и нажмите «Применить профиль»."])steps.append(el("li","",text));body.append(steps);
+  body.append(el("p","","Свои правила можно добавить через «Файл инструкций»: они дополняют профиль. Модель и инструменты выбираются отдельно. Профиль «Ревьюер» сам по себе не запрещает запись файлов."));
+  body.append(el("p","","Координатор пока выбирает настроенных агентов по ID. Автоматический подбор команды по этим профилям ещё не подключён. Профиль также не назначает ведущего задачи: ведущий определяется составом команды."));guide.append(body);return guide}
 function renderAgents(){
   const main=$("main");const previous=main.querySelector("[data-agents-view]");if(previous?.dataset.agentsView===(project||"")&&previous.contains(document.activeElement)&&document.activeElement.matches("input,select,textarea"))return;
   rememberTaskDisclosures(main);
   const wrap=el("div","wrap");wrap.dataset.agentsView=project||"";main.replaceChildren(wrap);
   wrap.append(el("h1","page-h","Агенты"));
   wrap.append(el("p","page-sub","Runner'ы проекта: запуск, модель, инструкции, лог. Нажмите на строку, чтобы раскрыть."));
+  wrap.append(runnerProfileGuide());
   const runners=S&&S.control?S.control.runners:null;
   if(!controlMode||!runners){wrap.append(el("p","page-sub","Страница запущена без runner'ов (read-only): управление агентами недоступно."));
     const tbl=el("table","tbl");tbl.append(el("tr","",),tr2("Агент","Статус","Задачи"));
