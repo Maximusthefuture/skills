@@ -138,7 +138,7 @@ describe("the v2 page's script", () => {
     const source = script.slice(script.indexOf("function renderTask(){"), script.indexOf("function avLetter("));
     const messageHelpers = script.slice(script.indexOf("const taskMessageModes="), script.indexOf("function msgBubble("));
     const context = vm.createContext({
-      project: "project-test", decisionHistoryCard: () => null,
+      project: "project-test", decisionHistoryCard: () => null, discussionsCard: () => null, discussionFocus: () => null, discussionRestore: () => {}, rememberTaskDisclosures: () => {},
       taskById: () => task, route: { name: "tasks", task: task.id }, $: () => main,
       document: { activeElement: { id: "composer-text", closest: () => main }, body: { scrollHeight: 1000 } },
       window: { innerHeight: 500, scrollY: 100, scrollTo: () => {} }, requestAnimationFrame: (fn: () => void) => fn(),

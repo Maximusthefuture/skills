@@ -439,23 +439,26 @@ export class Swarm {
     return this.reply(await this.contextNow());
   }
 
-  async sendMessage(input: { to?: string; message?: string; requestFiles?: string[]; grantFiles?: string[]; fyi?: boolean; options?: { label: string; description?: string }[]; recommended?: string; multiSelect?: boolean; summary?: boolean }): Promise<SwarmContext> {
+  async sendMessage(input: { to?: string; message?: string; replyTo?: string; requirementId?: string; question?: boolean; requestFiles?: string[]; grantFiles?: string[]; fyi?: boolean; options?: { label: string; description?: string }[]; recommended?: string; multiSelect?: boolean; summary?: boolean }): Promise<SwarmContext> {
     await this.begin(true);
     const task = await this.requireTask();
     const others = task.agents.filter((a) => a !== this.me);
     const recipients = [...others, OPERATOR];
     if (!input.to?.trim()) throw invalid("'to' is required", { validRecipients: recipients });
     if (!input.message?.trim()) throw invalid("'message' must not be empty");
+    if (input.question && input.fyi) throw invalid("A question cannot also be fyi");
+    if ((input.replyTo || input.requirementId || input.question) && (input.requestFiles?.length || input.grantFiles?.length)) throw invalid("Discussion fields apply to ordinary messages, not file ownership requests");
+    const discussion = { ...(input.replyTo ? { replyTo: input.replyTo } : {}), ...(input.requirementId !== undefined ? { requirementId: input.requirementId } : {}) };
     if (input.options?.length && (input.to !== OPERATOR || input.fyi)) throw invalid("options go with a question to the operator (to: \"operator\", without fyi); to an agent write the options in the message");
     if (input.to === OPERATOR) {
       if (input.requestFiles?.length || input.grantFiles?.length) throw invalid("The operator owns no files: requestFiles/grantFiles go to agents. Ask the operator a plain question.");
       if (input.fyi) {
         // for the operator's information: shown on the page, answered by nobody, holds nobody
-        const told = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "INFORMATION", content: input.message });
+        const told = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "INFORMATION", content: input.message, ...discussion });
         return { ...this.reply(await this.contextNow()), ok: true, action: "INFO_SENT", messageId: told.id, note: "The operator sees it on the page; no answer comes. Go on with your work." } as SwarmContext;
       }
       const choices = input.options?.length ? { options: input.options, ...(input.recommended ? { recommended: input.recommended } : {}), ...(input.multiSelect ? { multiSelect: true as const } : {}) } : undefined;
-      const asked = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "QUESTION", content: input.message, ...(choices ? { choices } : {}), ...(input.summary ? { summary: true } : {}) });
+      const asked = await this.service.sendMessage({ taskId: task.id, to: OPERATOR, type: "QUESTION", content: input.message, ...discussion, ...(choices ? { choices } : {}), ...(input.summary ? { summary: true } : {}) });
       return {
         ...this.reply(await this.contextNow()), ok: true, action: "QUESTION_SENT", messageId: asked.id,
         note: `The operator (a human) answers on the network page; the answer arrives in pendingMessages. If you cannot go on without it, call wait(); otherwise continue with the work that does not depend on it. No answer in ${Math.round(this.operatorTimeoutMs / 60_000)} min: go ahead with ${choices?.recommended ? `"${choices.recommended}"` : "the option you proposed"} and say so.`,
@@ -471,7 +474,7 @@ export class Swarm {
       return { ...this.reply(await this.contextNow()), ok: true, action: "FILES_GRANTED", messageId: granted.message.id, granted: granted.files } as SwarmContext;
     }
 
-    let type: "INFORMATION" | "FILE_REQUEST" = "INFORMATION";
+    let type: "INFORMATION" | "FILE_REQUEST" | "QUESTION" = input.question ? "QUESTION" : "INFORMATION";
     let files: string[] | undefined;
     if (input.requestFiles?.length) {
       const own = await this.service.ownership(task.id);
@@ -486,7 +489,7 @@ export class Swarm {
     }
     // fyi to an agent: a note it needs not answer (an "understood", a heads-up): it reads it with its next reply, not woken for it
     const quiet = !!input.fyi && type === "INFORMATION";
-    const sent = await this.service.sendMessage({ taskId: task.id, to: input.to, type, content: input.message, ...(files ? { files } : {}), ...(quiet ? { quiet } : {}) });
+    const sent = await this.service.sendMessage({ taskId: task.id, to: input.to, type, content: input.message, ...discussion, ...(files ? { files } : {}), ...(quiet ? { quiet } : {}) });
     return { ...this.reply(await this.contextNow()), ok: true, action: type === "FILE_REQUEST" ? "FILES_REQUESTED" : quiet ? "INFO_SENT" : "MESSAGE_SENT", messageId: sent.id,
       ...(files ? { requested: files, note: `Asked ${input.to} for permission to CHANGE these files (reading needs no permission). Continue with your own work; the answer arrives in pendingMessages. Do not edit them before the grant.` } : {}) } as SwarmContext;
   }

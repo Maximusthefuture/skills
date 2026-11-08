@@ -301,6 +301,7 @@ export const MESSAGE_TYPES = ["QUESTION", "PROPOSAL", "INFORMATION", "REQUEST", 
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 
 export interface Message {
+  requirementId?: string;
   projectOrigin?: { projectId: string; operationId: string };
   id: string;
   taskId: string;

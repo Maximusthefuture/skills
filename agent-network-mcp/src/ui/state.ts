@@ -1,5 +1,6 @@
 import { dirname } from "node:path";
 import { decisionRecords } from "./decisions.js";
+import { DiscussionStore, listDiscussions } from "../discussions.js";
 import { BrainstormStore, view as brainstormView } from "../brainstorm/index.js";
 import { isAppError } from "../errors.js";
 import { changePath, hasChange, readChange } from "../openspec.js";
@@ -117,7 +118,7 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         builds: Object.fromEntries((await Promise.all(task.agents.map((a) => fs.readJson<{ agentId: string }>(["tasks", task.id, "builds", `${a}.json`]).catch(() => null)))).filter((b) => b !== null).map((b) => [b!.agentId, b])),
         ...(await (async () => {
           const all = await messageStore.list(task.id);
-          return { questions: operatorQuestions(all), notes: operatorNotes(all), decisionHistory: decisionRecords(planState, all, agreement, brainstorm) };
+          return { questions: operatorQuestions(all), notes: operatorNotes(all), decisionHistory: decisionRecords(planState, all, agreement, brainstorm), discussions: listDiscussions(all, await new DiscussionStore(fs).read(task.id)) };
         })()),
         /** Unread messages the agents' hooks have already shown them (Claude Code): delivered, though not acted on yet. */
         delivered: (await Promise.all(task.agents.map((a) => fs.readJson<{ notified?: string[] }>(["hooks", `${a}.json`]).catch(() => null))))

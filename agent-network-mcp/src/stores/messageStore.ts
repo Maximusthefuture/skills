@@ -1,9 +1,11 @@
+import { checkRequirementId } from "../discussions.js";
 import { AppError } from "../errors.js";
 import type { FileStore } from "../storage/fileStore.js";
 import type { Message, MessageType, QuestionChoices } from "../types.js";
 import { assertMessageId, assertTaskId } from "../validation.js";
 
 export interface NewMessage {
+  requirementId?: string;
   projectOrigin?: { projectId: string; operationId: string };
   urgent?: boolean;
   taskId: string;
@@ -32,8 +34,10 @@ export class MessageStore {
   }
 
   async create(input: NewMessage): Promise<Message> {
+    const requirementId = input.requirementId !== undefined ? checkRequirementId(input.requirementId) : undefined;
     return this.fs.createNumbered(this.dir(input.taskId), "msg", (id) => ({
       id,
+      ...(requirementId ? { requirementId } : {}),
       ...(input.projectOrigin ? { projectOrigin: input.projectOrigin } : {}),
       taskId: input.taskId,
       from: input.from,

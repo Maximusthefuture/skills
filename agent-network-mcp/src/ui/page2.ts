@@ -224,6 +224,15 @@ main{padding:0;min-width:0;display:flex;flex-direction:column}
 .action-card .opts{display:flex;gap:7px;flex-wrap:wrap}
 .action-card .tm2{font-size:10.5px;color:var(--muted);margin-top:6px}
 .action-card .find-row{display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:12.5px;margin:0}
+.discussion-card{margin-left:0;max-width:100%;min-width:0}
+.discussion-card>.opts{margin:10px 0}
+.discussion-record,.decision-record{display:block;min-width:0;padding:16px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.discussion-record:last-child,.decision-record:last-child{border-bottom:0;padding-bottom:0}
+.discussion-record h4{display:block;line-height:1.5}
+.discussion-record input,.discussion-record textarea{display:block;width:100%;max-width:100%;margin:10px 0 8px;padding:8px 10px;font:13px/1.5 var(--font);color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.discussion-record textarea{min-height:84px;resize:vertical}
+.discussion-record details{margin:10px 0}
+.discussion-record .pnote{white-space:pre-wrap;overflow-wrap:anywhere}
 .action-card details summary{cursor:pointer;font-size:12px;color:var(--muted);margin-top:4px}
 .progress-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 16px;margin:0 0 14px 40px;max-width:calc(92% - 40px)}
 .progress-card .prow{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px}
@@ -898,6 +907,14 @@ function blockedOpts(opts,i){
   opts.append(aside,cancel)}
 
 /* ── чат задачи (#/tasks/<id>) ── */
+const taskDisclosureStates=new Map();
+function saveTaskDisclosure(key,open){taskDisclosureStates.set(key,open);try{sessionStorage.setItem("task-disclosure:"+key,open?"1":"0")}catch(e){}}
+function taskDisclosure(t,key,className=""){
+  const identity=JSON.stringify([project||"",t.id,key]),details=el("details",className);details.dataset.taskDisclosure=identity;
+  let open=taskDisclosureStates.get(identity);if(open===undefined){try{open=sessionStorage.getItem("task-disclosure:"+identity)==="1"}catch(e){open=false}}
+  details.open=open===true;details.addEventListener("toggle",()=>{if(details.isConnected)saveTaskDisclosure(identity,details.open)});return details;
+}
+function rememberTaskDisclosures(container){for(const details of container.querySelectorAll("details[data-task-disclosure]"))saveTaskDisclosure(details.dataset.taskDisclosure,details.open)}
 function taskById(id){return S&&S.tasks.find(t=>t.id===id)}
 function renderTask(){
   const t=taskById(route.task);const main=$("main");
@@ -906,9 +923,11 @@ function renderTask(){
   const signature=JSON.stringify([t,taskMessageMode(t)]),previousHead=main.querySelector(".chat-head");
   if(previousHead?.dataset.taskSignature===signature)return;
   const previousComposer=main.querySelector(".composer"),keepComposer=previousComposer?.dataset.taskId===t.id?previousComposer:null;
+  const focusedDiscussion=discussionFocus();
   const focusedBrainstorm=document.activeElement?.id==="brainstorm-feedback"?{start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   const scrollY=window.scrollY;
   const wasBottom=window.innerHeight+window.scrollY>=document.body.scrollHeight-40;
+  rememberTaskDisclosures(main);
   for(const child of [...main.children])if(child!==keepComposer)child.remove();
   /* шапка: одна строка + тонкий прогресс; действия в «⋯» */
   const head=el("div","chat-head");head.dataset.taskSignature=signature;const w2=el("div","wrap2");
@@ -933,6 +952,7 @@ function renderTask(){
   /* контекст: follow-up цепочка, поручения */
   const ctx=ctxLine(t);if(ctx)body.append(ctx);
   const decisions=decisionHistoryCard(t);if(decisions)body.append(decisions);
+  const discussions=discussionsCard(t);if(discussions)body.append(discussions);
   /* OpenSpec: прогресс change / change-writing задача */
   if(t.openspec)body.append(openspecCard(t));
   if(t.proposes)body.append(proposesCard(t));
@@ -966,6 +986,7 @@ function renderTask(){
   if(!items.length)body.append(el("div","sysline","Пока пусто — агенты напишут, как начнут."));
   /* composer */
   if(!keepComposer)main.append(composer(t));
+  discussionRestore(focusedDiscussion);
   if(focusedBrainstorm){const field=$("brainstorm-feedback");if(field){field.focus({preventScroll:true});field.setSelectionRange(focusedBrainstorm.start,focusedBrainstorm.end)}}
   requestAnimationFrame(()=>{if(route.name==="tasks"&&route.task===t.id)window.scrollTo(0,wasBottom?document.body.scrollHeight:scrollY)})}
 function avLetter(id,lead){return (id||"?").slice(0,1).toUpperCase()}
@@ -1137,11 +1158,44 @@ function progressCard(t){
     const pb=el("div","pbar");const f=el("i","");f.style.width=Math.round(done/Math.max(1,live.length)*100)+"%";pb.append(f);
     row.append(pb,el("span","cnt",done+"/"+live.length));card.append(row)}
   return card}
+const discussionDrafts=new Map(),discussionFields=new Map(),discussionFilters=new Map(),discussionErrors=new Map();
+function discussionKey(t,id,field){return JSON.stringify([project||"",t.id,id,field])}
+function discussionFilter(key){if(discussionFilters.has(key))return discussionFilters.get(key);try{return sessionStorage.getItem("discussion-filter:"+key)==="all"?"all":"open"}catch(e){return "open"}}
+function saveDiscussionFilter(key,value){discussionFilters.set(key,value);try{sessionStorage.setItem("discussion-filter:"+key,value)}catch(e){}}
+function discussionFocus(){const f=document.activeElement;return f?.dataset?.discussionField?{key:f.dataset.discussionField,start:f.selectionStart,end:f.selectionEnd,direction:f.selectionDirection}:null}
+function discussionRestore(keep){const f=keep&&discussionFields.get(keep.key);if(f&&f.isConnected){f.focus({preventScroll:true});f.setSelectionRange(keep.start,keep.end,keep.direction)}}
+function discussionField(t,d,kind,initial){const key=discussionKey(t,d.id,kind);const f=el(kind==="summary"?"textarea":"input");f.dataset.discussionField=key;f.value=discussionDrafts.has(key)?discussionDrafts.get(key):initial||"";f.oninput=()=>discussionDrafts.set(key,f.value);discussionFields.set(key,f);return f}
+function discussionsCard(t){
+  const all=t.discussions||[];if(!all.length)return null;
+  const key=discussionKey(t,"","card");const card=taskDisclosure(t,"discussions","action-card discussion-card");
+  const count=all.filter(d=>d.status!=="closed").length;card.append(el("summary","","Обсуждения · без решения "+count+" из "+all.length));
+  const controls=el("div","opts");const mode=discussionFilter(key);
+  for(const [value,label] of [["open","Остались без решения"],["all","Все обсуждения"]]){const b=el("button",mode===value?"small on":"ghost small",label);b.type="button";b.onclick=()=>{rememberTaskDisclosures(card);saveDiscussionFilter(key,value);const next=discussionsCard(t);next.open=true;card.replaceWith(next)};controls.append(b)}card.append(controls);
+  const visible=all.filter(d=>mode==="all"||d.status!=="closed");if(!visible.length)card.append(el("p","muted","Все обсуждения закрыты."));
+  for(const d of visible){const section=el("section","discussion-record");section.append(el("h4","",d.question),el("div","tm2",d.from+" → "+d.to+" · "+time(d.createdAt)),el("p","",d.status==="closed"?"Обсуждение закрыто":"Осталось без решения"));
+    section.append(el("div","muted","Ответили: "+(d.answeredBy?.join(", ")||"пока никто")));
+    if(d.requirementId)section.append(el("p","muted","Требование: "+d.requirementId));
+    if(d.participants?.length)section.append(el("div","tm2","Участники: "+d.participants.join(", ")));
+    if(d.closedBy)section.append(el("div","tm2",(d.status==="closed"?"Закрыл обсуждение: ":"Ранее закрыл обсуждение: ")+d.closedBy+(d.closedAt?" · "+time(d.closedAt):"")));
+    if(d.summary)section.append(el("p","",(d.status==="closed"?"Итог: ":"Предыдущий итог: ")+d.summary));
+    if(d.history?.length){const outcomes=taskDisclosure(t,"discussion:"+d.id+":outcomes");outcomes.append(el("summary","","История итогов ("+d.history.length+")"));for(const item of d.history){const entry=el("div","pnote");entry.append(el("b","",(item.status==="closed"?"Закрыл обсуждение: ":"Открыл обсуждение снова: ")+item.by),el("div","tm2",time(item.at)));if(item.summary)entry.append(el("p","",item.summary));outcomes.append(entry)}section.append(outcomes)}
+    const history=taskDisclosure(t,"discussion:"+d.id+":messages");history.append(el("summary","","История сообщений ("+(d.messages||[]).length+")"));for(const m of d.messages||[]){const row=el("div","pnote");row.append(el("b","",m.from+" → "+m.to),el("div","tm2",time(m.createdAt)),el("p","",m.content));history.append(row)}section.append(history);
+    if(!S?.control){card.append(section);continue}
+    const errorKey=discussionKey(t,d.id,"error");const notice=el("p","note bad",discussionErrors.get(errorKey)||"");notice.hidden=!discussionErrors.has(errorKey);
+    const requirement=discussionField(t,d,"requirement",d.requirementId);requirement.placeholder="Требование (необязательно)";requirement.setAttribute("aria-label","Связанное требование");
+    const save=el("button","ghost small","Сохранить требование");save.type="button";
+    const summary=discussionField(t,d,"summary",d.summary);summary.placeholder="Итог обсуждения";summary.setAttribute("aria-label","Итог обсуждения");
+    const act=async(body,fields)=>{notice.hidden=true;discussionErrors.delete(errorKey);try{await post("/api/tasks/"+encodeURIComponent(t.id)+"/discussions/"+encodeURIComponent(d.id),body);for(const field of fields)discussionDrafts.delete(discussionKey(t,d.id,field));await tick()}catch(e){discussionErrors.set(errorKey,e.message);notice.textContent=e.message;notice.hidden=false}};
+    save.onclick=()=>act({requirementId:requirement.value.trim()},["requirement"]);
+    section.append(requirement,save);
+    if(d.status==="closed"){const reopen=el("button","ghost small","Открыть обсуждение снова");reopen.type="button";reopen.onclick=()=>act({status:"open"},[]);section.append(reopen)}
+    else{section.append(summary);const close=el("button","small","Закрыть обсуждение");close.type="button";const unanswered=(d.messages||[]).some(m=>m.type==="QUESTION"&&m.to==="operator"&&!m.readAt);if(unanswered){section.append(el("p","muted","Сначала ответьте или закройте вопрос без ответа, затем закройте обсуждение с итогом."));close.disabled=true}close.onclick=()=>{if(!summary.value.trim()){const message="Напишите итог обсуждения перед закрытием.";discussionErrors.set(errorKey,message);notice.textContent=message;notice.hidden=false;summary.focus();return}return act({status:"closed",summary:summary.value.trim()},["summary"])};section.append(close)}
+    section.append(notice);card.append(section)}return card}
 function decisionHistoryCard(t){
   const records=t.decisionHistory||[];if(!records.length)return null;
-  const card=el("details","action-card");card.append(el("summary","","Решения и ответы ("+records.length+")"));
-  for(const r of records){const row=el("div","find-row");row.append(el("b","",r.label),el("div","tm2",time(r.at)+(r.version?" · v"+r.version:"")),el("p","",r.text));
-    const source=el("details");source.append(el("summary","","Источник"));
+  const card=taskDisclosure(t,"decisions","action-card");card.append(el("summary","","Решения и ответы ("+records.length+")"));
+  for(const r of records){const row=el("div","decision-record");row.append(el("b","",r.label),el("div","tm2",time(r.at)+(r.version?" · v"+r.version:"")),el("p","",r.text));
+    const source=taskDisclosure(t,"decision:"+r.id+":source");source.append(el("summary","","Источник"));
     if(r.question)source.append(el("p","","Вопрос: "+r.question));
     source.append(el("p","",r.source==="message"?"Ответ оператора на вопрос агента":r.source==="agreement"?"Соглашение агентов":r.source==="brainstorm"?"Утверждённое решение Brainstorm":"Утверждение версии страницы"));
     if(r.source==="plan"){const link=el("button","ghost small","Открыть v"+r.version);link.type="button";link.onclick=async()=>{await openPlan(t.id);if(PV&&PV.taskId===t.id)await loadPlanVersion(r.version)};source.append(link)}
@@ -1153,7 +1207,7 @@ function agreementCard(t){
   h.append(badge("acc","предложил "+a.proposedBy));
   h.append(badge(a.approvedBy.length>=(t.agents||[]).length?"lime":"warn","подтвердили "+a.approvedBy.length+"/"+(t.agents||[]).length));card.append(h);
   card.append(el("p","",a.summary));
-  const det=el("details");det.append(el("summary","","Кто что делает ("+a.assignments.length+")"));
+  const det=taskDisclosure(t,"agreement:"+a.version);det.append(el("summary","","Кто что делает ("+a.assignments.length+")"));
   for(const as of a.assignments){const row=el("div","find-row");row.append(el("b","",as.agentId),document.createTextNode(" — "+as.responsibility));
     const ok=a.approvedBy.includes(as.agentId);const st=el("span","badge "+(ok?"lime":""),ok?"✓ подтвердил":"ждёт подтверждения");st.style.marginLeft="6px";row.append(st);det.append(row)}
   if(a.decisions&&a.decisions.length)det.append(el("div","","Решения: "+a.decisions.join("; ")));

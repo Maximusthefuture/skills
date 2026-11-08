@@ -1,3 +1,4 @@
+import { DiscussionStore, listDiscussions, checkRequirementId, type Discussion } from "./discussions.js";
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -1230,7 +1231,45 @@ export class NetworkService {
 
   // ---------------------------------------------------------------- messages
 
-  async sendMessage(input: { taskId: string; to: string; type: MessageType; content: string; replyTo?: string; files?: string[]; choices?: QuestionChoices; quiet?: boolean; summary?: boolean }): Promise<Message> {
+  /** Explicit operator metadata; answering or reading never closes a discussion. */
+  async updateDiscussion(input: { taskId: string; messageId: string; requirementId?: string; status?: "open" | "closed"; summary?: string }): Promise<Discussion> {
+    if (this.me !== OPERATOR) throw new AppError("FORBIDDEN", "Only the operator updates discussions");
+    const taskId = assertTaskId(input.taskId);
+    return this.fs.withLock(this.tasks.lockPath(taskId), async () => {
+      const discussionTask = await this.tasks.get(taskId);
+      if (input.status !== undefined && input.status !== "open" && input.status !== "closed") throw new AppError("INVALID_INPUT", "Discussion status must be open or closed");
+      const store = new DiscussionStore(this.fs);
+      const metadata = await store.read(taskId);
+      const messages = await this.messages.list(taskId);
+      const discussion = listDiscussions(messages, metadata).find(d => d.id === input.messageId || d.messages.some(m => m.id === input.messageId));
+      if (!discussion) throw new AppError("INVALID_INPUT", "No question discussion found for this message");
+      const prior = metadata[discussion.id] ?? {};
+      const next = { ...prior };
+      if (input.requirementId !== undefined) next.requirementId = checkRequirementId(input.requirementId);
+      if (input.summary !== undefined) {
+        if (typeof input.summary !== "string" || input.summary.trim().length > 10000) throw new AppError("INVALID_INPUT", "Discussion summary must be text of at most 10000 characters");
+        next.summary = input.summary.trim();
+      }
+      const status = input.status ?? discussion.status;
+      if (status === "closed") {
+        if (!next.summary?.trim()) throw new AppError("INVALID_INPUT", "Closing a discussion requires a nonempty summary");
+        if (discussion.messages.some(m => m.type === "QUESTION" && m.to === OPERATOR && !m.readAt)) throw new AppError("INVALID_INPUT", "Answer or dismiss the pending operator question before closing this discussion");
+      }
+      if ((input.status !== undefined && status !== discussion.status) || (status === "closed" && next.summary !== prior.summary)) {
+        const at = new Date().toISOString();
+        next.status = status;
+        next.history = [...(prior.history ?? []), { status, at, by: this.me, ...(next.summary ? { summary: next.summary } : {}) }];
+        if (status === "closed") { next.closedAt = at; next.closedBy = this.me; }
+        else { delete next.closedAt; delete next.closedBy; }
+      }
+      metadata[discussion.id] = next;
+      await store.save(taskId, metadata);
+      await this.tasks.save({ ...discussionTask, updatedAt: new Date().toISOString() });
+      return listDiscussions(messages, metadata).find(d => d.id === discussion.id)!;
+    });
+  }
+
+  async sendMessage(input: { requirementId?: string; taskId: string; to: string; type: MessageType; content: string; replyTo?: string; files?: string[]; choices?: QuestionChoices; quiet?: boolean; summary?: boolean }): Promise<Message> {
     await this.requireMe();
     const task = await this.requireMember(input.taskId);
     if (task.status === "COMPLETED") throw new AppError("ALREADY_COMPLETED", "The task is completed");
@@ -1243,12 +1282,17 @@ export class NetworkService {
     if (to === OPERATOR && input.files?.length) throw new AppError("INVALID_INPUT", "The operator owns no files: ask it questions, not for files");
     if (!input.content.trim()) throw new AppError("INVALID_INPUT", "content must not be empty");
     const choices = input.choices ? checkChoices(input.choices, to === OPERATOR && input.type === "QUESTION") : undefined;
+    let requirementId = input.requirementId !== undefined ? checkRequirementId(input.requirementId) : undefined;
     if (input.replyTo) {
       assertMessageId(input.replyTo);
-      await this.messages.get(task.id, input.replyTo);
+      const parent = await this.messages.get(task.id, input.replyTo);
+      if (requirementId === undefined) {
+        const discussion = listDiscussions(await this.messages.list(task.id), await new DiscussionStore(this.fs).read(task.id)).find(d => d.messages.some(m => m.id === parent.id));
+        requirementId = discussion?.requirementId ?? parent.requirementId;
+      }
     }
     const quiet = input.quiet && to !== OPERATOR && input.type === "INFORMATION";
-    const message = await this.messages.create({ taskId: task.id, from: this.me, to, type: input.type, content: input.content, replyTo: input.replyTo, files: input.files, ...(choices ? { choices } : {}), ...(quiet ? { quiet: true } : {}), ...(input.summary ? { summary: true } : {}) });
+    const message = await this.messages.create({ taskId: task.id, from: this.me, to, type: input.type, content: input.content, requirementId, replyTo: input.replyTo, files: input.files, ...(choices ? { choices } : {}), ...(quiet ? { quiet: true } : {}), ...(input.summary ? { summary: true } : {}) });
     await this.emit({ type: "MESSAGE_CREATED", taskId: task.id, targetAgent: to, sourceAgent: this.me, payload: { messageId: message.id, from: this.me, type: message.type, ...(message.files ? { files: message.files } : {}), ...(quiet ? { quiet: true } : {}) } });
     return message;
   }

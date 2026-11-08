@@ -55,6 +55,9 @@ export function registerSwarmTools(server: McpServer, swarm: Swarm, opts: { omit
     {
       to: z.string().describe("Agent id, e.g. 'reviewer', or 'operator' (answers arrive in pendingMessages)"),
       message: z.string().describe("Text of the message, e.g. 'I take the controller and service, you take validation. Agreed?'"),
+      replyTo: z.string().optional().describe("Message id in this task being answered; keeps the reply in its discussion"),
+      requirementId: z.string().max(120).optional().describe("Optional requirement reference, e.g. REQ-003; does not approve or change the requirement"),
+      question: z.boolean().optional().describe("To another agent: true starts a question discussion. Questions to operator are already the default. An answer never closes a discussion automatically"),
       requestFiles: z.array(z.string()).optional().describe("Files OWNED by the recipient you need to CHANGE (never for reading); say why in message"),
       grantFiles: z.array(z.string()).optional().describe("Owner: let the recipient change these files of yours; message = conditions. Refuse with a plain message"),
       fyi: z.boolean().optional().describe("true = a note that needs no answer: to 'operator' it holds nobody; to an agent it does not wake it (it reads the note with its next reply). Default: to 'operator' a question, to an agent a message that wakes it"),

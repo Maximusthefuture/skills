@@ -10,6 +10,7 @@ import { readGitContext, resolveCommit } from "../git.js";
 import { assertChangeName, changePath, hasChange, listChanges, type Exec } from "../openspec.js";
 import { injectSdk, PLAN_CSP, readPlanSnapshot } from "../plan.js";
 import { reviewFileDiff } from "../planComparison.js";
+import { DiscussionStore, listDiscussions } from "../discussions.js";
 import { NetworkService, OPERATOR_TIMEOUT_MS, depthFlags } from "../service.js";
 import { ProjectStore } from "../project/store.js";
 import { ProjectMemory } from "../project/memory.js";
@@ -748,6 +749,12 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         const mergeCheck = p.mergeChecker ? await p.mergeChecker.get(d.task.id) : (d.mergeCheck ?? null);
         return json(200, { alerts: acceptanceAlerts(d), table: !!d.acceptance, verdict: d.task.acceptance ?? null, ownBranch: !!d.branch && !d.task.merged, verify: d.task.verifyCommand ?? null, mergeCheck: d.task.merged ? null : mergeCheck });
       }
+      const discussionsOf = /^\/api\/tasks\/([^/]+)\/discussions$/.exec(path);
+      if (discussionsOf) {
+        const id = decodeURIComponent(discussionsOf[1]!);
+        await new TaskStore(p.fs).get(id);
+        return json(200, { discussions: listDiscussions(await new MessageStore(p.fs).list(id), await new DiscussionStore(p.fs).read(id)) });
+      }
       const comparePlan = /^\/api\/tasks\/([^/]+)\/plan\/compare$/.exec(path);
       if (comparePlan) {
         const reader = p.operator ?? (await NetworkService.create(p.networkDir, { id: "operator", type: "ui" }));
@@ -1000,6 +1007,18 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
     const refused = crossSite(req, hostHeader);
     if (refused) return refused;
     const body = await readJson(req);
+
+    const discussionUpdate = /^\/api\/tasks\/([^/]+)\/discussions\/([^/]+)$/.exec(path);
+    if (discussionUpdate) {
+      if (req.headers["x-agent-network-actor"] === "supervisor") return json(403, { message: "Only the operator manages discussion outcomes" });
+      const b = body as { status?: unknown; summary?: unknown; requirementId?: unknown };
+      if (b.status !== undefined && b.status !== "open" && b.status !== "closed") throw new AppError("INVALID_INPUT", "status must be open or closed");
+      if (b.summary !== undefined && typeof b.summary !== "string") throw new AppError("INVALID_INPUT", "summary must be text");
+      if (b.requirementId !== undefined && typeof b.requirementId !== "string") throw new AppError("INVALID_INPUT", "requirementId must be text");
+      const discussion = await operator.updateDiscussion({ taskId: decodeURIComponent(discussionUpdate[1]!), messageId: decodeURIComponent(discussionUpdate[2]!),
+        ...(b.status !== undefined ? { status: b.status as "open" | "closed" } : {}), ...(typeof b.summary === "string" ? { summary: b.summary } : {}), ...(typeof b.requirementId === "string" ? { requirementId: b.requirementId } : {}) });
+      return json(200, { discussion });
+    }
 
     if (path === "/api/deploy/settings") return json(200, { settings: await saveSettings(p.fs, (body as { settings?: unknown }).settings) });
     const depStart = /^\/api\/tasks\/([^/]+)\/deploy$/.exec(path);
