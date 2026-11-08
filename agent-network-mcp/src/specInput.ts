@@ -118,3 +118,23 @@ export async function readMarkdownTree(dir: string, rel: string): Promise<{ name
   for (const f of files.filter((x) => x.toLowerCase().endsWith(".md"))) out.push({ name: f, text: await readFile(join(dir, f), "utf8") });
   return out;
 }
+
+/** One capture supplies the review hash, snapshot and rendered Markdown. */
+export async function captureChange(dir: string, changeDir: string): Promise<{ hash: string; files: import("./plan.js").PlanSnapshotFile[] }> {
+  const names: string[] = [];
+  await allFiles(join(dir, changeDir), changeDir, names);
+  const hash = createHash("sha256");
+  const files: import("./plan.js").PlanSnapshotFile[] = [];
+  let textBytes = 0;
+  for (const name of names) {
+    const raw = await readFile(join(dir, name));
+    hash.update(`${name}\0`); hash.update(raw); hash.update("\0");
+    const text = raw.toString("utf8");
+    const binary = raw.includes(0) || !Buffer.from(text, "utf8").equals(raw);
+    const limited = raw.length > 500_000 || textBytes + raw.length > 2_000_000;
+    if (!binary && !limited) textBytes += raw.length;
+    files.push({ name, hash: createHash("sha256").update(raw).digest("hex"), bytes: raw.length,
+      ...(binary ? { textUnavailable: "binary" } : limited ? { textUnavailable: "size-limit" } : { text }) });
+  }
+  return { hash: hash.digest("hex").slice(0, 16), files };
+}

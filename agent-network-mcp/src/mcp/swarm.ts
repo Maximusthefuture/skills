@@ -12,7 +12,7 @@ import { WAKES } from "../park.js";
 import { changePath, readChange, validateChange, type ChangeInfo, type Exec } from "../openspec.js";
 import { matches, normalizePath, ownersOf } from "../ownership.js";
 import { PLAN_READ_WHOLE, changeAccepted, inputViewed, planAround, planBrief, planOutline, planStatus, type PlanStage, type PlanStatus, type PlanVersion } from "../plan.js";
-import { changeHash, inputInWorkdir, readMarkdownTree } from "../specInput.js";
+import { captureChange, changeHash, inputInWorkdir } from "../specInput.js";
 import { checkCoverage, checkDepartures, checkDiagrams, renderChangePage, renderInputPage } from "../pageRender.js";
 import { MAX_WAIT_MS, DEFAULT_WAIT_MS, MIN_DESCRIPTION, OPERATOR, OPERATOR_TIMEOUT_MS, clarifies, grillConfirmed, isReviewOnly, isSummaryQuestion, type NetworkService } from "../service.js";
 import type { Agent, Agreement, FollowUpRequest, GitContext, Implementation, IntegrationReport, Message, Phase, SubtaskList, SyncFinding, SyncReport, Task } from "../types.js";
@@ -372,11 +372,12 @@ export class Swarm {
       } as SwarmContext;
     }
     // the change page shows the change folder as it is now: its hash goes with the version, complete() compares
-    const hash = input.stage === "change" && task.proposes ? await changeHash(this.workdir, changePath(task.proposes.change)) : undefined;
+    const capture = input.stage === "change" && task.proposes ? await captureChange(this.workdir, changePath(task.proposes.change)) : undefined;
+    const hash = capture?.hash;
     // no html and no edits: the server builds the page of the stage from the files (pageRender.ts)
-    const built = (input.stage === "input" || input.stage === "change") && input.html === undefined && !input.edits?.length && task.proposes?.input?.length ? await this.buildPage(task, input.stage, input) : undefined;
+    const built = (input.stage === "input" || input.stage === "change") && input.html === undefined && !input.edits?.length && task.proposes?.input?.length ? await this.buildPage(task, input.stage, input, capture?.files) : undefined;
     const { departures: _d, coverage: _c, diagrams: _g, ...rest } = input;
-    const saved = await this.service.writePlan({ taskId: task.id, ...rest, ...(built ?? {}), ...(hash ? { hash } : {}) });
+    const saved = await this.service.writePlan({ taskId: task.id, ...rest, ...(built ?? {}), ...(hash ? { hash } : {}), ...(capture ? { snapshot: capture.files } : {}) });
     return { ...this.reply(await this.contextNow()), ok: true, action: "PLAN_SAVED", version: saved.version } as SwarmContext;
   }
 
@@ -384,7 +385,7 @@ export class Swarm {
    * A review page from the files: the analysts' input with the agent's departures, or the change with the operator's
    * decisions and the agent's coverage table. What the agent left out is taken from the previous version of the stage.
    */
-  private async buildPage(task: Task, stage: "input" | "change", given: { departures?: unknown; coverage?: unknown; diagrams?: unknown; note?: string }): Promise<{ html: string; render: NonNullable<PlanVersion["render"]> }> {
+  private async buildPage(task: Task, stage: "input" | "change", given: { departures?: unknown; coverage?: unknown; diagrams?: unknown; note?: string }, snapshot?: import("../plan.js").PlanSnapshotFile[]): Promise<{ html: string; render: NonNullable<PlanVersion["render"]> }> {
     const proposes = task.proposes!;
     const last = [...(await this.service.planState(task.id)).versions].reverse().find((v) => v.stage === stage)?.render ?? {};
     const departures = given.departures !== undefined ? checkDepartures(given.departures) : checkDepartures(last.departures);
@@ -394,7 +395,8 @@ export class Swarm {
     const input = (await Promise.all(proposes.input!.map(async (rel) => ({ name: rel, text: await readFile(join(isAbsolute(inputDir) ? inputDir : join(this.workdir, inputDir), rel), "utf8").catch(() => "") })))).filter((f) => f.text);
     const note = given.note?.trim() || undefined;
     if (stage === "input") return { html: renderInputPage({ change: proposes.change, input, departures, diagrams, ...(note ? { note } : {}) }), render: { departures, diagrams } };
-    const files = await readMarkdownTree(this.workdir, changePath(proposes.change));
+    if (snapshot?.some(f => f.name.toLowerCase().endsWith(".md") && f.text === undefined)) throw invalid("A Markdown file cannot be displayed (binary or size limit): reduce it before review");
+    const files = (snapshot ?? []).filter((f): f is typeof f & { text: string } => f.name.toLowerCase().endsWith(".md") && f.text !== undefined);
     if (!files.length) throw invalid(`${changePath(proposes.change)}/ has no files yet: write the change first, then show it`);
     const messages = await this.service.messages.list(task.id);
     const decisions = messages

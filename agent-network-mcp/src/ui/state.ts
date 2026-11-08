@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { decisionRecords } from "./decisions.js";
 import { BrainstormStore, view as brainstormView } from "../brainstorm/index.js";
 import { isAppError } from "../errors.js";
 import { changePath, hasChange, readChange } from "../openspec.js";
@@ -84,7 +85,8 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
       const current = reports.filter((r) => r.round === task.syncRound);
       // a task with planReview, still in DISCUSS: where the lead's plan stands (waiting on the operator or the lead); a
       // change-writing task with analysts' input: its pages (the input in DISCUSS, the change in IMPLEMENT)
-      const plan = reviewsPages(task) ? planBrief(await readPlanState(fs, task.id)) : null;
+      const planState = reviewsPages(task) ? await readPlanState(fs, task.id) : null;
+      const plan = planState ? planBrief(planState) : null;
       const brainstorm = await new BrainstormStore(fs).read(task);
       if (brainstorm && agreement?.brainstormDecisionHash !== brainstorm.approvedDecision?.hash) agreement = null;
       const pageOpen = task.planReview ? task.phase === "DISCUSS" && !agreement : plan?.stage === "change" ? task.phase === "IMPLEMENT" : task.phase === "DISCUSS" && !agreement;
@@ -115,7 +117,7 @@ export async function buildUiState(fs: FileStore, isAlive: (pid: number) => bool
         builds: Object.fromEntries((await Promise.all(task.agents.map((a) => fs.readJson<{ agentId: string }>(["tasks", task.id, "builds", `${a}.json`]).catch(() => null)))).filter((b) => b !== null).map((b) => [b!.agentId, b])),
         ...(await (async () => {
           const all = await messageStore.list(task.id);
-          return { questions: operatorQuestions(all), notes: operatorNotes(all) };
+          return { questions: operatorQuestions(all), notes: operatorNotes(all), decisionHistory: decisionRecords(planState, all, agreement, brainstorm) };
         })()),
         /** Unread messages the agents' hooks have already shown them (Claude Code): delivered, though not acted on yet. */
         delivered: (await Promise.all(task.agents.map((a) => fs.readJson<{ notified?: string[] }>(["hooks", `${a}.json`]).catch(() => null))))

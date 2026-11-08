@@ -16,6 +16,7 @@ import type { FileStore } from "./storage/fileStore.js";
  */
 export type PlanStage = "input" | "change";
 export interface PlanVersion {
+  snapshot?: true;
   n: number; by: string; at: string; note?: string; bytes: number; stage?: PlanStage; hash?: string;
   /** The server built the page from the files with these (pageRender.ts); a re-render without them reuses them. */
   render?: { departures?: unknown[]; coverage?: unknown[]; diagrams?: string[] };
@@ -37,6 +38,7 @@ export interface PlanFeedback {
   withApproval?: true;
 }
 export interface PlanState {
+  approvals?: { version: number; at: string }[];
   brainstormDecisionHash?: string;
   versions: PlanVersion[]; feedback: PlanFeedback[];
   /** The approval of the current stage (for a change-writing task: of its latest page). */
@@ -48,6 +50,10 @@ export interface PlanState {
 export type PlanStatus = "none" | "awaiting" | "revising" | "approved";
 
 export const MAX_PLAN_BYTES = 300_000;
+export interface PlanSnapshotFile { name: string; hash: string; bytes: number; text?: string; textUnavailable?: string }
+export async function readPlanSnapshot(fs: FileStore, taskId: string, version: number): Promise<PlanSnapshotFile[] | null> {
+  return fs.readJson<PlanSnapshotFile[]>(["tasks", taskId, "plan", `v${version}.files.json`]);
+}
 /** plan({read: true}) returns a page up to this size whole; a bigger one stays out of the lead's context (read by parts). */
 export const PLAN_READ_WHOLE = 24_000;
 

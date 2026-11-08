@@ -180,7 +180,7 @@ describe("running a build", () => {
     const task = await operator.createTaskAsOperator({ title: "t", description: "d", agents: ["backend", "reviewer"], verifyCommand: "npm test --silent 2>&1 | tail -5" });
     const res = await swarm.build({});
     expect(res).toMatchObject({ status: "PASS", note: expect.stringContaining("tail -5") });
-    expect(String(res.summary)).toMatch(/^PASS in \d+s\nfull log: \.agent-network\/builds\/build-002\.log[^\n]*$/); // "42" is no total
+    expect(String(res.summary).replaceAll(String.fromCharCode(92), "/")).toMatch(/^PASS in \d+s\nfull log: \.agent-network\/builds\/build-002\.log[^\n]*$/); // "42" is no total
     const events = (await operator.events.list(task.id)).map((e) => e.event);
     expect(events.filter((e) => e.type === "BUILD_RAN").map((e) => e.payload)).toEqual([
       expect.objectContaining({ agentId: "backend", command: "npm test --silent", ok: true, exitCode: 0 }),

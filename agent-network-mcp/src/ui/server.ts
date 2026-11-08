@@ -8,7 +8,8 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { AppError, isAppError } from "../errors.js";
 import { readGitContext, resolveCommit } from "../git.js";
 import { assertChangeName, changePath, hasChange, listChanges, type Exec } from "../openspec.js";
-import { injectSdk, PLAN_CSP } from "../plan.js";
+import { injectSdk, PLAN_CSP, readPlanSnapshot } from "../plan.js";
+import { reviewFileDiff } from "../planComparison.js";
 import { NetworkService, OPERATOR_TIMEOUT_MS, depthFlags } from "../service.js";
 import { ProjectStore } from "../project/store.js";
 import { ProjectMemory } from "../project/memory.js";
@@ -746,6 +747,18 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
         if (acc[2]) return { status: 200, type: "text/html; charset=utf-8", body: injectSdk(renderAcceptancePage(d)), csp: PLAN_CSP };
         const mergeCheck = p.mergeChecker ? await p.mergeChecker.get(d.task.id) : (d.mergeCheck ?? null);
         return json(200, { alerts: acceptanceAlerts(d), table: !!d.acceptance, verdict: d.task.acceptance ?? null, ownBranch: !!d.branch && !d.task.merged, verify: d.task.verifyCommand ?? null, mergeCheck: d.task.merged ? null : mergeCheck });
+      }
+      const comparePlan = /^\/api\/tasks\/([^/]+)\/plan\/compare$/.exec(path);
+      if (comparePlan) {
+        const reader = p.operator ?? (await NetworkService.create(p.networkDir, { id: "operator", type: "ui" }));
+        const id = decodeURIComponent(comparePlan[1]!);
+        const state = await reader.planState(id);
+        const from = Number(url.searchParams.get("from")), to = Number(url.searchParams.get("to"));
+        const a = state.versions.find(v => v.n === from), b = state.versions.find(v => v.n === to);
+        if (!a || !b || from >= to || a.stage !== b.stage) return json(400, { message: "Выберите две версии одного этапа в порядке создания" });
+        const before = a.snapshot ? await readPlanSnapshot(p.fs, id, from) : null;
+        const after = b.snapshot ? await readPlanSnapshot(p.fs, id, to) : null;
+        return json(200, { from, to, available: !!before && !!after, files: before && after ? reviewFileDiff(before, after) : [] });
       }
       const planOf = /^\/api\/tasks\/([^/]+)\/plan(?:\/(\d+)(\/view)?)?$/.exec(path);
       if (planOf) {

@@ -122,9 +122,14 @@ describe("a change written from the analysts' artifacts", () => {
     await backend.plan({ stage: "change", edits: [{ find: "text", replace: "text v3" }], note: "service/" });
     const accepted = await operator.planFeedback({ taskId: task.id, version: 3, approve: true });
     expect(accepted.message?.content).toContain("accepted the change");
+    expect(accepted.state.approvals).toEqual(expect.arrayContaining([expect.objectContaining({ version: 3 })]));
+    expect(accepted.state.versions.find(v => v.n === 3)?.snapshot).toBe(true);
+    const snapshotPath = join(project, ".agent-network", "tasks", task.id, "plan", "v3.files.json");
+    const snapshot = readFileSync(snapshotPath, "utf8");
 
     // an edit after the acceptance needs the operator again
     writeFileSync(join(project, "openspec", "changes", "add-loyalty", "tasks.md"), "## 1. Discount\n\n- [ ] 1.1 changed\n");
+    expect(readFileSync(snapshotPath, "utf8")).toBe(snapshot);
     expect(await failure(backend, backend.complete({ result: "written" }))).toMatchObject({ error: "CHANGE_NOT_APPROVED", message: expect.stringContaining("changed after the operator accepted") });
     writeFileSync(join(project, "openspec", "changes", "add-loyalty", "tasks.md"), "## 1. Discount\n\n- [ ] 1.1 Apply 5% from the fifth order\n");
     await backend.complete({ result: "1 capability; Skills: java-spec-intake" });

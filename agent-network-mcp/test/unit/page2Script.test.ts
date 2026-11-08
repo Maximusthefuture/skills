@@ -136,7 +136,9 @@ describe("the v2 page's script", () => {
     const task = { id: "task-test", title: "Test", agents: ["lead"], phase: "DISCUSS", status: "ACTIVE", messages: [] as unknown[] };
     const script = PAGE2_HTML.match(/<script>([\s\S]*?)<\/script>/)![1]!;
     const source = script.slice(script.indexOf("function renderTask(){"), script.indexOf("function avLetter("));
+    const messageHelpers = script.slice(script.indexOf("const taskMessageModes="), script.indexOf("function msgBubble("));
     const context = vm.createContext({
+      project: "project-test", decisionHistoryCard: () => null,
       taskById: () => task, route: { name: "tasks", task: task.id }, $: () => main,
       document: { activeElement: { id: "composer-text", closest: () => main }, body: { scrollHeight: 1000 } },
       window: { innerHeight: 500, scrollY: 100, scrollTo: () => {} }, requestAnimationFrame: (fn: () => void) => fn(),
@@ -144,7 +146,7 @@ describe("the v2 page's script", () => {
       phaseLabel: () => "Discussion", progressOf: () => ({ overall: 0 }), ctxLine: () => null, progressCard: () => null,
       composer: () => composer, dayOf: () => "Today", msgBubble: () => new Node("message", "new message"),
     });
-    vm.runInContext(source + ";renderTask()", context);
+    vm.runInContext(messageHelpers + source + ";renderTask()", context);
     task.messages.push({ createdAt: "2026-11-02T17:00:00Z", content: "new message" });
     vm.runInContext("renderTask()", context);
     expect(main.querySelector(".message")?.textContent).toBe("new message");

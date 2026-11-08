@@ -822,8 +822,15 @@ function renderSidebar(){
     box.append(a)}}
 
 /* ── «Нужно мне» (#/inbox) ── */
+const inboxReplyDrafts=new Map(),inboxReplyFields=new Map();
+function inboxReplyKey(projectId,taskId,messageId){return JSON.stringify([projectId||"",taskId,messageId])}
+function inboxReplyDraft(key){if(inboxReplyDrafts.has(key))return inboxReplyDrafts.get(key);try{return sessionStorage.getItem("inbox-reply:"+key)||""}catch(e){return ""}}
+function inboxReplySave(key,value){inboxReplyDrafts.set(key,value);try{if(value)sessionStorage.setItem("inbox-reply:"+key,value);else sessionStorage.removeItem("inbox-reply:"+key)}catch(e){}}
+function inboxReplyBind(field,key){field.dataset.inboxReply=key;field.value=inboxReplyDraft(key);field.oninput=()=>inboxReplySave(key,field.value);inboxReplyFields.set(key,field)}
 function openAttention(i){if(i.taskId)go("tasks",i.taskId);else render()}
 function renderInbox(){
+  const focused=document.activeElement;const keep=focused?.dataset?.inboxReply?{key:focused.dataset.inboxReply,start:focused.selectionStart,end:focused.selectionEnd,direction:focused.selectionDirection}:null;
+  if(keep)inboxReplySave(keep.key,focused.value);inboxReplyFields.clear();
   const w=$("main");const wrap=el("div","wrap");
   const total=ATT?ATT.projects.reduce((a2,x2)=>a2+x2.items.length,0):0;
   wrap.append(el("h1","page-h","Нужно ваше решение"));
@@ -835,7 +842,7 @@ function renderInbox(){
   wrap.append(el("div","sect-h","Что происходит "+el("span","n","живое").textContent));
   if(!evs.length)wrap.append(el("p","page-sub","Событий пока нет."));
   for(const e of evs){const r=el("div","feed-item");r.append(el("span","tm",time(e.createdAt)),el("span","who",e.sourceAgent||"система"),el("span","",e.taskId+" · "+e.type+(e.targetAgent?" → "+e.targetAgent:"")));wrap.append(r)}
-  w.replaceChildren(wrap)}
+  w.replaceChildren(wrap);if(keep){const field=inboxReplyFields.get(keep.key);if(field){field.focus({preventScroll:true});field.setSelectionRange(keep.start,keep.end,keep.direction)}}}
 /* одна карточка «нужно решение» по типу */
 function needCard(projectId,i){
   const cls={question:"q",plan:"plan",blocked:"blocked",merge:"merge",acceptance:"accept",supervisor:"note2",observer:"note2"}[i.kind]||"q";
@@ -846,7 +853,7 @@ function needCard(projectId,i){
   if(i.text)card.append(el("div","body",i.text));
   const meta=el("div","meta","ждёт с "+time(i.since)+(i.due?(i.kind==="question"?" · без ответа агент пойдёт по своему варианту в ":" · не решите к ")+time(i.due):""));
   const opts=el("div","opts");
-  if(i.kind==="question")questionOpts(opts,i);
+  if(i.kind==="question")questionOpts(opts,i,projectId);
   else if(i.kind==="blocked")blockedOpts(opts,i);
   else if(i.kind==="acceptance"){const b=el("button","cta small","Принять");b.type="button";b.onclick=async()=>{b.disabled=true;try{const r=await post("/api/tasks/"+encodeURIComponent(task)+"/acceptance/accept",{});toast("ok",task+": приёмка",r.task&&r.task.merged?"влито в проект":"принято",task)}catch(e){toast("bad",task+": не принято",e.message,task)}await tick()};
     const open=el("button","ghost small","Критерии и замечания");open.type="button";open.onclick=()=>go("tasks",task);
@@ -857,17 +864,19 @@ function needCard(projectId,i){
   card.append(meta);
   return card}
 /* вопрос: чипы прямо в карточке (answer/dismiss/своё) */
-function questionOpts(opts,i){
-  const s=S;const q2=s&&s.openQuestions.find(x2=>x2.taskId===i.taskId&&!x2.answered);
+function questionOpts(opts,i,projectId=project){
+  const s=projectId===(project||"")?S:null;const messageId=i.open&&i.open.messageId;
+  const q2=s&&s.openQuestions.find(x2=>x2.taskId===i.taskId&&x2.messageId===messageId&&!x2.answered);
+  const draftKey=inboxReplyKey(projectId,i.taskId,messageId);
   const done=el("span");opts.append(done);
-  const finish=(label)=>{opts.replaceChildren(el("span","badge lime","вы выбрали: "+label))};
-  if(!q2){const b=el("button","ghost small","Открыть");b.type="button";b.onclick=()=>go("tasks",i.taskId);opts.append(b);return}
+  const finish=(label)=>{inboxReplySave(draftKey,"");opts.replaceChildren(el("span","badge lime","вы выбрали: "+label))};
+  if(!q2){const b=el("button","ghost small","Открыть");b.type="button";b.onclick=()=>{if(projectId!==(project||""))switchProject(projectId);go("tasks",i.taskId)};opts.append(b);return}
   const answer=async(label)=>{try{await post("/api/questions/answer",{taskId:i.taskId,messageId:q2.messageId,answer:label});finish(label)}catch(e){toast("bad","Не отправлено",e.message,i.taskId)}await tick()};
   const ch=q2.choices;
   if(ch&&Array.isArray(ch.options)&&ch.options.length){for(const o of ch.options){const label=typeof o==="string"?o:o.label;
     const c=el("button","ghost small"+(ch.recommended===label?" rec":""),label);c.type="button";c.onclick=()=>answer(label);opts.append(c)}}
-  else{const ta=el("input","qcomment");ta.placeholder="Ответ одной строкой…";ta.style.cssText="flex:1;min-width:180px;font:13px var(--font);border:1px solid var(--line);border-radius:9px;padding:7px 10px";
-    const b=el("button","small","Ответить");b.type="button";b.onclick=()=>{const v=ta.value.trim();if(v)answer(v)};
+  else{const ta=el("input","qcomment");inboxReplyBind(ta,draftKey);ta.placeholder="Ответ одной строкой…";ta.style.cssText="flex:1;min-width:180px;font:13px var(--font);border:1px solid var(--line);border-radius:9px;padding:7px 10px";
+    const b=el("button","small","Ответить");b.type="button";b.onclick=()=>{const v=ta.value.trim();if(v)return answer(v)};
     opts.append(ta,b)}
   const own=el("button","ghost small","Своё…");own.type="button";own.onclick=async()=>{const v=await ask("Свой ответ для "+q2.from+" («"+q2.question.slice(0,120)+"»)","ответ");if(v)answer(typeof v==="string"?v:"да")};opts.append(own);
   const dis=el("button","ghost small","Закрыть без ответа");dis.type="button";dis.onclick=async()=>{try{await post("/api/questions/dismiss",{taskId:i.taskId,messageId:q2.messageId});finish("закрыто без ответа")}catch(e){toast("bad","Не закрыто",e.message,i.taskId)}await tick()};opts.append(dis)}
@@ -894,7 +903,7 @@ function renderTask(){
   const t=taskById(route.task);const main=$("main");
   if(!t){main.replaceChildren(el("div","wrap",el("p","page-sub","Нет такой задачи — возможно, её удалили.")));return}
   const lead=t.agents[0];
-  const signature=JSON.stringify(t),previousHead=main.querySelector(".chat-head");
+  const signature=JSON.stringify([t,taskMessageMode(t)]),previousHead=main.querySelector(".chat-head");
   if(previousHead?.dataset.taskSignature===signature)return;
   const previousComposer=main.querySelector(".composer"),keepComposer=previousComposer?.dataset.taskId===t.id?previousComposer:null;
   const focusedBrainstorm=document.activeElement?.id==="brainstorm-feedback"?{start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
@@ -923,6 +932,7 @@ function renderTask(){
   if(t.status==="COMPLETED"&&!t.merged)body.append(mergeCard(t));
   /* контекст: follow-up цепочка, поручения */
   const ctx=ctxLine(t);if(ctx)body.append(ctx);
+  const decisions=decisionHistoryCard(t);if(decisions)body.append(decisions);
   /* OpenSpec: прогресс change / change-writing задача */
   if(t.openspec)body.append(openspecCard(t));
   if(t.proposes)body.append(proposesCard(t));
@@ -933,7 +943,11 @@ function renderTask(){
   /* лента: сообщения + карточки (agreement, ревью, интеграция, spawned) по времени */
   let lastDay="";
   const items=[];
-  for(const m of(t.messages||[]))items.push({at:m.createdAt,kind:"msg",m});
+  const threads=taskMessageGroups(t.messages||[],taskMessageMode(t));
+  if((t.messages||[]).some(m=>m.replyTo)){
+    const modes=el("div","sysline"),toggle=el("button","ghost small",taskMessageMode(t)==="threads"?"Показать по времени":"Сгруппировать ответы");toggle.type="button";
+    toggle.onclick=()=>{taskMessageModes.set(taskMessageKey(t),taskMessageMode(t)==="threads"?"time":"threads");renderTask()};modes.append(toggle);body.append(modes)}
+  for(const group of threads)items.push({at:group.root.createdAt,kind:"msg",m:group.root,replies:group.replies});
   if(t.agreement)items.push({at:t.agreement.createdAt,kind:"agreement"});
   for(const r of(t.syncReports||[]).filter(r2=>r2.round===t.syncRound))items.push({at:r.createdAt,kind:"review",r});
   for(const x of(t.integrations||[]).filter(x2=>x2.round===t.syncRound))items.push({at:x.createdAt,kind:"integration",x});
@@ -942,7 +956,7 @@ function renderTask(){
   if(t.status==="COMPLETED"&&!t.jobOf&&!t.proposes)items.push({at:t.phaseSince||t.updatedAt,kind:"acceptance"});
   items.sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
   for(const it of items){const d=dayOf(it.at);if(d!==lastDay){lastDay=d;body.append(el("div","daydiv",d))}
-    if(it.kind==="msg"){const m=it.m;if(m.type==="QUESTION"&&m.to==="operator")body.append(questionBubble(t,m));else body.append(msgBubble(t,m,lead))}
+    if(it.kind==="msg"){body.append(taskMessageBubble(t,it.m,lead));if(it.replies.length)body.append(taskMessageReplies(t,it.m,it.replies,lead))}
     else if(it.kind==="agreement")body.append(agreementCard(t));
     else if(it.kind==="review")body.append(reviewCard(t,it.r));
     else if(it.kind==="integration")body.append(integrationCard(t,it.x));
@@ -1031,6 +1045,23 @@ function brainstormCard(t){
   }
   return card;
 }
+const taskMessageModes=new Map(),taskMessageExpanded=new Map();
+function taskMessageKey(t){return JSON.stringify([project||"",t.id])}
+function taskMessageMode(t){return taskMessageModes.get(taskMessageKey(t))||"threads"}
+function taskMessageGroups(messages,mode){
+  const sorted=messages.slice().sort((a,b)=>Date.parse(a.createdAt)-Date.parse(b.createdAt));
+  if(mode==="time")return sorted.map(root=>({root,replies:[]}));
+  const byId=new Map(sorted.filter(m=>m.id).map(m=>[m.id,m])),groups=new Map();
+  for(const m of sorted){let root=m;const seen=new Set([m]);
+    while(root.replyTo&&byId.has(root.replyTo)){const parent=byId.get(root.replyTo);if(seen.has(parent)){root=m;break}seen.add(parent);root=parent}
+    if(!groups.has(root))groups.set(root,{root,replies:[]});if(root!==m)groups.get(root).replies.push(m)}
+  return [...groups.values()].sort((a,b)=>Date.parse(a.root.createdAt)-Date.parse(b.root.createdAt))}
+function taskMessageBubble(t,m,lead){return m.type==="QUESTION"&&m.to==="operator"?questionBubble(t,m):msgBubble(t,m,lead)}
+function taskMessageReplies(t,root,replies,lead){
+  const key=JSON.stringify([taskMessageKey(t),root.id]),details=el("details","message-replies");
+  details.style.cssText="margin:0 0 16px 40px";details.open=taskMessageExpanded.has(key)?taskMessageExpanded.get(key):replies.some(m=>m.type==="QUESTION"&&m.to==="operator"&&!m.readAt);
+  details.append(el("summary","page-sub","Ответы: "+replies.length));for(const m of replies)details.append(taskMessageBubble(t,m,lead));
+  details.addEventListener("toggle",()=>{if(details.isConnected)taskMessageExpanded.set(key,details.open)});return details}
 function msgBubble(t,m,lead){
   const mine=m.from==="operator";
   const wrap=el("div","msg"+(mine?" me":""));
@@ -1106,6 +1137,15 @@ function progressCard(t){
     const pb=el("div","pbar");const f=el("i","");f.style.width=Math.round(done/Math.max(1,live.length)*100)+"%";pb.append(f);
     row.append(pb,el("span","cnt",done+"/"+live.length));card.append(row)}
   return card}
+function decisionHistoryCard(t){
+  const records=t.decisionHistory||[];if(!records.length)return null;
+  const card=el("details","action-card");card.append(el("summary","","Решения и ответы ("+records.length+")"));
+  for(const r of records){const row=el("div","find-row");row.append(el("b","",r.label),el("div","tm2",time(r.at)+(r.version?" · v"+r.version:"")),el("p","",r.text));
+    const source=el("details");source.append(el("summary","","Источник"));
+    if(r.question)source.append(el("p","","Вопрос: "+r.question));
+    source.append(el("p","",r.source==="message"?"Ответ оператора на вопрос агента":r.source==="agreement"?"Соглашение агентов":r.source==="brainstorm"?"Утверждённое решение Brainstorm":"Утверждение версии страницы"));
+    if(r.source==="plan"){const link=el("button","ghost small","Открыть v"+r.version);link.type="button";link.onclick=async()=>{await openPlan(t.id);if(PV&&PV.taskId===t.id)await loadPlanVersion(r.version)};source.append(link)}
+    row.append(source);card.append(row)}return card}
 /* agreement: кто что делает, кто подтвердил */
 function agreementCard(t){
   const a=t.agreement;const card=el("div","action-card");
@@ -2332,9 +2372,22 @@ async function loadPlanVersion(v){PV.version=v;PV.confirm=null;PV.error=null;PV.
 function planSay(m){if(PV&&PV.el.fr.contentWindow)PV.el.fr.contentWindow.postMessage(m,"*")}
 const planWaits=new Map();let planSeq=0;
 function planCollect(){return new Promise((ok,fail)=>{const id=++planSeq;planWaits.set(id,ok);planSay({type:"collect",id:id});setTimeout(()=>{if(planWaits.delete(id))fail(new Error("страница плана не ответила"))},4000)})}
-function planPrev(){const vs=PV&&PV.plan?PV.plan.versions:[];const cur=vs.find(x2=>x2.n===PV.version);const prev=vs.find(x2=>x2.n===PV.version-1);return prev&&(prev.stage||null)===(cur&&cur.stage||null)?prev.n:0}
-async function planDiff(){if(!PV)return;const prev=planPrev();if(!PV.diff||prev<1){planSay({type:"diff",prev:null});PV.diffCount=null;renderPlanSide();return}
-  try{const j=await getJSON(q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/"+prev));planSay({type:"diff",prev:j.html})}catch(e){toast("bad","Не удалось загрузить v"+prev,e.message)}}
+function planApprovedBase(){const p=PV&&PV.plan;if(!p)return null;const cur=p.versions.find(v=>v.n===PV.version);if(!cur)return null;
+  const approvals=[...(p.approvals||[]),p.approved,p.inputViewed].filter(Boolean);
+  return approvals.filter(a=>a.version<PV.version&&p.versions.some(v=>v.n===a.version&&(v.stage||null)===(cur.stage||null))).sort((a,b)=>b.version-a.version)[0]||null}
+function planPrev(){const vs=PV&&PV.plan?PV.plan.versions:[];if(PV&&PV.diffBase==="approved")return planApprovedBase()?.version||0;
+  const cur=vs.find(x2=>x2.n===PV.version);const prev=vs.filter(v=>v.n<PV.version&&(v.stage||null)===(cur&&cur.stage||null)).at(-1);return prev?prev.n:0}
+function planFilesView(side){const current=PV.plan?.versions.find(v=>v.n===PV.version);if(!PV.diff||current?.stage!=="change"||!planPrev())return;
+  const key=PV.taskId+":"+planPrev()+":"+PV.version;const cache=PV.fileComparison;
+  if(!cache||cache.key!==key){const owner=PV;PV.fileComparison={key,loading:true};getJSON(q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/compare?from="+planPrev()+"&to="+PV.version)).then(data=>{if(PV!==owner||PV.fileComparison?.key!==key)return;PV.fileComparison={key,data};renderPlanSide()}).catch(e=>{if(PV!==owner||PV.fileComparison?.key!==key)return;PV.fileComparison={key,error:e.message};renderPlanSide()});side.append(el("p","muted","Загружаю изменения файлов…"));return}
+  if(cache.loading){side.append(el("p","muted","Загружаю изменения файлов…"));return}
+  if(cache.error){side.append(el("p","note bad",cache.error));return}
+  if(!cache.data.available){side.append(el("p","muted","Снимок файлов недоступен для этой версии."));return}
+  const files=cache.data.files;side.append(el("p","muted",files.length?"Изменения файлов: "+files.length:"Файлы change не изменились."));
+  const labels={added:"Добавлен",removed:"Удалён",modified:"Изменён"};
+  for(const f of files){const d=el("details","pnote");d.append(el("summary","",labels[f.status]+": "+f.name));if(f.binary)d.append(el("p","muted",f.unavailable==="size-limit"?"Файл превышает лимит просмотра: содержимое изменилось.":"Двоичный файл: содержимое изменилось."));else{const pre=el("pre","review-code");pre.style.cssText="white-space:pre-wrap;overflow-wrap:anywhere;max-height:400px;overflow:auto";for(const line of f.lines){const row=el("div","",line);if(line.startsWith("+"))row.style.color="var(--lime,#78c99a)";else if(line.startsWith("-"))row.style.color="var(--red,#ec8790)";pre.append(row)}d.append(pre);if(f.truncated)d.append(el("p","muted","Большой diff обрезан до 2000 строк."))}side.append(d)}}
+async function planDiff(){if(!PV)return;const owner=PV,version=PV.version,prev=planPrev();const request=(PV.diffRequest||0)+1;PV.diffRequest=request;if(!PV.diff||prev<1){planSay({type:"diff",prev:null});PV.diffCount=null;renderPlanSide();return}
+  try{const j=await getJSON(q("/api/tasks/"+encodeURIComponent(PV.taskId)+"/plan/"+prev));if(PV!==owner||PV.version!==version||PV.diffRequest!==request||!PV.diff||planPrev()!==prev)return;planSay({type:"diff",prev:j.html})}catch(e){if(PV===owner&&PV.diffRequest===request)toast("bad","Не удалось загрузить v"+prev,e.message)}}
 addEventListener("message",ev=>{const m=ev.data||{};if(!m.an)return;
   if(AV&&ev.source===AV.el.fr.contentWindow){
     if(m.type==="ready")accSay({type:"mode",mode:AV.mode});
@@ -2385,7 +2438,7 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
   const W=planWords(t,last&&last.stage);const live=t&&t.status==="ACTIVE"&&t.phase===W.phase;const can=!!(S&&S.control)&&latest&&live&&!p.approved;
   e.st.textContent=!vs.length?"плана ещё нет":p.approved?W.done+" v"+p.approved.version:!latest?"старая версия: только просмотр":!live?"задача уже не на этом шаге":t.plan&&t.plan.status==="revising"?W.status.revising:"";
   const steps=t&&typeof ACT!=="undefined"?ACT.filter(x2=>x2.agentId===t.agents[0]&&(!x2.taskId||x2.taskId===t.id)).slice(-6).map(x2=>x2.seq).join(","):"";
-  const sig=JSON.stringify([PV.version,PV.mode,PV.comments,PV.pick,PV.diagram,PV.confirm,PV.pending,PV.error,PV.ready,PV.edited,PV.answered,PV.diff,PV.diffCount,PV.critiques,PV.critic,PV.criticAdded?[...PV.criticAdded]:null,PV.actOpen,
+  const sig=JSON.stringify([PV.version,PV.mode,PV.comments,PV.pick,PV.diagram,PV.confirm,PV.pending,PV.error,PV.ready,PV.edited,PV.answered,PV.diff,PV.diffBase,PV.fileComparison,PV.diffCount,PV.critiques,PV.critic,PV.criticAdded?[...PV.criticAdded]:null,PV.actOpen,
     p&&p.versions.length,p&&p.approved,p&&p.feedback&&p.feedback.length,t&&t.plan,t&&t.status,t&&t.phase,t&&t.queue,qs.map(q=>q.messageId),steps,can]);
   if(sig===PV.sideSig)return;PV.sideSig=sig;
   const side=e.side;side.replaceChildren();
@@ -2394,8 +2447,11 @@ function renderPlanSide(){if(!PV)return;const e=PV.el;const p=PV.plan;const t=S&
   if(can){const w=el("div","win");[["view","Просмотр"],["comment","Замечание"],["edit","Править текст"]].forEach(([m,l])=>{const b=el("button",PV.mode===m?"on":"",l);b.type="button";
       b.onclick=()=>{PV.mode=m;PV.pick=null;PV.diagram=null;planSay({type:"mode",mode:m});renderPlanSide()};w.append(b)});side.append(w);
     side.append(el("div","muted small",PV.mode==="comment"?"Кликните блок или выделите слова — и напишите, что не так.":PV.mode==="edit"?"Правьте текст прямо на странице: lead получит «было → стало». Клик по схеме — правка её кода Mermaid.":W.view))}
+  const approvedBase=planApprovedBase();if(PV.version===1)side.append(el("p","muted","Ранее не утверждалось."));if(PV.version>1){const select=el("select");select.append(new Option("С предыдущей версией","previous"),new Option("С момента утверждения","approved"));select.value=PV.diffBase||"previous";select.onchange=()=>{PV.diffBase=select.value;PV.diff=true;PV.fileComparison=null;planDiff()};side.append(select)}
+  if(PV.diffBase==="approved")side.append(el("p","muted",approvedBase?"Утверждена v"+approvedBase.version+" · "+new Date(approvedBase.at).toLocaleString("ru-RU"):"Ранее не утверждалось."));
   if(PV.version>1&&planPrev()){const l=el("label","pdiff");const cb=document.createElement("input");cb.type="checkbox";cb.checked=PV.diff;cb.onchange=()=>{PV.diff=cb.checked;planDiff()};
-    l.append(cb," подсветить новое с v"+planPrev()+(PV.diff&&PV.diffCount!==null?" ("+PV.diffCount+")":""));side.append(l)}
+    l.append(cb," показать изменения с v"+planPrev()+(PV.diff&&PV.diffCount!==null?" ("+PV.diffCount+")":""));side.append(l)}
+  planFilesView(side);
   if(PV.pick&&can){const f=el("div","ppick");f.append(el("div","muted","к "+PV.pick.target));if(PV.pick.quote)f.append(el("div","pquote","«"+PV.pick.quote+"»"));
     const ta=document.createElement("textarea");ta.rows=3;ta.placeholder="Что поменять…";ta.value=PV.pick.text;ta.oninput=()=>{PV.pick.text=ta.value};
     const add=el("button","small","Добавить");add.type="button";add.onclick=()=>{if(!ta.value.trim())return;PV.comments.push({target:PV.pick.target,...(PV.pick.quote?{quote:PV.pick.quote}:{}) ,text:ta.value.trim()});PV.pick=null;planSay({type:"unpick"});renderPlanSide()};

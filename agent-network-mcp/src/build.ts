@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream, existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { summarizeBuild, type TestTotals } from "./buildSummary.js";
 import { AppError } from "./errors.js";
 
@@ -9,6 +9,20 @@ import { AppError } from "./errors.js";
 export const BUILD_TOOLS = ["./mvnw", "mvn", "./gradlew", "gradle", "npm", "npx", "yarn", "pnpm", "make"] as const;
 export const DEFAULT_BUILD_TIMEOUT_MIN = 20;
 const KEEP_LOGS = 5;
+/** npm's Windows shims cannot be spawned without a shell; invoke their Node entry point directly. */
+export function resolveBuildCommand(argv: string[], env: NodeJS.ProcessEnv = process.env, platform = process.platform, node = process.execPath): string[] {
+  if (platform !== "win32" || !["npm", "npx"].includes(argv[0] ?? "")) return argv;
+  const name = argv[0]!;
+  const path = Object.entries(env).find(([key]) => key.toLowerCase() === "path")?.[1] ?? "";
+  const directories = [...path.split(";").map(dir => dir.replace(/^"|"$/g, "")).filter(Boolean), dirname(node)];
+  for (const dir of directories) {
+    const entry = join(dir, "node_modules", "npm", "bin", `${name}-cli.js`);
+    try {
+      if (statSync(entry).isFile()) return [node, entry, ...argv.slice(1)];
+    } catch { /* This PATH directory does not contain an npm installation. */ }
+  }
+  return argv;
+}
 /** Where the full logs go, inside the agent's folder (.agent-network/ is kept out of git). */
 export const BUILD_LOG_DIR = join(".agent-network", "builds");
 
@@ -113,7 +127,8 @@ export async function runBuild(opts: { cwd: string; argv: string[]; timeoutMs: n
   }
   let timedOut = false;
   const { exitCode } = await new Promise<{ exitCode: number | null }>((resolve) => {
-    const child = spawn(opts.argv[0]!, opts.argv.slice(1), { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const argv = resolveBuildCommand(opts.argv, opts.env ?? process.env);
+    const child = spawn(argv[0]!, argv.slice(1), { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ["ignore", "pipe", "pipe"], detached: true, windowsHide: true });
     running.add(child);
     child.stdout!.pipe(log, { end: false });
     child.stderr!.pipe(log, { end: false });

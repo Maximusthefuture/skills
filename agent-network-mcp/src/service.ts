@@ -587,7 +587,7 @@ export class NetworkService {
     return { version: v, html: await readFile(join(this.fs.root, "tasks", taskId, "plan", `v${v}.html`), "utf8") };
   }
 
-  private async savePlanVersion(taskId: string, s: PlanState, html: string, note?: string, page?: { stage?: PlanStage; hash?: string; render?: PlanVersion["render"] }): Promise<number> {
+  private async savePlanVersion(taskId: string, s: PlanState, html: string, note?: string, page?: { stage?: PlanStage; hash?: string; snapshot?: import("./plan.js").PlanSnapshotFile[]; render?: PlanVersion["render"] }): Promise<number> {
     const brainstorm = await this.brainstormState(taskId);
     if (brainstorm?.approvedDecision) s.brainstormDecisionHash = brainstorm.approvedDecision.hash;
     const previous = await this.fs.readJson<PlanState>(["tasks", taskId, "plan", "state.json"]);
@@ -596,7 +596,8 @@ export class NetworkService {
     const n = Math.max(s.versions.at(-1)?.n ?? 0, previous?.versions.at(-1)?.n ?? 0) + 1;
     await mkdir(join(this.fs.root, "tasks", taskId, "plan"), { recursive: true });
     await writeFile(join(this.fs.root, "tasks", taskId, "plan", `v${n}.html`), html);
-    s.versions.push({ n, by: this.me, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 500) } : {}), bytes: Buffer.byteLength(html), ...(page?.stage ? { stage: page.stage } : {}), ...(page?.hash ? { hash: page.hash } : {}), ...(page?.render ? { render: page.render } : {}) });
+    if (page?.snapshot) await this.fs.writeJson(["tasks", taskId, "plan", `v${n}.files.json`], page.snapshot);
+    s.versions.push({ ...(page?.snapshot ? { snapshot: true as const } : {}), n, by: this.me, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 500) } : {}), bytes: Buffer.byteLength(html), ...(page?.stage ? { stage: page.stage } : {}), ...(page?.hash ? { hash: page.hash } : {}), ...(page?.render ? { render: page.render } : {}) });
     return n;
   }
 
@@ -617,18 +618,20 @@ export class NetworkService {
     if (s.versions.at(-1)?.stage === "input") {
       // the change page starts: the input stage is settled and kept as such
       s.inputViewed = s.approved ?? s.inputViewed;
+      if (s.approved && !s.approvals?.some(a => a.version === s.approved!.version)) (s.approvals ??= []).push({ ...s.approved });
       delete s.approved;
     }
     if (s.approved) {
       const accepted = s.versions.find((v) => v.n === s.approved!.version);
       if (accepted?.hash && accepted.hash === hash) throw new AppError("ALREADY_COMPLETED", `The operator accepted the change (page v${accepted.n}) and the change folder is the same: validate, commit and complete()`);
+      if (s.approved && !s.approvals?.some(a => a.version === s.approved!.version)) (s.approvals ??= []).push({ ...s.approved });
       delete s.approved; // the change changed after the acceptance (a fix round): the operator looks again
     }
     return stage;
   }
 
   /** The lead: a new version of the plan, the whole page or find/replace edits of the current one. */
-  async writePlan(input: { taskId: string; html?: string; edits?: { find: string; replace: string }[]; note?: string; stage?: string; hash?: string; render?: PlanVersion["render"] }): Promise<{ version: number; status: string }> {
+  async writePlan(input: { taskId: string; html?: string; edits?: { find: string; replace: string }[]; note?: string; stage?: string; hash?: string; snapshot?: import("./plan.js").PlanSnapshotFile[]; render?: PlanVersion["render"] }): Promise<{ version: number; status: string }> {
     await this.requireMe();
     return this.fs.withLock(this.tasks.lockPath(assertTaskId(input.taskId)), async () => {
       const task = await this.requireMember(input.taskId);
@@ -660,7 +663,7 @@ export class NetworkService {
         html = (await this.planHtml(task.id))!.html;
       } else throw new AppError("INVALID_INPUT", "Send html (the whole page) or edits: [{find, replace}]; after the operator's feedback, a note alone keeps the page as it is (say why)");
       if (stage && s.versions.at(-1)?.stage !== stage && input.html === undefined) throw new AppError("INVALID_INPUT", `The ${stage} page is a new page: send it whole as html`);
-      const version = await this.savePlanVersion(task.id, s, html, input.note, stage ? { stage, ...(stage === "change" && input.hash ? { hash: input.hash } : {}), ...(input.render ? { render: input.render } : {}) } : undefined);
+      const version = await this.savePlanVersion(task.id, s, html, input.note, stage ? { stage, ...(stage === "change" && input.hash ? { hash: input.hash } : {}), ...(input.snapshot ? { snapshot: input.snapshot } : {}), ...(input.render ? { render: input.render } : {}) } : undefined);
       await this.fs.writeJson(["tasks", task.id, "plan", "state.json"], s);
       await this.emit({ type: "PLAN_UPDATED", taskId: task.id, sourceAgent: this.me, payload: { version } });
       return { version, status: planStatus(s) };
@@ -695,6 +698,7 @@ export class NetworkService {
       if (!said && !input.approve) throw new AppError("INVALID_INPUT", "Nothing to send: comment on a block, edit the text or answer a question");
       if (input.approve) {
         s.approved = { version: fb.savedAs ?? last.n, at: fb.at };
+        (s.approvals ??= []).push({ ...s.approved });
         if (said) fb.withApproval = true;
       }
       if (said) s.feedback.push(fb);
