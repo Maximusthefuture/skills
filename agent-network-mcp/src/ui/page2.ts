@@ -1411,7 +1411,7 @@ function runnerProfileGuide(){const guide=taskDisclosure({id:"runners"},"profile
   const roles=el("ul");for(const p of S?.control?.runnerProfiles||[])roles.append(el("li","",p.name+": "+p.description+"."));body.append(roles);
   const steps=el("ol");for(const text of ["Для нового агента откройте «Новый агент из шаблона», выберите CLI, модель и профиль роли, затем нажмите «Добавить агента».","Для существующего агента нажмите «Раскрыть», выберите «Профиль роли» и нажмите «Применить профиль».","Изменение действует со следующей сессии. Текущая сессия продолжит работу с прежними инструкциями; остановленный агент сам не запустится.","Чтобы убрать готовую роль, выберите «Без профиля» и нажмите «Применить профиль»."])steps.append(el("li","",text));body.append(steps);
   body.append(el("p","","Свои правила можно добавить через «Файл инструкций»: они дополняют профиль. Модель и инструменты выбираются отдельно. Профиль «Ревьюер» сам по себе не запрещает запись файлов."));
-  body.append(el("p","","Координатор пока выбирает настроенных агентов по ID. Автоматический подбор команды по этим профилям ещё не подключён. Профиль также не назначает ведущего задачи: ведущий определяется составом команды."));guide.append(body);return guide}
+  body.append(el("p","","Координатор учитывает профили настроенных агентов и объясняет выбор команды в предложении задачи. Если нужной роли нет, он должен объяснить замену. Проверьте состав перед подтверждением. Профиль не назначает ведущего: им становится первый участник команды. Новые раннеры автоматически не создаются."));guide.append(body);return guide}
 function renderAgents(){
   const main=$("main");const previous=main.querySelector("[data-agents-view]");if(previous?.dataset.agentsView===(project||"")&&previous.contains(document.activeElement)&&document.activeElement.matches("input,select,textarea"))return;
   rememberTaskDisclosures(main);
@@ -2234,7 +2234,8 @@ function renderProject(){
     const proposals=state.proposals||[];
     if(proposals.length)content.append(el("h2","coord-section-title","Предложения задач"));
     for(const proposal of proposals){const card=el("section","card coord-proposal"),payload=proposal.payload;
-      card.append(el("h3","","Предложение задачи: "+payload.title),el("p","",proposal.summary),el("p","",payload.description),el("p","page-sub","Команда: "+payload.agents.join(", ")),
+      const proposalSummary=el("p","",proposal.summary);proposalSummary.style.whiteSpace="pre-wrap";
+      card.append(el("h3","","Предложение задачи: "+payload.title),proposalSummary,el("p","",payload.description),el("p","page-sub","Команда: "+payload.agents.join(", ")),
         el("p","page-sub","Стоимость неизвестна. "+(payload.maxCostUsd===undefined?"Лимит не задан.":"Лимит: $"+payload.maxCostUsd+"; это не прогноз.")),el("p","coord-status",proposalStates[proposal.status]||"Статус: "+proposal.status));
       if(proposal.status==="pending")card.append(el("p","page-sub","Задача пока не создана. Проверьте описание и состав команды, затем подтвердите или измените предложение."));
       if(payload.brainstorm?.enabled)card.append(el("p","coord-status","Brainstorm · до "+payload.brainstorm.maxRounds+" раундов. Перед разработкой потребуется ваше утверждение решения."));

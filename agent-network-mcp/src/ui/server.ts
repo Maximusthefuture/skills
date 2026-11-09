@@ -11,7 +11,7 @@ import { assertChangeName, changePath, hasChange, listChanges, type Exec } from 
 import { injectSdk, PLAN_CSP, readPlanSnapshot } from "../plan.js";
 import { reviewFileDiff } from "../planComparison.js";
 import { DiscussionStore, listDiscussions } from "../discussions.js";
-import { RUNNER_PROFILES, validateRunnerProfile } from "../runnerProfiles.js";
+import { RUNNER_PROFILES, validateRunnerProfile, coordinatorAgents } from "../runnerProfiles.js";
 import { NetworkService, OPERATOR_TIMEOUT_MS, depthFlags } from "../service.js";
 import { ProjectStore } from "../project/store.js";
 import { ProjectMemory } from "../project/memory.js";
@@ -71,7 +71,7 @@ export interface UiServer {
 
 /** One project on the page: a network (<project>/.agent-network) and, in control mode, its runners. */
 export interface UiProject {
-  coordinator?: CoordinatorExecutor | { engine: "claude" | "kimi" | "codex"; model?: string };
+  coordinator?: CoordinatorExecutor | { engine: "claude" | "kimi" | "codex"; model?: string; reasoningEffort?: "low" | "medium" | "high" };
   networkDir: string;
   /** Control mode: the page may create tasks and start/stop these runners. Without it the project is read-only. */
   runners?: RunnerPool;
@@ -385,7 +385,9 @@ export async function startUiServer(target: string | UiProject[], opts: UiOption
       const executor = typeof spec.coordinator === "function" ? spec.coordinator : isolatedCoordinatorExecutor({
         engine: spec.coordinator.engine,
         model: spec.coordinator.model,
+        reasoningEffort: spec.coordinator.reasoningEffort,
         project: { networkDir: p.networkDir, projectId: projectState.projectId, agentIds: p.pool?.ids() ?? [],
+          agents: () => coordinatorAgents(p.pool?.list() ?? []),
           plugins: async () => p.pool ? p.pool.pluginContext() : { plugins: [], qwenAgents: [] },
           resolved: { ...(p.maxTaskCostUsd !== undefined ? { maxTaskCostUsd: p.maxTaskCostUsd, maxCostUsd: p.maxTaskCostUsd } : {}), ...(p.verifyCommand ? { verifyCommand: p.verifyCommand } : {}) } },
         snapshot: async () => {

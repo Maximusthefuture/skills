@@ -158,7 +158,7 @@ export interface RunnersConfig {
   notify?: NotifyConfig;
   /** «Составить черновик» in the task form (src/drafter.ts): a read-only session drafts a task from the operator's idea. */
   drafter?: ObserverConfig;
-  coordinator?: { engine: "claude" | "kimi" | "codex"; model?: string };
+  coordinator?: { engine: "claude" | "kimi" | "codex"; model?: string; reasoningEffort?: "low" | "medium" | "high" };
   /** "runnerTemplates": the CLIs with their models the page's «Добавить runner» form creates a runner from. */
   runnerTemplates?: RunnerTemplate[];
 }
@@ -513,14 +513,15 @@ export async function loadRunnersConfig(path: string, opts: { projectDir?: strin
   if (raw.mergeStrategy !== undefined && raw.mergeStrategy !== "squash" && raw.mergeStrategy !== "merge") throw new AppError("INVALID_CONFIG", `${file}: "mergeStrategy" is "squash" (one commit per task) or "merge"`);
   const mergeCheck = raw.mergeCheck === undefined ? undefined : parseMergeCheck(raw.mergeCheck, file);
   const notify = raw.notify === undefined ? undefined : parseNotify(raw.notify, file);
-  let coordinator: { engine: "claude" | "kimi" | "codex"; model?: string } | undefined;
+  let coordinator: { engine: "claude" | "kimi" | "codex"; model?: string; reasoningEffort?: "low" | "medium" | "high" } | undefined;
   const coordinatorRaw = (raw as typeof raw & { coordinator?: unknown }).coordinator;
   if (coordinatorRaw !== undefined && coordinatorRaw !== false) {
-    if (!coordinatorRaw || typeof coordinatorRaw !== "object" || Array.isArray(coordinatorRaw) || Object.keys(coordinatorRaw).some(key => key !== "model" && key !== "engine")) throw new AppError("INVALID_CONFIG", "coordinator must contain only engine and model");
-    const { model, engine = "claude" } = coordinatorRaw as { model?: unknown; engine?: unknown };
+    if (!coordinatorRaw || typeof coordinatorRaw !== "object" || Array.isArray(coordinatorRaw) || Object.keys(coordinatorRaw).some(key => key !== "model" && key !== "engine" && key !== "reasoningEffort")) throw new AppError("INVALID_CONFIG", "coordinator must contain only engine, model and reasoningEffort");
+    const { model, engine = "claude", reasoningEffort } = coordinatorRaw as { model?: unknown; engine?: unknown; reasoningEffort?: unknown };
     if (engine !== "claude" && engine !== "kimi" && engine !== "codex") throw new AppError("INVALID_CONFIG", "coordinator.engine must be claude, kimi or codex");
     if (model !== undefined && (typeof model !== "string" || !model.trim())) throw new AppError("INVALID_CONFIG", "coordinator.model must be a nonempty string");
-    coordinator = { engine, ...(typeof model === "string" ? { model } : {}) };
+    if (reasoningEffort !== undefined && (engine !== "codex" || typeof reasoningEffort !== "string" || !["low", "medium", "high"].includes(reasoningEffort))) throw new AppError("INVALID_CONFIG", "coordinator.reasoningEffort requires codex and low, medium or high");
+    coordinator = { engine, ...(typeof model === "string" ? { model } : {}), ...(reasoningEffort ? { reasoningEffort: reasoningEffort as "low" | "medium" | "high" } : {}) };
   }
   const drafter = raw.drafter === undefined ? undefined : await parseObserver({ ...(raw.drafter as object), cron: undefined }, "drafter");
   const prices = parsePrices(raw.prices, file);

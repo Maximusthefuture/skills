@@ -58,3 +58,28 @@ it("allows retries to read saved proposals but rejects new proposal and memory w
     expect((await client.callTool({ name: "propose_task", arguments: { operationId: "retry-task", summary: "new", brief, payload: { title: "New", description: "New", agents: ["a", "b"] } } })).isError).toBe(true);
   } finally { await client.close(); await server.close(); }
 });
+it("requires exact team reasons and persists server-owned role snapshots", async () => {
+  const dir = await tmpDir(), store = new ProjectStore(await FileStore.open(dir));
+  const run = await store.enqueue("roles", "request"); await store.claim("owner");
+  const server = await createProjectServer({ networkDir: dir, projectId: (await store.read()).projectId, runId: run.runId, ownerToken: "owner", resolved: {}, agents: [
+    { id: "a", profile: "developer", name: "Developer", description: "Implement" },
+    { id: "b", profile: null, name: "General", description: "No profile" },
+  ] });
+  const client = new Client({ name: "test", version: "1" }); const [a,b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  try {
+    const args = { operationId: "roles", summary: "Role choice", brief, payload: { title: "Task", description: "Goal", agents: ["a", "b"] } };
+    for (const teamSelection of [undefined, [], [{agentId:"a",reason:"Implement"}], [{agentId:"a",reason:"Implement"},{agentId:"a",reason:"Review"}], [{agentId:"a",reason:"Implement"},{agentId:"unknown",reason:"Review"}]]) {
+      expect((await client.callTool({name:"propose_task",arguments:{...args,teamSelection}})).isError).toBe(true);
+    }
+    expect((await store.read()).proposals).toHaveLength(0);
+    const valid = {...args,teamSelection:[{agentId:"a",reason:"Implement the change"},{agentId:"b",reason:"Review as fallback"}]};
+    expect((await client.callTool({name:"propose_task",arguments:valid})).isError).not.toBe(true);
+    const saved = (await store.read()).proposals[0]!;
+    expect(saved.summary).toContain("Developer / developer");
+    expect(saved.summary).toContain("Implement the change");
+    expect(saved.summary).toContain("Review as fallback");
+    expect((await client.callTool({name:"propose_task",arguments:valid})).isError).not.toBe(true);
+    expect((await store.read()).proposals).toHaveLength(1);
+  } finally { await client.close(); await server.close(); }
+});

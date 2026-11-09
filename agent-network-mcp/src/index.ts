@@ -36,6 +36,7 @@ async function main(): Promise<void> {
     const server = await createProjectServer({ networkDir: required("NETWORK_DIR"), projectId: required("PROJECT_ID"),
       runId: required("PROJECT_RUN_ID"), ownerToken: required("PROJECT_OWNER_TOKEN"),
       agentIds: JSON.parse(process.env.PROJECT_AGENT_IDS ?? "[]"),
+      ...(process.env.PROJECT_AGENTS ? { agents: JSON.parse(process.env.PROJECT_AGENTS) } : {}),
       plugins: JSON.parse(process.env.PROJECT_PLUGINS ?? "[]"), qwenAgents: JSON.parse(process.env.PROJECT_QWEN_AGENTS ?? "[]"),
       resolved: JSON.parse(process.env.PROJECT_RESOLVED ?? "{}") });
     await server.connect(new StdioServerTransport());

@@ -8,6 +8,7 @@ import { runSession } from "../runner.js";
 import type { CoordinatorExecutor } from "./coordinator.js";
 import { COORDINATOR_INSTRUCTIONS as system } from "./prompt.js";
 import type { PluginInfo } from "../plugins.js";
+import type { CoordinatorAgent } from "../runnerProfiles.js";
 
 
 /** Fixed argv: caller configuration cannot re-enable coding tools or repository hooks. */
@@ -30,12 +31,13 @@ const projectTools = ["read_history", "read_task_context", "read_proposal", "pro
 /** Codex receives a temporary, allowlisted MCP config and no shell or web tools. */
 export function codexCoordinatorArgv(prompt: string, model: string | undefined, cwd: string, entry: {
   command: string; args: string[]; env: Record<string, string>;
-}, command = "codex"): string[] {
+}, command = "codex", reasoningEffort?: "low" | "medium" | "high"): string[] {
   const config = (key: string, value: unknown) => ["-c", `${key}=${JSON.stringify(value)}`];
   return [command, "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
     "--sandbox", "read-only", "--disable", "shell_tool", "--cd", cwd,
     ...config("web_search", "disabled"),
     ...config("developer_instructions", system),
+    ...(reasoningEffort ? config("model_reasoning_effort", reasoningEffort) : []),
     ...config("mcp_servers.project.command", entry.command),
     ...config("mcp_servers.project.args", entry.args),
     ...config("mcp_servers.project.cwd", cwd),
@@ -50,13 +52,15 @@ export function isolatedCoordinatorExecutor(options: {
   snapshot: () => Promise<unknown>;
   model?: string;
   engine?: "claude" | "kimi" | "codex";
-  project?: { networkDir: string; projectId: string; agentIds: string[]; plugins?: () => Promise<{ plugins: PluginInfo[]; qwenAgents: string[] }>; resolved: { maxTaskCostUsd?: number; maxCostUsd?: number; verifyCommand?: string } };
+  reasoningEffort?: "low" | "medium" | "high";
+  project?: { networkDir: string; projectId: string; agentIds: string[]; agents?: () => CoordinatorAgent[]; plugins?: () => Promise<{ plugins: PluginInfo[]; qwenAgents: string[] }>; resolved: { maxTaskCostUsd?: number; maxCostUsd?: number; verifyCommand?: string } };
   run?: typeof runSession;
 }): CoordinatorExecutor {
   return async ({ message, run, signal, retryContext }) => {
     if (signal.aborted) throw new Error("Coordinator cancelled");
     const resources = await options.project?.plugins?.();
-    const snapshot = JSON.stringify({ ...await options.snapshot() as object, ...(resources ? { resources } : {}) });
+    const agents = options.project?.agents?.();
+    const snapshot = JSON.stringify({ ...await options.snapshot() as object, ...(resources ? { resources } : {}), ...(agents ? { agents } : {}) });
     if (Buffer.byteLength(snapshot) > 65536) throw new Error("Project snapshot exceeds 64 KiB");
     const cwd = await mkdtemp(join(tmpdir(), "agent-network-coordinator-"));
     try {
@@ -70,7 +74,8 @@ export function isolatedCoordinatorExecutor(options: {
         if (!run.ownerToken) throw new Error("Project run owner token missing");
         const entry = { command: process.execPath, args: [fileURLToPath(new URL("../index.js", import.meta.url)), "project-mcp"],
           env: { NETWORK_DIR: options.project.networkDir, PROJECT_ID: options.project.projectId,
-            PROJECT_RUN_ID: run.runId, PROJECT_OWNER_TOKEN: run.ownerToken, PROJECT_AGENT_IDS: JSON.stringify(options.project.agentIds),
+            PROJECT_RUN_ID: run.runId, PROJECT_OWNER_TOKEN: run.ownerToken, PROJECT_AGENT_IDS: JSON.stringify(agents?.map(a => a.id) ?? options.project.agentIds),
+            ...(agents ? { PROJECT_AGENTS: JSON.stringify(agents) } : {}),
             PROJECT_RESOLVED: JSON.stringify(options.project.resolved),
             PROJECT_PLUGINS: JSON.stringify(resources?.plugins ?? []), PROJECT_QWEN_AGENTS: JSON.stringify(resources?.qwenAgents ?? []) } };
         if (options.engine === "kimi") {
@@ -131,7 +136,7 @@ export function isolatedCoordinatorExecutor(options: {
             : "kimi";
           argv = kimiCoordinatorArgv(prompt, profile, options.model, command);
         } else if (options.engine === "codex") {
-          argv = codexCoordinatorArgv(prompt, options.model, cwd, entry);
+          argv = codexCoordinatorArgv(prompt, options.model, cwd, entry, "codex", options.reasoningEffort);
         } else {
           mcpConfig = join(cwd, "project-mcp.json");
           await writeFile(mcpConfig, JSON.stringify({ mcpServers: { project: entry } }), { encoding: "utf8", mode: 0o600 });
